@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["ultimate_config"]
+members = ["ultimate_character", "ultimate_config"]
 
 [profile.release]
 opt-level = "z"
