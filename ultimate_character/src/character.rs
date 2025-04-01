@@ -44,13 +44,13 @@ pub struct Character {
     /// This starts at 0 and increments by 1 with each edit.
     version: u32,
     /// The hex color of the character.
-    color: String,
+    color: Option<String>,
     /// The time the character was created.
     created_at: Zoned,
     /// The times the character was edited.
     edited_at: Vec<Zoned>,
     /// The latest time the character had a conversation with a user.
-    latest_conversation: Zoned, // TODO: maybe `Option<Zoned>`?
+    latest_conversation: Option<Zoned>,
     /// The number of conversations the character has had with a user.
     ///
     /// This means the amount of times this character has been "spawned".
@@ -103,4 +103,67 @@ pub struct Character {
     ///
     /// This is used for rollback purposes.
     previous_versions: HashMap<u32, Character>,
+}
+
+impl Character {
+    #[must_use]
+    pub fn new(
+        name: String,
+        description: Option<String>,
+        personality: Option<String>,
+        greeting: String,
+        avatar: Option<String>,
+        emoji: Option<String>,
+        creator: UserId,
+        color: Option<String>,
+        example_messages: Vec<(Option<String>, String)>,
+        system_prompt: Option<String>,
+        prompt: Option<String>,
+        scenario: Option<String>,
+        frequency_penalty: Option<f32>,
+        presence_penalty: Option<f32>,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+    ) -> Self {
+        let id = Ulid::new();
+        let editors = HashSet::new();
+        let version = 1;
+        let created_at = Zoned::now();
+        let edited_at = vec![];
+        let latest_conversation = None;
+        let conversations_had_with_user = HashMap::new();
+        let conversations_had = 0;
+        let words_generated = 0;
+        let tokens_generated = 0;
+        let previous_versions = HashMap::new();
+        Self {
+            name,
+            description,
+            personality,
+            greeting,
+            id,
+            avatar,
+            emoji,
+            creator,
+            editors,
+            version,
+            color,
+            created_at,
+            edited_at,
+            latest_conversation,
+            conversations_had_with_user,
+            conversations_had,
+            words_generated,
+            tokens_generated,
+            example_messages,
+            system_prompt,
+            prompt,
+            scenario,
+            frequency_penalty,
+            presence_penalty,
+            temperature,
+            top_p,
+            previous_versions,
+        }
+    }
 }
