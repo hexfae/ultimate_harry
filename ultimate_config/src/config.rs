@@ -2,8 +2,10 @@ use miette::Diagnostic;
 use notify::{RecursiveMode, Watcher, recommended_watcher};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use serenity::all::UserId;
 use snafu::{ResultExt, Snafu};
 use std::{
+    collections::HashMap,
     fs::{read_to_string, write},
     path::{Path, PathBuf},
     sync::LazyLock,
@@ -18,12 +20,13 @@ const CONFIG_PATH: &str = "config.toml";
 
 pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
     std::thread::spawn(watch_config);
-    RwLock::new(Config::load().unwrap_or_default())
+    RwLock::new(Config::load().expect("valid config"))
 });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    foo: String,
+    model: String,
+    name_substitutions: HashMap<UserId, String>,
 }
 
 #[derive(Debug, Snafu, Diagnostic)]
@@ -43,14 +46,14 @@ enum Error {
 }
 
 impl Config {
-    pub fn foo(&self) -> String {
-        self.foo.clone()
-    }
-
     fn load() -> Result<Self> {
-        read_to_string(CONFIG_PATH)
-            .context(ReadSnafu)
-            .and_then(|contents| toml::from_str(&contents).context(DeserializeSnafu))
+        if Path::new(CONFIG_PATH).exists() {
+            read_to_string(CONFIG_PATH)
+                .context(ReadSnafu)
+                .and_then(|contents| toml::from_str(&contents).context(DeserializeSnafu))
+        } else {
+            Ok(Self::default())
+        }
     }
 
     fn save(&self) -> Result<()> {
@@ -58,12 +61,24 @@ impl Config {
             .context(SerializeSnafu)
             .and_then(|contents| write(CONFIG_PATH, contents).context(WriteSnafu))
     }
+
+    pub fn model(&self) -> String {
+        self.model.clone()
+    }
+
+    pub fn substitute_name(&self, user_id: UserId) -> String {
+        self.name_substitutions
+            .get(&user_id)
+            .cloned()
+            .unwrap_or_else(|| "User".to_owned())
+    }
 }
 
 impl Default for Config {
     fn default() -> Self {
         let config = Self {
-            foo: "hi".to_owned(),
+            model: "deepseek-chat".to_owned(),
+            name_substitutions: HashMap::new(),
         };
         if !Path::new(CONFIG_PATH).exists() {
             config.save().ok();
@@ -72,6 +87,8 @@ impl Default for Config {
     }
 }
 
+// TODO: remove
+#[allow(clippy::cognitive_complexity)]
 fn watch_config() -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = recommended_watcher(tx).context(CreateWatcherSnafu)?;

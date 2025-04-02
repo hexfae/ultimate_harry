@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_config"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 
 [dependencies]
@@ -11,6 +11,7 @@ toml = "0.8.10"
 miette = "7.5.0"
 snafu = "0.8.5"
 tracing = "0.1.41"
+serenity = "0.12.4"
 
 [lints.rust]
 unsafe_code = "forbid"

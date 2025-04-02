@@ -1,12 +1,18 @@
 [package]
 name = "ultimate_character"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 
 [dependencies]
-jiff = "0.2.5"
+bon = "3.5.1"
+jiff = { version = "0.2.5", features = ["serde"] }
+parking_lot = "0.12.3"
+ron = "0.9.0"
+serde = { version = "1.0.219", features = ["derive"] }
 serenity = "0.12.4"
-ulid = "1.2.1"
+snafu = "0.8.5"
+tracing = "0.1.41"
+ulid = { version = "1.2.1", features = ["serde"] }
 
 [lints.rust]
 unsafe_code = "forbid"
