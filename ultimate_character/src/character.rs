@@ -1,22 +1,28 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::{read, write},
-    path::{Path, PathBuf},
+    path::Path,
     sync::LazyLock,
 };
 
 use bon::Builder;
 use jiff::Zoned;
 use parking_lot::RwLock;
+use poise::{
+    CreateReply,
+    serenity_prelude::all::{
+        ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter,
+        CreateMessage, EditMessage, ReactionType, UserId,
+    },
+};
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
-use serenity::all::{
-    ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter,
-    CreateMessage, EditMessage, ReactionType, UserId,
-};
 use snafu::{ResultExt, Snafu};
+use strsim::normalized_damerau_levenshtein;
 use tracing::warn;
 use ulid::Ulid;
+use ultimate_config::CONFIG;
+use ultimate_phrases::{ASK_DELETE_PHRASES, sample};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -42,7 +48,7 @@ enum Error {
 
 impl Characters {
     fn load() -> Result<Self, Error> {
-        if PathBuf::from(CHARACTERS_PATH).exists() {
+        if Path::new(CHARACTERS_PATH).exists() {
             read(CHARACTERS_PATH)
                 .context(ReadSnafu)
                 .and_then(|bytes| {
@@ -72,9 +78,39 @@ impl Characters {
         }
     }
 
+    fn characters(&self) -> Vec<Character> {
+        self.0.values().cloned().collect()
+    }
+
     pub fn insert(&mut self, character: Character) {
         self.0.insert(character.id, character);
         self.save();
+    }
+
+    pub fn get_closest(&self, input: impl AsRef<str>) -> Option<Character> {
+        self.characters()
+            .iter()
+            .filter(|character| character.deleted_by.is_none())
+            .filter(|character| !character.superseded)
+            .map(|character| {
+                (
+                    normalized_damerau_levenshtein(input.as_ref(), &character.name()),
+                    character,
+                )
+            })
+            .max_by(|(a, _), (b, _)| f64::total_cmp(a, b))
+            .map(|(_, character)| character)
+            .cloned()
+    }
+
+    pub fn delete_by_id(&mut self, id: impl Into<Ulid>, user: impl Into<UserId>) -> Option<()> {
+        if let Some(character) = self.0.get_mut(&id.into()) {
+            character.deleted_by = Some(user.into());
+            self.save();
+            Some(())
+        } else {
+            None
+        }
     }
 }
 
@@ -89,11 +125,16 @@ impl Default for Characters {
 }
 
 /// A character.
-#[derive(Serialize, Deserialize, Builder)]
+#[derive(Clone, Serialize, Deserialize, Builder)]
 pub struct Character {
     /// The character's name.
     #[builder(into)]
     name: String,
+    /// The character's nickname.
+    ///
+    /// This is intented to be a short version of the name, to
+    /// more easily start conversations with the character
+    nickname: Option<String>,
     /// A short description of the character.
     ///
     /// This is not read by the model, it is only used for display purposes.
@@ -136,11 +177,10 @@ pub struct Character {
     /// This starts at 0 and increments by 1 with each edit.
     #[builder(default)]
     version: u32,
-    /// Whether the character is "killed."
+    /// If Some, the Discord user ID of the character's deleter.
     ///
-    /// If true, the character will no longer be visible.
-    #[builder(default)]
-    killed: bool,
+    /// If Some, the character will no longer be visible.
+    deleted_by: Option<UserId>,
     /// Whether the character has been superseded (a newer version exists).
     ///
     /// If true, the character will no longer be visible.
@@ -231,6 +271,11 @@ impl Character {
         self.color
     }
 
+    #[must_use]
+    pub const fn id(&self) -> Ulid {
+        self.id
+    }
+
     pub fn to_create_message(&self, id: impl Into<u64>) -> CreateMessage {
         let buttons = create_buttons(id, false);
         let footer = CreateEmbedFooter::new("1/1 | tar 0.0s | 0/4096");
@@ -274,6 +319,49 @@ impl Character {
         }
         EditMessage::new().embed(embed).components(buttons)
     }
+
+    #[must_use]
+    pub fn to_embed_reply(&self) -> CreateReply {
+        let name = &self.name;
+        let greeting = &self.greeting;
+        let description = &self.description;
+        let avatar = &self.avatar;
+        let color = self.color;
+        let conversations = self.conversations_had;
+        let footer = CreateEmbedFooter::new(format!("{conversations} konversationer"));
+
+        let mut embed = CreateEmbed::new()
+            .title(name)
+            .field("Hälsning", greeting, false)
+            .footer(footer);
+
+        if let Some(description) = description {
+            embed = embed.description(description);
+        }
+        if let Some(avatar) = avatar {
+            embed = embed.thumbnail(avatar);
+        }
+        if let Some(color) = color {
+            embed = embed.color(color);
+        }
+        for (user, count) in &self.conversations_had_with_user {
+            embed = embed.field(
+                CONFIG.read().substitute_name(user),
+                count.to_string(),
+                false,
+            );
+        }
+
+        CreateReply::default().embed(embed)
+    }
+
+    #[must_use]
+    pub fn to_confirm_reply(&self, id: impl Into<u64>) -> CreateReply {
+        let buttons = create_confirm_buttons(id);
+        self.to_embed_reply()
+            .content(sample(ASK_DELETE_PHRASES))
+            .components(buttons)
+    }
 }
 
 fn create_buttons(id: impl Into<u64>, finished: bool) -> Vec<CreateActionRow> {
@@ -292,5 +380,19 @@ fn create_buttons(id: impl Into<u64>, finished: bool) -> Vec<CreateActionRow> {
             .disabled(!finished)
             .style(ButtonStyle::Secondary)
             .emoji(ReactionType::Unicode("✎".to_owned())),
+    ])]
+}
+
+fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
+    let id = id.into();
+    let confirm_id = format!("{id}confirm");
+    let cancel_id = format!("{id}cancel");
+    vec![CreateActionRow::Buttons(vec![
+        CreateButton::new(confirm_id)
+            .style(ButtonStyle::Danger)
+            .emoji(ReactionType::Unicode("✅".to_owned())),
+        CreateButton::new(cancel_id)
+            .style(ButtonStyle::Primary)
+            .emoji(ReactionType::Unicode("❌".to_owned())),
     ])]
 }

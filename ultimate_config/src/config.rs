@@ -12,7 +12,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -56,19 +56,22 @@ impl Config {
         }
     }
 
-    fn save(&self) -> Result<()> {
-        toml::to_string_pretty(self)
+    fn save(&self) {
+        if let Err(why) = toml::to_string_pretty(self)
             .context(SerializeSnafu)
             .and_then(|contents| write(CONFIG_PATH, contents).context(WriteSnafu))
+        {
+            warn!("Error while saving config: {why}");
+        }
     }
 
     pub fn model(&self) -> String {
         self.model.clone()
     }
 
-    pub fn substitute_name(&self, user_id: UserId) -> String {
+    pub fn substitute_name(&self, user_id: impl AsRef<UserId>) -> String {
         self.name_substitutions
-            .get(&user_id)
+            .get(user_id.as_ref())
             .cloned()
             .unwrap_or_else(|| "User".to_owned())
     }
@@ -81,7 +84,7 @@ impl Default for Config {
             name_substitutions: HashMap::new(),
         };
         if !Path::new(CONFIG_PATH).exists() {
-            config.save().ok();
+            config.save();
         }
         config
     }

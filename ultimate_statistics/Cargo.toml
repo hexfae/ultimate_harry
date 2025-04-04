@@ -1,0 +1,14 @@
+[package]
+name = "ultimate_statistics"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dashmap = "6.1.0"
+miette = "7.5.0"
+parking_lot = "0.12.3"
+serde = { version = "1.0.219", features = ["derive"] }
+serenity = "0.12.4"
+snafu = "0.8.5"
+toml = "0.8.20"
+tracing = "0.1.41"

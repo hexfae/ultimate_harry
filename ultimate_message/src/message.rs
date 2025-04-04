@@ -11,8 +11,6 @@ use ultimate_config::CONFIG;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
-    #[snafu(display("Expected an OpenAI response, found a discord message"))]
-    NotOpenAiResponse,
     #[snafu(display("The OpenAI response has no choices"))]
     NoChoices,
     #[snafu(display("The OpenAI response has no content"))]
