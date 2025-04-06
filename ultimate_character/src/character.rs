@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Display,
     fs::{read, write},
     path::Path,
     sync::LazyLock,
@@ -22,7 +23,8 @@ use strsim::normalized_damerau_levenshtein;
 use tracing::warn;
 use ulid::Ulid;
 use ultimate_config::CONFIG;
-use ultimate_phrases::{ASK_DELETE_PHRASES, sample};
+use ultimate_modals::{EditModal, SecondEditModal};
+use ultimate_phrases::{NO_PHRASES, YES_PHRASES, sample};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -35,7 +37,7 @@ pub static CHARACTERS: LazyLock<RwLock<Characters>> =
 pub struct Characters(HashMap<Ulid, Character>);
 
 #[derive(Debug, Snafu)]
-enum Error {
+pub enum Error {
     #[snafu(display("Error while reading characters: {source}"))]
     Read { source: std::io::Error },
     #[snafu(display("Error while deserializing characters: {source}"))]
@@ -44,6 +46,8 @@ enum Error {
     Serialize { source: ron::error::Error },
     #[snafu(display("Error while writing characters: {source}"))]
     Write { source: std::io::Error },
+    #[snafu(display("Ingen gubbe hittades, tyvärr!"))]
+    NotFound,
 }
 
 impl Characters {
@@ -87,11 +91,11 @@ impl Characters {
         self.save();
     }
 
-    pub fn get_closest(&self, input: impl AsRef<str>) -> Option<Character> {
+    pub fn get_closest(&self, input: impl AsRef<str>) -> Result<Character> {
         self.characters()
             .iter()
             .filter(|character| character.deleted_by.is_none())
-            .filter(|character| !character.superseded)
+            .filter(|character| character.next_version.is_none())
             .map(|character| {
                 (
                     normalized_damerau_levenshtein(input.as_ref(), &character.name()),
@@ -101,6 +105,39 @@ impl Characters {
             .max_by(|(a, _), (b, _)| f64::total_cmp(a, b))
             .map(|(_, character)| character)
             .cloned()
+            .ok_or(Error::NotFound)
+    }
+
+    #[must_use]
+    pub fn get_all_sorted_by_usage(&self) -> Vec<Character> {
+        let mut characters = self
+            .characters()
+            .iter()
+            .filter(|character| character.deleted_by.is_none())
+            .filter(|character| character.next_version.is_none())
+            .cloned()
+            .collect::<Vec<Character>>();
+        characters.sort_by(|a, b| a.conversations_had.cmp(&b.conversations_had));
+        characters.reverse();
+        characters
+    }
+
+    pub fn get_all_sorted_by_similarity(&self, input: impl AsRef<str>) -> Vec<(f64, Character)> {
+        let mut similarities_and_characters = self
+            .characters()
+            .iter()
+            .filter(|character| character.deleted_by.is_none())
+            .filter(|character| character.next_version.is_none())
+            .map(|character| {
+                (
+                    normalized_damerau_levenshtein(input.as_ref(), &character.name()),
+                    character.to_owned(),
+                )
+            })
+            .collect::<Vec<(f64, Character)>>();
+        similarities_and_characters.sort_by(|(a, _), (b, _)| f64::total_cmp(a, b));
+        similarities_and_characters.reverse();
+        similarities_and_characters
     }
 
     pub fn delete_by_id(&mut self, id: impl Into<Ulid>, user: impl Into<UserId>) -> Option<()> {
@@ -110,6 +147,13 @@ impl Characters {
             Some(())
         } else {
             None
+        }
+    }
+
+    pub fn supersede_by_id(&mut self, old_id: impl Into<Ulid>, new_id: impl Into<Ulid>) {
+        if let Some(character) = self.0.get_mut(&old_id.into()) {
+            character.next_version = Some(new_id.into());
+            self.save();
         }
     }
 }
@@ -130,10 +174,34 @@ pub struct Character {
     /// The character's name.
     #[builder(into)]
     name: String,
+    /// The character's greeting.
+    ///
+    /// This is the first message in every conversation.
+    #[builder(into)]
+    greeting: String,
+    /// The character's unique ID, generated on creation.
+    #[builder(default = Ulid::new())]
+    id: Ulid,
+    /// The Discord user ID of the character's original creator.
+    #[builder(into)]
+    creator: UserId,
+    /// The current version of the character.
+    ///
+    /// This starts at 0 and increments by 1 with each edit.
+    #[builder(default)]
+    version: u32,
+    /// The ID of the next version of the character.
+    ///
+    /// If Some, the character will no longer be visible.
+    next_version: Option<Ulid>,
+    /// The ID of the previous version of the character.
+    ///
+    /// This is used for rollback purposes.
+    previous_version: Option<Ulid>,
     /// The character's nickname.
     ///
     /// This is intented to be a short version of the name, to
-    /// more easily start conversations with the character
+    /// more easily start conversations with the character.
     nickname: Option<String>,
     /// A short description of the character.
     ///
@@ -145,14 +213,18 @@ pub struct Character {
     ///
     /// This is read by the model, as a guide on how to act.
     personality: Option<String>,
-    /// The character's greeting.
+    /// The system prompt, always placed as the latest message.
+    system_prompt: Option<String>,
+    /// The prompt for the character.
     ///
-    /// This is the first message in every conversation.
-    #[builder(into)]
-    greeting: String,
-    /// The character's unique ID, generated on creation.
-    #[builder(default = Ulid::new())]
-    id: Ulid,
+    /// This should be a list of instructions for how the character should
+    /// behave.
+    prompt: Option<String>,
+    /// The scenario for the character.
+    ///
+    /// This is meant as the scene, setting, or location that the character
+    /// starts in.
+    scenario: Option<String>,
     /// The character's avatar's URL.
     ///
     /// Note: Do not set this to the link of an uploaded image on Discord,
@@ -164,28 +236,15 @@ pub struct Character {
     /// Although this is called "emoji", it actually being an emoji is never
     /// enforced.
     emoji: Option<String>,
-    /// The Discord user ID of the character's original creator.
-    #[builder(into)]
-    creator: UserId,
     /// The Discord user IDs of anyone who has ever edited the character, if any.
     #[builder(default)]
     all_editors: HashSet<UserId>,
     /// The Discord user ID of the latest person to edit the character, if any.
     latest_editor: Option<UserId>,
-    /// The current version of the character.
-    ///
-    /// This starts at 0 and increments by 1 with each edit.
-    #[builder(default)]
-    version: u32,
     /// If Some, the Discord user ID of the character's deleter.
     ///
     /// If Some, the character will no longer be visible.
     deleted_by: Option<UserId>,
-    /// Whether the character has been superseded (a newer version exists).
-    ///
-    /// If true, the character will no longer be visible.
-    #[builder(default)]
-    superseded: bool,
     /// The hex color of the character.
     color: Option<Color>,
     /// The time the character was created.
@@ -194,6 +253,8 @@ pub struct Character {
     /// The times the character was edited.
     #[builder(default)]
     edited_at: Vec<Zoned>,
+    /// If Some, the time the character was deleted.
+    deleted_at: Option<Zoned>,
     /// The latest time the character had a conversation with a user.
     latest_conversation: Option<Zoned>,
     /// The number of conversations the character has had with a user.
@@ -221,18 +282,6 @@ pub struct Character {
     /// second is the character's response to that message.
     #[builder(default)]
     example_messages: Vec<(Option<String>, String)>,
-    /// The system prompt, always placed as the latest message.
-    system_prompt: Option<String>,
-    /// The prompt for the character.
-    ///
-    /// This should be a list of instructions for how the character should
-    /// behave.
-    prompt: Option<String>,
-    /// The scenario for the character.
-    ///
-    /// This is meant as the scene, setting, or location that the character
-    /// starts in.
-    scenario: Option<String>,
     /// The frequency penalty for the character.
     ///
     /// If set, this overrides the default frequency penalty for requests.
@@ -249,10 +298,6 @@ pub struct Character {
     ///
     /// If set, this overrides the default top-p value for requests.
     top_p: Option<f32>,
-    /// The previous version of the character.
-    ///
-    /// This is used for rollback purposes.
-    previous_version: Option<Ulid>,
 }
 
 impl Character {
@@ -274,6 +319,58 @@ impl Character {
     #[must_use]
     pub const fn id(&self) -> Ulid {
         self.id
+    }
+
+    #[must_use]
+    pub const fn conversations_had(&self) -> u32 {
+        self.conversations_had
+    }
+
+    pub fn edit_from_modals(
+        &mut self,
+        editor: impl Into<UserId> + Copy,
+        modal: EditModal,
+        second_modal: SecondEditModal,
+    ) {
+        self.latest_editor = Some(editor.into());
+        self.all_editors.insert(editor.into());
+        self.edited_at.push(Zoned::now());
+        self.version += 1;
+        self.previous_version = Some(self.id);
+        self.id = Ulid::new();
+        if let Some(name) = modal.name {
+            self.name = name;
+        }
+        if let Some(greeting) = modal.greeting {
+            self.greeting = greeting;
+        }
+        // the reason why these can't just be `self.foo = bar` is because
+        // if the user doesn't fill in a field, it will be None, and we
+        // don't want to overwrite a potentially existing value
+        if let Some(nickname) = modal.nickname {
+            self.nickname = Some(nickname);
+        }
+        if let Some(description) = modal.description {
+            self.description = Some(description);
+        }
+        if let Some(personality) = modal.personality {
+            self.personality = Some(personality);
+        }
+        if let Some(avatar) = second_modal.avatar {
+            self.avatar = Some(avatar);
+        }
+        if let Some(emoji) = second_modal.emoji {
+            self.emoji = Some(emoji);
+        }
+        if let Some(system_prompt) = second_modal.system_prompt {
+            self.system_prompt = Some(system_prompt);
+        }
+        if let Some(prompt) = second_modal.prompt {
+            self.prompt = Some(prompt);
+        }
+        if let Some(scenario) = second_modal.scenario {
+            self.scenario = Some(scenario);
+        }
     }
 
     pub fn to_create_message(&self, id: impl Into<u64>) -> CreateMessage {
@@ -320,15 +417,13 @@ impl Character {
         EditMessage::new().embed(embed).components(buttons)
     }
 
-    #[must_use]
-    pub fn to_embed_reply(&self) -> CreateReply {
+    pub fn to_embed_with_footer_text(&self, footer_text: impl Into<String>) -> CreateEmbed {
         let name = &self.name;
         let greeting = &self.greeting;
         let description = &self.description;
         let avatar = &self.avatar;
         let color = self.color;
-        let conversations = self.conversations_had;
-        let footer = CreateEmbedFooter::new(format!("{conversations} konversationer"));
+        let footer = CreateEmbedFooter::new(footer_text.into());
 
         let mut embed = CreateEmbed::new()
             .title(name)
@@ -351,16 +446,31 @@ impl Character {
                 false,
             );
         }
+        embed
+    }
 
-        CreateReply::default().embed(embed)
+    pub fn to_embed(&self) -> CreateEmbed {
+        self.to_embed_with_footer_text(format!("{} konversationer", self.conversations_had()))
     }
 
     #[must_use]
-    pub fn to_confirm_reply(&self, id: impl Into<u64>) -> CreateReply {
+    pub fn to_embed_reply(&self) -> CreateReply {
+        CreateReply::default().embed(self.to_embed())
+    }
+
+    #[must_use]
+    pub fn to_confirm_reply(&self, id: impl Into<u64>, content: impl Into<String>) -> CreateReply {
         let buttons = create_confirm_buttons(id);
-        self.to_embed_reply()
-            .content(sample(ASK_DELETE_PHRASES))
-            .components(buttons)
+        self.to_embed_reply().content(content).components(buttons)
+    }
+}
+
+impl Display for Character {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(emoji) = &self.emoji {
+            write!(f, "{emoji} ")?;
+        }
+        write!(f, "{}", self.name())
     }
 }
 
@@ -390,9 +500,9 @@ fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
     vec![CreateActionRow::Buttons(vec![
         CreateButton::new(confirm_id)
             .style(ButtonStyle::Danger)
-            .emoji(ReactionType::Unicode("✅".to_owned())),
+            .label(sample(YES_PHRASES)),
         CreateButton::new(cancel_id)
             .style(ButtonStyle::Primary)
-            .emoji(ReactionType::Unicode("❌".to_owned())),
+            .label(sample(NO_PHRASES)),
     ])]
 }

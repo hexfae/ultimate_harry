@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_harry"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 
 [dependencies]
@@ -12,3 +12,6 @@ ultimate_message = { path = "../ultimate_message" }
 ultimate_config = { path = "../ultimate_config" }
 ultimate_statistics = { path = "../ultimate_statistics" }
 ultimate_phrases = { path = "../ultimate_phrases" }
+ultimate_modals = { path = "../ultimate_modals" }
+nanorand = "0.7.0"
+snafu = "0.8.5"

@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_character"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 
 [dependencies]
@@ -16,11 +16,13 @@ tracing = "0.1.41"
 ulid = { version = "1.2.1", features = ["serde"] }
 ultimate_config = { path = "../ultimate_config" }
 ultimate_phrases = { path = "../ultimate_phrases" }
+ultimate_modals = { path = "../ultimate_modals" }
 
 [lints.rust]
 unsafe_code = "forbid"
 
 [lints.clippy]
+missing-errors-doc = "allow"                 # TODO: remove
 enum_glob_use = "deny"
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }

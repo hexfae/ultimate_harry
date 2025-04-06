@@ -2788,7 +2788,7 @@ dependencies = [
 
 [[package]]
 name = "ultimate_character"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "bon",
  "jiff",
@@ -2801,6 +2801,7 @@ dependencies = [
  "tracing",
  "ulid",
  "ultimate_config",
+ "ultimate_modals",
  "ultimate_phrases",
 ]
 
@@ -2820,14 +2821,17 @@ dependencies = [
 
 [[package]]
 name = "ultimate_harry"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
+ "nanorand",
  "poise",
+ "snafu",
  "tokio",
  "ulid",
  "ultimate_character",
  "ultimate_config",
  "ultimate_message",
+ "ultimate_modals",
  "ultimate_phrases",
  "ultimate_statistics",
 ]
@@ -2845,15 +2849,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ultimate_modals"
+version = "0.0.1"
+dependencies = [
+ "poise",
+]
+
+[[package]]
 name = "ultimate_phrases"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "nanorand",
 ]
 
 [[package]]
 name = "ultimate_statistics"
-version = "0.1.0"
+version = "0.0.2"
 dependencies = [
  "dashmap 6.1.0",
  "miette",

@@ -69,7 +69,7 @@ impl Statistics {
                 statistic.characters_created += 1;
             })
             .or_insert(UserStatistic {
-                conversations_started: 1,
+                characters_created: 1,
                 ..Default::default()
             });
         self.save();
