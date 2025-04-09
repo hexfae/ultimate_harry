@@ -11,7 +11,7 @@ use ultimate_harry::{
     Context, FIVE_SECONDS, ONE_HOUR, ONE_MINUTE, RespondWith, Result,
     delete_invoking_message_if_prefix,
 };
-use ultimate_modals::{EditModal, SecondEditModal};
+use ultimate_modals::{EditCharacterModal, SecondEditCharacterModal};
 use ultimate_phrases::{
     ASK_EDIT_PHRASES, CANCELLED_PHRASES, CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, EDITED_PHRASES,
     NO_CHARACTER_PHRASES, sample,
@@ -75,8 +75,9 @@ async fn confirm_edit(
     interaction: ComponentInteraction,
     mut character: Character,
 ) -> Result<()> {
-    let modal = show_first_modal::<EditModal>(ctx, interaction.clone()).await?;
-    let second_modal = show_second_modal::<SecondEditModal>(ctx, interaction.clone()).await?;
+    let modal = show_first_modal::<EditCharacterModal>(ctx, interaction.clone()).await?;
+    let second_modal =
+        show_second_modal::<SecondEditCharacterModal>(ctx, interaction.clone()).await?;
 
     let old_id = character.id();
 

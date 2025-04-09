@@ -2,7 +2,7 @@ mod commands;
 
 use std::time::Instant;
 
-use commands::character::character;
+use commands::{character, chat};
 use nanorand::{Rng, tls_rng};
 use poise::{
     BoxFuture, Framework, FrameworkContext, FrameworkOptions, PrefixFrameworkOptions,
@@ -19,7 +19,7 @@ const GUILD_ID: GuildId = GuildId::new(1113998071194456195);
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let commands = vec![character()];
+    let commands = vec![character(), chat()];
     let framework: Framework<(), Error> = Framework::builder()
         .options(FrameworkOptions {
             commands,

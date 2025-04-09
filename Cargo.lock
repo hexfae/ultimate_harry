@@ -2788,7 +2788,7 @@ dependencies = [
 
 [[package]]
 name = "ultimate_character"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "bon",
  "jiff",
@@ -2821,15 +2821,17 @@ dependencies = [
 
 [[package]]
 name = "ultimate_harry"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "nanorand",
  "poise",
  "snafu",
  "tokio",
+ "tracing",
  "ulid",
  "ultimate_character",
  "ultimate_config",
+ "ultimate_history",
  "ultimate_message",
  "ultimate_modals",
  "ultimate_phrases",
@@ -2837,20 +2839,37 @@ dependencies = [
 ]
 
 [[package]]
-name = "ultimate_message"
+name = "ultimate_history"
 version = "0.0.1"
+dependencies = [
+ "parking_lot",
+ "ron",
+ "serde",
+ "serenity",
+ "snafu",
+ "tracing",
+ "ulid",
+ "ultimate_character",
+ "ultimate_message",
+]
+
+[[package]]
+name = "ultimate_message"
+version = "0.0.2"
 dependencies = [
  "async-openai",
  "jiff",
+ "serde",
  "serenity",
  "snafu",
+ "ulid",
  "ultimate_character",
  "ultimate_config",
 ]
 
 [[package]]
 name = "ultimate_modals"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "poise",
 ]

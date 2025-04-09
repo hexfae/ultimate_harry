@@ -1,12 +1,14 @@
 use async_openai::types::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestMessage,
-    ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContent,
-    CreateChatCompletionResponse,
+    ChatCompletionRequestSystemMessage, ChatCompletionRequestUserMessage,
+    ChatCompletionRequestUserMessageContent, CreateChatCompletionResponse,
 };
 use jiff::Zoned;
+use serde::{Deserialize, Serialize};
 use serenity::all::{Message as DiscordMessage, UserId};
 use snafu::{OptionExt, Snafu};
-use ultimate_character::Character;
+use ulid::Ulid;
+use ultimate_character::{CHARACTERS, Character};
 use ultimate_config::CONFIG;
 
 #[derive(Debug, Snafu)]
@@ -17,19 +19,34 @@ pub enum Error {
     NoContent,
 }
 
+// TODO: remove debug from everything
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     content: String,
     role: Role,
     timestamp: Zoned,
+    edits: Vec<MessageEdit>,
+    /// The message "revision," 0 is the original (unedited) message, 1 is the
+    /// first edit, 2 is the second edit, etc.
+    chosen_revision: usize,
     original_message: OriginalMessage,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageEdit {
+    timestamp: Zoned,
+    content: String,
+    author: UserId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Role {
     User,
     Assistant,
     System,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 enum OriginalMessage {
     Discord {
         user_id: UserId,
@@ -38,9 +55,96 @@ enum OriginalMessage {
     },
     OpenAi {
         // TODO: maybe store character ids (ulids) instead?
-        character: Box<Character>,
+        character: Ulid,
         response: CreateChatCompletionResponse,
     },
+    Character {
+        character_id: Ulid,
+    },
+    ExampleMessage {
+        user_id: UserId,
+    },
+    System,
+}
+
+impl Message {
+    pub fn new_assistant(content: impl Into<String>, id: impl Into<Ulid>) -> Self {
+        let content = content.into();
+        let id = id.into();
+        Self {
+            content,
+            role: Role::Assistant,
+            timestamp: Zoned::now(),
+            edits: Vec::new(),
+            chosen_revision: 0,
+            original_message: OriginalMessage::Character { character_id: id },
+        }
+    }
+
+    pub fn new_user(content: impl Into<String>, user_id: impl Into<UserId>) -> Self {
+        let content = content.into();
+        let user_id = user_id.into();
+        Self {
+            content,
+            role: Role::User,
+            timestamp: Zoned::now(),
+            edits: Vec::new(),
+            chosen_revision: 0,
+            original_message: OriginalMessage::ExampleMessage { user_id },
+        }
+    }
+
+    pub fn new_system(content: impl Into<String>) -> Self {
+        let content = content.into();
+        Self {
+            content,
+            role: Role::System,
+            timestamp: Zoned::now(),
+            edits: Vec::new(),
+            chosen_revision: 0,
+            original_message: OriginalMessage::System,
+        }
+    }
+
+    pub fn edit(&mut self, content: impl Into<String>, author: impl Into<UserId>) {
+        self.edits.push(MessageEdit {
+            timestamp: Zoned::now(),
+            content: content.into(),
+            author: author.into(),
+        });
+        self.chosen_revision = self.edits.len();
+    }
+
+    pub fn undo(&mut self) -> MessageEdit {
+        if self.chosen_revision == 0 {
+            self.chosen_revision = self.edits.len();
+        } else {
+            self.chosen_revision -= 1;
+        }
+        self.edits[self.chosen_revision].clone()
+    }
+
+    pub fn get_version_content(&self, version: impl Into<usize> + Copy) -> String {
+        match version.into() {
+            0 => self.content.clone(),
+            _ => self.edits[version.into() - 1].content.clone(),
+        }
+    }
+
+    pub fn revisions_len(&self) -> usize {
+        self.edits.len()
+    }
+
+    pub fn editor_of_version(&self, version: impl Into<usize> + Copy) -> Option<UserId> {
+        match version.into() {
+            0 => None,
+            _ => Some(self.edits[version.into() - 1].author),
+        }
+    }
+
+    pub fn set_revision(&mut self, revision: usize) {
+        self.chosen_revision = revision;
+    }
 }
 
 impl TryFrom<(Character, CreateChatCompletionResponse)> for Message {
@@ -52,6 +156,8 @@ impl TryFrom<(Character, CreateChatCompletionResponse)> for Message {
             content: response.clone().try_into_string()?,
             role: Role::Assistant,
             timestamp: Zoned::now(),
+            edits: Vec::new(),
+            chosen_revision: 0,
             original_message: OriginalMessage::from((character, response)),
         })
     }
@@ -68,6 +174,11 @@ impl From<DiscordMessage> for Message {
             content: input.content.clone(),
             role,
             timestamp: Zoned::now(),
+            // TODO: should this be some? i don't think so, because discord
+            // doesn't store the original content of an edited message (at
+            // least not such that i can see it)
+            edits: Vec::new(),
+            chosen_revision: 0,
             original_message: OriginalMessage::from(input),
         }
     }
@@ -83,12 +194,38 @@ impl From<Message> for ChatCompletionRequestMessage {
                 })
             }
             OriginalMessage::OpenAi { character, .. } => {
+                let name = CHARACTERS
+                    .read()
+                    .get_by_id(character)
+                    .map(|character| character.name());
+
                 Self::Assistant(ChatCompletionRequestAssistantMessage {
                     content: Some(input.content.into()),
-                    name: Some(character.name()),
+                    name,
                     ..Default::default()
                 })
             }
+            OriginalMessage::Character { character_id: id } => {
+                let name = CHARACTERS
+                    .read()
+                    .get_by_id(id)
+                    .map(|character| character.name());
+                Self::Assistant(ChatCompletionRequestAssistantMessage {
+                    content: Some(input.content.into()),
+                    name,
+                    ..Default::default()
+                })
+            }
+            OriginalMessage::ExampleMessage { user_id } => {
+                Self::User(ChatCompletionRequestUserMessage {
+                    content: ChatCompletionRequestUserMessageContent::Text(input.content),
+                    name: Some(CONFIG.read().substitute_name(user_id)),
+                })
+            }
+            OriginalMessage::System => Self::System(ChatCompletionRequestSystemMessage {
+                content: input.content.into(),
+                name: Some("System".to_owned()),
+            }),
         }
     }
 }
@@ -106,7 +243,7 @@ impl From<(Character, CreateChatCompletionResponse)> for OriginalMessage {
     fn from(input: (Character, CreateChatCompletionResponse)) -> Self {
         let (character, response) = input;
         Self::OpenAi {
-            character: Box::new(character),
+            character: character.id(),
             response,
         }
     }

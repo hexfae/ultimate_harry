@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["ultimate_character", "ultimate_config", "ultimate_harry", "ultimate_message", "ultimate_modals", "ultimate_phrases", "ultimate_statistics"]
+members = ["ultimate_character", "ultimate_config", "ultimate_harry", "ultimate_history", "ultimate_message", "ultimate_modals", "ultimate_phrases", "ultimate_statistics"]
 
 [profile.release]
 opt-level = "z"

@@ -2,7 +2,7 @@ use poise::Modal;
 
 #[derive(Modal)]
 #[name = "Skapa gubbe"]
-pub struct CreateModal {
+pub struct CreateCharacterModal {
     #[paragraph]
     #[name = "Namn"]
     #[placeholder = "Vad heter din nya skapelse?"]
@@ -27,7 +27,7 @@ pub struct CreateModal {
 
 #[derive(Modal)]
 #[name = "Skapa gubbe"]
-pub struct SecondCreateModal {
+pub struct SecondCreateCharacterModal {
     #[paragraph]
     #[name = "Profilbild"]
     #[placeholder = "En länk till en bild. Använd inte en länk till en bild som du har lagt upp på Discord!"]
@@ -51,7 +51,7 @@ pub struct SecondCreateModal {
 
 #[derive(Modal)]
 #[name = "Ändra gubbe"]
-pub struct EditModal {
+pub struct EditCharacterModal {
     #[paragraph]
     #[name = "Namn"]
     #[placeholder = "Vad ska din perfekta skapelse EGENTLIGEN heta?"]
@@ -76,7 +76,7 @@ pub struct EditModal {
 
 #[derive(Modal)]
 #[name = "Ändra gubbe"]
-pub struct SecondEditModal {
+pub struct SecondEditCharacterModal {
     #[paragraph]
     #[name = "Profilbild"]
     #[placeholder = "En länk till rätt bild. Använd inte en länk till en bild som du har lagt upp på Discord!"]
@@ -96,4 +96,13 @@ pub struct SecondEditModal {
     #[name = "Scenario"]
     #[placeholder = "Scenariot som gubben har funnit sig själv i. Till exempel \"En bensinmack mitt ute i ingenstans.\""]
     pub scenario: Option<String>,
+}
+
+#[derive(Modal)]
+#[name = "Ändra meddelande"]
+pub struct EditMessageModal {
+    #[paragraph]
+    #[name = "Meddelande"]
+    #[placeholder = "Vad ska egentligen stå här?"]
+    pub content: String,
 }

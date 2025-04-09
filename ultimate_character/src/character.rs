@@ -4,6 +4,7 @@ use std::{
     fs::{read, write},
     path::Path,
     sync::LazyLock,
+    time::Duration,
 };
 
 use bon::Builder;
@@ -11,9 +12,12 @@ use jiff::Zoned;
 use parking_lot::RwLock;
 use poise::{
     CreateReply,
-    serenity_prelude::all::{
-        ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter,
-        CreateMessage, EditMessage, ReactionType, UserId,
+    serenity_prelude::{
+        CreateInteractionResponse, CreateInteractionResponseMessage, ReactionType,
+        all::{
+            ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter,
+            CreateMessage, EditMessage, UserId,
+        },
     },
 };
 use ron::ser::PrettyConfig;
@@ -23,7 +27,7 @@ use strsim::normalized_damerau_levenshtein;
 use tracing::warn;
 use ulid::Ulid;
 use ultimate_config::CONFIG;
-use ultimate_modals::{EditModal, SecondEditModal};
+use ultimate_modals::{EditCharacterModal, SecondEditCharacterModal};
 use ultimate_phrases::{NO_PHRASES, YES_PHRASES, sample};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
@@ -140,6 +144,10 @@ impl Characters {
         similarities_and_characters
     }
 
+    pub fn get_by_id(&self, id: impl Into<Ulid>) -> Option<Character> {
+        self.0.get(&id.into()).cloned()
+    }
+
     pub fn delete_by_id(&mut self, id: impl Into<Ulid>, user: impl Into<UserId>) -> Option<()> {
         if let Some(character) = self.0.get_mut(&id.into()) {
             character.deleted_by = Some(user.into());
@@ -169,7 +177,7 @@ impl Default for Characters {
 }
 
 /// A character.
-#[derive(Clone, Serialize, Deserialize, Builder)]
+#[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct Character {
     /// The character's name.
     #[builder(into)]
@@ -213,13 +221,13 @@ pub struct Character {
     ///
     /// This is read by the model, as a guide on how to act.
     personality: Option<String>,
-    /// The system prompt, always placed as the latest message.
-    system_prompt: Option<String>,
     /// The prompt for the character.
     ///
     /// This should be a list of instructions for how the character should
     /// behave.
     prompt: Option<String>,
+    /// The system prompt, always placed as the latest message.
+    system_prompt: Option<String>,
     /// The scenario for the character.
     ///
     /// This is meant as the scene, setting, or location that the character
@@ -307,6 +315,36 @@ impl Character {
     }
 
     #[must_use]
+    pub fn greeting(&self) -> String {
+        self.greeting.clone()
+    }
+
+    #[must_use]
+    pub fn personality(&self) -> Option<String> {
+        self.personality.clone()
+    }
+
+    #[must_use]
+    pub fn prompt(&self) -> Option<String> {
+        self.prompt.clone()
+    }
+
+    #[must_use]
+    pub fn system_prompt(&self) -> Option<String> {
+        self.system_prompt.clone()
+    }
+
+    #[must_use]
+    pub fn scenario(&self) -> Option<String> {
+        self.scenario.clone()
+    }
+
+    #[must_use]
+    pub fn example_messages(&self) -> Vec<(Option<String>, String)> {
+        self.example_messages.clone()
+    }
+
+    #[must_use]
     pub fn avatar(&self) -> Option<String> {
         self.avatar.clone()
     }
@@ -329,8 +367,8 @@ impl Character {
     pub fn edit_from_modals(
         &mut self,
         editor: impl Into<UserId> + Copy,
-        modal: EditModal,
-        second_modal: SecondEditModal,
+        modal: EditCharacterModal,
+        second_modal: SecondEditCharacterModal,
     ) {
         self.latest_editor = Some(editor.into());
         self.all_editors.insert(editor.into());
@@ -374,7 +412,13 @@ impl Character {
     }
 
     pub fn to_create_message(&self, id: impl Into<u64>) -> CreateMessage {
-        let buttons = create_buttons(id, false);
+        let buttons = create_buttons(
+            id,
+            HasPrevious::No,
+            HasFinished::No,
+            HasUndo::No,
+            HasRedo::No,
+        );
         let footer = CreateEmbedFooter::new("1/1 | tar 0.0s | 0/4096");
         let mut embed = CreateEmbed::new()
             .title(self.name())
@@ -395,13 +439,13 @@ impl Character {
         index: impl Into<usize>,
         input: impl Into<String>,
         elapsed: impl Into<f64>,
-        finished: bool,
+        finished: HasFinished,
     ) -> EditMessage {
         let index = index.into();
         let input = input.into();
         let elapsed = elapsed.into();
         let len = input.len();
-        let buttons = create_buttons(id, finished);
+        let buttons = create_buttons(id, HasPrevious::No, finished, HasUndo::No, HasRedo::No);
         let footer_text = format!("{index}/{index} | tar {elapsed}s | {len}/4096");
         let footer = CreateEmbedFooter::new(footer_text);
         let mut embed = CreateEmbed::new()
@@ -415,6 +459,192 @@ impl Character {
             embed = embed.color(color);
         }
         EditMessage::new().embed(embed).components(buttons)
+    }
+
+    // it is necessary
+    #[allow(clippy::too_many_arguments)]
+    pub fn master_reply(
+        &self,
+        id: impl Into<u64>,
+        // (current, total)
+        content_pages: (usize, usize),
+        // (current, total, editor (None if message is unedited))
+        edit_pages_and_editor: (usize, usize, Option<impl Into<UserId>>),
+        similarity: Option<f64>,
+        content: impl Into<String>,
+        elapsed: Option<Duration>,
+        has_finished: HasFinished,
+        has_previous: HasPrevious,
+        has_undo: HasUndo,
+        has_redo: HasRedo,
+    ) -> CreateReply {
+        let name = &self.name;
+        let content = content.into();
+        let avatar = &self.avatar;
+        let color = self.color;
+
+        let footer = {
+            let pages = if content_pages.1 == 0 {
+                String::new()
+            } else {
+                format!("{}/{}", content_pages.0 + 1, content_pages.1)
+            };
+
+            let elapsed = elapsed.map_or_else(String::new, |elapsed| {
+                if has_finished == HasFinished::Yes {
+                    format!(" | tog {:.1}s", elapsed.as_secs_f64())
+                } else {
+                    format!(" | tar {:.1}s", elapsed.as_secs_f64())
+                }
+            });
+
+            let similarity = similarity.map_or_else(String::new, |similarity| {
+                format!(" | {:.0}% namnlikhet", similarity * 100.0)
+            });
+
+            let editor = edit_pages_and_editor.2.map_or_else(String::new, |editor| {
+                format!(
+                    "(redigerad av {})",
+                    CONFIG.read().substitute_name(editor.into())
+                )
+            });
+
+            let edit_pages = if edit_pages_and_editor.1 == 0 {
+                String::new()
+            } else {
+                format!(
+                    " | {}/{} {}",
+                    edit_pages_and_editor.0 + 1,
+                    edit_pages_and_editor.1 + 1,
+                    editor
+                )
+            };
+
+            let len = format!(" | {}/4096", content.len());
+
+            let footer = format!("{pages}{similarity}{elapsed}{len}{edit_pages}");
+            CreateEmbedFooter::new(footer)
+        };
+
+        let mut embed = CreateEmbed::new()
+            .title(name)
+            .description(content)
+            .footer(footer);
+
+        if let Some(avatar) = avatar {
+            embed = embed.thumbnail(avatar);
+        }
+        if let Some(color) = color {
+            embed = embed.color(color);
+        }
+
+        let components = create_buttons(id, has_previous, has_finished, has_undo, has_redo);
+
+        CreateReply::default().embed(embed).components(components)
+    }
+
+    pub fn to_reply_with_similarity_from_message_edit(
+        &self,
+        id: impl Into<u64> + Copy,
+        similarity: f64,
+        content: impl Into<String>,
+    ) -> CreateReply {
+        let (embed, components) = self.to_greeting_embed_with_similarity_and_message_buttons(
+            id,
+            similarity,
+            content.into(),
+        );
+
+        CreateReply::default().embed(embed).components(components)
+    }
+
+    pub fn to_greeting_reply_with_similarity_and_message(
+        &self,
+        id: impl Into<u64> + Copy,
+        similarity: f64,
+        message: impl Into<String>,
+    ) -> CreateReply {
+        let (embed, components) =
+            self.to_greeting_embed_with_similarity_and_message_buttons(id, similarity, message);
+
+        CreateReply::default().embed(embed).components(components)
+    }
+
+    #[must_use]
+    pub fn to_greeting_reply_with_similarity(
+        &self,
+        id: impl Into<u64> + Copy,
+        similarity: f64,
+    ) -> CreateReply {
+        self.to_greeting_reply_with_similarity_and_message(id, similarity, self.greeting())
+    }
+
+    pub fn to_greeting_embed_with_similarity_and_message_buttons(
+        &self,
+        id: impl Into<u64>,
+        similarity: f64,
+        message: impl Into<String>,
+    ) -> (CreateEmbed, Vec<CreateActionRow>) {
+        let name = &self.name;
+        let content = message.into();
+        let avatar = &self.avatar;
+        let color = self.color;
+        let footer = CreateEmbedFooter::new(format!("{:.0}% namnlikhet", similarity * 100.0));
+        let mut embed = CreateEmbed::new()
+            .title(name)
+            .description(content)
+            .footer(footer);
+
+        if let Some(avatar) = avatar {
+            embed = embed.thumbnail(avatar);
+        }
+        if let Some(color) = color {
+            embed = embed.color(color);
+        }
+        let components = create_buttons(
+            id,
+            HasPrevious::Yes,
+            HasFinished::Yes,
+            HasUndo::No,
+            HasRedo::No,
+        );
+        (embed, components)
+    }
+
+    pub fn to_create_interaction_response(
+        &self,
+        id: impl Into<u64>,
+        similarity: f64,
+        custom_message: impl Into<String>,
+    ) -> CreateInteractionResponse {
+        let name = &self.name;
+        let content = custom_message.into();
+        let avatar = &self.avatar;
+        let color = self.color;
+        let components = create_buttons(
+            id,
+            HasPrevious::No,
+            HasFinished::Yes,
+            HasUndo::No,
+            HasRedo::No,
+        );
+        let footer = CreateEmbedFooter::new(format!("{:.0}% namnlikhet", similarity * 100.0));
+        let mut embed = CreateEmbed::new()
+            .title(name)
+            .description(content)
+            .footer(footer);
+
+        if let Some(avatar) = avatar {
+            embed = embed.thumbnail(avatar);
+        }
+        if let Some(color) = color {
+            embed = embed.color(color);
+        }
+        CreateInteractionResponse::UpdateMessage(
+            CreateInteractionResponseMessage::new()
+                .embed(embed)
+                .components(components),
+        )
     }
 
     pub fn to_embed_with_footer_text(&self, footer_text: impl Into<String>) -> CreateEmbed {
@@ -474,22 +704,48 @@ impl Display for Character {
     }
 }
 
-fn create_buttons(id: impl Into<u64>, finished: bool) -> Vec<CreateActionRow> {
+// having to do
+#[allow(clippy::needless_pass_by_value)]
+fn create_buttons(
+    id: impl Into<u64>,
+    previous: HasPrevious,
+    finished: HasFinished,
+    undo: HasUndo,
+    redo: HasRedo,
+) -> Vec<CreateActionRow> {
     let id = id.into();
-    let prev_id = format!("{id}prev");
-    let next_id = format!("{id}next");
-    let edit_id = format!("{id}edit");
+    let prev_msg_id = format!("{id}prev");
+    let next_msg_id = format!("{id}next");
+    let edit_msg_id = format!("{id}edit");
+    let undo_id = format!("{id}undo");
+    let redo_id = format!("{id}redo");
+
+    let has_finished = finished == HasFinished::Yes;
+    let has_previous = previous == HasPrevious::Yes;
+    let has_undo = undo == HasUndo::Yes;
+    let has_redo = redo == HasRedo::Yes;
+
     vec![CreateActionRow::Buttons(vec![
-        CreateButton::new(prev_id)
-            .disabled(!finished)
-            .emoji(ReactionType::Unicode("◀".to_owned())),
-        CreateButton::new(next_id)
-            .disabled(!finished)
-            .emoji(ReactionType::Unicode("▶".to_owned())),
-        CreateButton::new(edit_id)
-            .disabled(!finished)
+        CreateButton::new(prev_msg_id)
+            .disabled(!has_finished || !has_previous)
             .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode("✎".to_owned())),
+            .emoji(ReactionType::Unicode("⬅️".to_owned())),
+        CreateButton::new(next_msg_id)
+            .disabled(!has_finished)
+            .style(ButtonStyle::Secondary)
+            .emoji(ReactionType::Unicode("➡️".to_owned())),
+        CreateButton::new(edit_msg_id)
+            .disabled(!has_finished)
+            .style(ButtonStyle::Secondary)
+            .emoji(ReactionType::Unicode("✏️".to_owned())),
+        CreateButton::new(undo_id)
+            .disabled(!has_undo)
+            .style(ButtonStyle::Secondary)
+            .emoji(ReactionType::Unicode("↩️".to_owned())),
+        CreateButton::new(redo_id)
+            .disabled(!has_redo)
+            .style(ButtonStyle::Secondary)
+            .emoji(ReactionType::Unicode("↪️".to_owned())),
     ])]
 }
 
@@ -505,4 +761,34 @@ fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
             .style(ButtonStyle::Primary)
             .label(sample(NO_PHRASES)),
     ])]
+}
+
+/// If this message has a previous version (a previous page).
+///
+/// Note that this should be `Self::Yes` if the current page is the first page
+/// and there are multiple pages (to allow wrapping around to the last page).
+/// The only time this should be `Self::No` is if this is the first (and only)
+/// page.
+#[derive(PartialEq, Eq)]
+pub enum HasPrevious {
+    Yes,
+    No,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum HasFinished {
+    Yes,
+    No,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum HasUndo {
+    Yes,
+    No,
+}
+
+#[derive(PartialEq, Eq)]
+pub enum HasRedo {
+    Yes,
+    No,
 }

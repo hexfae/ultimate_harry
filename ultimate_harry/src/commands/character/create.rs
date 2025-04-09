@@ -5,7 +5,7 @@ use poise::{
 use snafu::Snafu;
 use ultimate_character::{CHARACTERS, Character};
 use ultimate_harry::{Context, FIVE_SECONDS, ONE_HOUR, Result, delete_invoking_message_if_prefix};
-use ultimate_modals::{CreateModal, SecondCreateModal};
+use ultimate_modals::{CreateCharacterModal, SecondCreateCharacterModal};
 use ultimate_phrases::{CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, CREATED_PHRASES, sample};
 use ultimate_statistics::STATISTICS;
 
@@ -17,7 +17,8 @@ enum CreateError {
 
 #[poise::command(slash_command, prefix_command, rename = "skapa")]
 pub async fn create(ctx: Context<'_>) -> Result<()> {
-    let (modal, second_modal) = show_two_modals::<CreateModal, SecondCreateModal>(ctx).await?;
+    let (modal, second_modal) =
+        show_two_modals::<CreateCharacterModal, SecondCreateCharacterModal>(ctx).await?;
 
     let character = Character::builder()
         .name(modal.name)

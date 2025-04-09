@@ -2,7 +2,8 @@
 
 mod modals;
 
-pub use modals::CreateModal;
-pub use modals::EditModal;
-pub use modals::SecondCreateModal;
-pub use modals::SecondEditModal;
+pub use modals::CreateCharacterModal;
+pub use modals::EditCharacterModal;
+pub use modals::EditMessageModal;
+pub use modals::SecondCreateCharacterModal;
+pub use modals::SecondEditCharacterModal;

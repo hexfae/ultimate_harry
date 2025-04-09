@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_message"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 
 [dependencies]
@@ -10,3 +10,5 @@ ultimate_config = { path = "../ultimate_config" }
 ultimate_character = { path = "../ultimate_character" }
 snafu = "0.8.5"
 jiff = { version = "0.2.5", features = ["serde"] }
+ulid = "1.2.1"
+serde = { version = "1.0.219", features = ["derive"] }
