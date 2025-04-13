@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_harry"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 
 [dependencies]
@@ -17,3 +17,14 @@ ultimate_history = { path = "../ultimate_history" }
 nanorand = "0.7.0"
 snafu = "0.8.5"
 tracing = "0.1.41"
+miette = "7.5.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+missing-errors-doc = "allow"                 # TODO: remove
+enum_glob_use = "deny"
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"

@@ -27,8 +27,11 @@ use strsim::normalized_damerau_levenshtein;
 use tracing::warn;
 use ulid::Ulid;
 use ultimate_config::CONFIG;
-use ultimate_modals::{EditCharacterModal, SecondEditCharacterModal};
+use ultimate_modals::{
+    CreateCharacterModal, EditCharacterModal, SecondCreateCharacterModal, SecondEditCharacterModal,
+};
 use ultimate_phrases::{NO_PHRASES, YES_PHRASES, sample};
+use url::Url;
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -376,15 +379,18 @@ impl Character {
         self.version += 1;
         self.previous_version = Some(self.id);
         self.id = Ulid::new();
+        let avatar = second_modal
+            .avatar
+            .and_then(|a| Url::parse(&a).ok().map(|_| a));
+        // the reason why these can't just be `self.foo = bar` is because
+        // if the user doesn't fill in a field, it will be None, and we
+        // don't want to overwrite a potentially existing value
         if let Some(name) = modal.name {
             self.name = name;
         }
         if let Some(greeting) = modal.greeting {
             self.greeting = greeting;
         }
-        // the reason why these can't just be `self.foo = bar` is because
-        // if the user doesn't fill in a field, it will be None, and we
-        // don't want to overwrite a potentially existing value
         if let Some(nickname) = modal.nickname {
             self.nickname = Some(nickname);
         }
@@ -394,7 +400,7 @@ impl Character {
         if let Some(personality) = modal.personality {
             self.personality = Some(personality);
         }
-        if let Some(avatar) = second_modal.avatar {
+        if let Some(avatar) = avatar {
             self.avatar = Some(avatar);
         }
         if let Some(emoji) = second_modal.emoji {
@@ -693,6 +699,41 @@ impl Character {
         let buttons = create_confirm_buttons(id);
         self.to_embed_reply().content(content).components(buttons)
     }
+
+    #[must_use]
+    pub fn to_confirm_interaction_response(
+        &self,
+        id: impl Into<u64>,
+        content: impl Into<String>,
+    ) -> CreateInteractionResponse {
+        let buttons = create_confirm_buttons(id);
+        CreateInteractionResponse::UpdateMessage(
+            CreateInteractionResponseMessage::new()
+                .content(content.into())
+                .components(buttons),
+        )
+    }
+}
+
+impl From<(CreateCharacterModal, SecondCreateCharacterModal, UserId)> for Character {
+    fn from(
+        (first, second, creator): (CreateCharacterModal, SecondCreateCharacterModal, UserId),
+    ) -> Self {
+        let avatar = second.avatar.and_then(|a| Url::parse(&a).ok().map(|_| a));
+        Self::builder()
+            .name(first.name)
+            .greeting(first.greeting)
+            .maybe_nickname(first.nickname)
+            .maybe_description(first.description)
+            .maybe_personality(first.personality)
+            .maybe_avatar(avatar)
+            .maybe_emoji(second.emoji)
+            .creator(creator)
+            .maybe_system_prompt(second.system_prompt)
+            .maybe_prompt(second.prompt)
+            .maybe_scenario(second.scenario)
+            .build()
+    }
 }
 
 impl Display for Character {
@@ -755,10 +796,10 @@ fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
     let cancel_id = format!("{id}cancel");
     vec![CreateActionRow::Buttons(vec![
         CreateButton::new(confirm_id)
-            .style(ButtonStyle::Danger)
+            .style(ButtonStyle::Secondary)
             .label(sample(YES_PHRASES)),
         CreateButton::new(cancel_id)
-            .style(ButtonStyle::Primary)
+            .style(ButtonStyle::Secondary)
             .label(sample(NO_PHRASES)),
     ])]
 }

@@ -58,7 +58,7 @@ impl Statistics {
             .context(SerializeSnafu)
             .and_then(|contents| write(STATISTICS_PATH, contents).context(WriteSnafu))
         {
-            warn!("Error while saving statistics: {why}")
+            warn!("Error while saving statistics: {why}");
         }
     }
 
@@ -68,7 +68,7 @@ impl Statistics {
             .and_modify(|statistic| {
                 statistic.characters_created += 1;
             })
-            .or_insert(UserStatistic {
+            .or_insert_with(|| UserStatistic {
                 characters_created: 1,
                 ..Default::default()
             });
@@ -81,7 +81,7 @@ impl Statistics {
             .and_modify(|statistic| {
                 statistic.characters_edited += 1;
             })
-            .or_insert(UserStatistic {
+            .or_insert_with(|| UserStatistic {
                 characters_edited: 1,
                 ..Default::default()
             });
@@ -94,7 +94,7 @@ impl Statistics {
             .and_modify(|statistic| {
                 statistic.characters_viewed += 1;
             })
-            .or_insert(UserStatistic {
+            .or_insert_with(|| UserStatistic {
                 characters_viewed: 1,
                 ..Default::default()
             });
@@ -107,7 +107,7 @@ impl Statistics {
             .and_modify(|statistic| {
                 statistic.characters_deleted += 1;
             })
-            .or_insert(UserStatistic {
+            .or_insert_with(|| UserStatistic {
                 characters_deleted: 1,
                 ..Default::default()
             });
@@ -120,7 +120,7 @@ impl Statistics {
             .and_modify(|statistic| {
                 statistic.conversations_started += 1;
             })
-            .or_insert(UserStatistic {
+            .or_insert_with(|| UserStatistic {
                 conversations_started: 1,
                 ..Default::default()
             });

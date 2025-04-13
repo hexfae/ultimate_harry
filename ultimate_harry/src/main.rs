@@ -1,8 +1,5 @@
-mod commands;
-
-use std::time::Instant;
-
 use commands::{character, chat};
+use miette::{IntoDiagnostic, Report};
 use nanorand::{Rng, tls_rng};
 use poise::{
     BoxFuture, Framework, FrameworkContext, FrameworkOptions, PrefixFrameworkOptions,
@@ -10,17 +7,19 @@ use poise::{
         ActivityData, ActivityType, ClientBuilder, Context, FullEvent, GatewayIntents, GuildId,
     },
 };
-use ultimate_harry::{Error, ONE_MINUTE, Result};
+use std::{thread::sleep, time::Instant};
+use ultimate_harry::{ONE_MINUTE, Result, commands};
 
 const TOKEN: &str = "REDACTED_DISCORD_TOKEN";
 const INTENTS: GatewayIntents =
     GatewayIntents::non_privileged().union(GatewayIntents::MESSAGE_CONTENT);
+#[allow(clippy::unreadable_literal)] // doesn't make sense for a guild id
 const GUILD_ID: GuildId = GuildId::new(1113998071194456195);
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> Result<(), Report> {
     let commands = vec![character(), chat()];
-    let framework: Framework<(), Error> = Framework::builder()
+    let framework: Framework<(), Report> = Framework::builder()
         .options(FrameworkOptions {
             commands,
             event_handler,
@@ -33,25 +32,31 @@ async fn main() -> Result<()> {
         .setup(|ctx, _, framework| {
             Box::pin(async move {
                 poise::builtins::register_in_guild(ctx, &framework.options().commands, GUILD_ID)
-                    .await?;
+                    .await
+                    .into_diagnostic()?;
                 Ok(())
             })
         })
         .build();
-    Ok(ClientBuilder::new(TOKEN, INTENTS)
+    ClientBuilder::new(TOKEN, INTENTS)
         .framework(framework)
-        .await?
+        .await
+        .into_diagnostic()?
         .start()
-        .await?)
+        .await
+        .into_diagnostic()
 }
 
+// poise event_handler requires it to be borrowed
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn event_handler<'a>(
     ctx: &'a Context,
     event: &'a FullEvent,
-    _framework: FrameworkContext<'_, (), Error>,
+    _framework: FrameworkContext<'_, (), Report>,
     _: &(),
-) -> BoxFuture<'a, Result<(), Error>> {
+) -> BoxFuture<'a, Result<(), Report>> {
     if let FullEvent::Ready { .. } = event {
+        println!("ready");
         Box::pin(async move {
             let ctx = ctx.clone();
             tokio::spawn(async move {
@@ -73,7 +78,7 @@ fn event_handler<'a>(
                         )),
                         url: None,
                     }));
-                    std::thread::sleep(ONE_MINUTE);
+                    sleep(ONE_MINUTE);
                     let new_kills: u32 = rng.generate_range(0..=1010);
                     let new_assists: u32 = rng.generate_range(0..=1020);
                     let new_deaths: u32 = rng.generate_range(0..=1040);

@@ -12,3 +12,13 @@ serenity = "0.12.4"
 snafu = "0.8.5"
 toml = "0.8.20"
 tracing = "0.1.41"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+missing-errors-doc = "allow"                 # TODO: remove
+enum_glob_use = "deny"
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"

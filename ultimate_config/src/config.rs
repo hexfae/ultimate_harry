@@ -9,7 +9,7 @@ use std::{
     fs::{read_to_string, write},
     path::{Path, PathBuf},
     sync::LazyLock,
-    thread,
+    thread::sleep,
     time::{Duration, Instant},
 };
 use tracing::{error, info, warn};
@@ -120,7 +120,7 @@ fn watch_config() -> Result<()> {
                 }
 
                 if debounced && config_file_exists {
-                    thread::sleep(post_event_delay);
+                    sleep(post_event_delay);
                     match Config::load() {
                         Err(e) => error!("Failed to reload config: {e:?}"),
                         Ok(new_config) => {

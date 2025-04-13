@@ -104,7 +104,7 @@ impl Default for Histories {
 // TODO: remove debug from everything
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct History {
-    history: Vec<(MessageType, Message)>,
+    previous: Vec<(MessageType, Message)>,
     seconds_taken_and_choices: Vec<(Duration, (MessageType, Message))>,
     current_page: usize,
     character: Ulid,
@@ -129,7 +129,7 @@ pub enum MessageType {
 
 impl History {
     pub fn edit_content(&mut self, content: impl Into<String>, author: impl Into<UserId>) {
-        if let Some((_, msg)) = self.history.last_mut() {
+        if let Some((_, msg)) = self.previous.last_mut() {
             msg.edit(content, author);
         }
     }
@@ -139,7 +139,7 @@ impl History {
     }
 
     pub fn undo(&mut self) -> Option<MessageEdit> {
-        if let Some((_, msg)) = self.history.last_mut() {
+        if let Some((_, msg)) = self.previous.last_mut() {
             Some(msg.undo())
         } else {
             None
@@ -149,11 +149,17 @@ impl History {
     /// # Panics
     ///
     /// Since a history will never be empty, this will never panic.
+    #[must_use]
     pub fn last(&self) -> Message {
-        self.history.last().unwrap().1.clone()
+        self.previous
+            .last()
+            .expect("history is never empty")
+            .1
+            .clone()
     }
 
-    pub fn character(&self) -> Ulid {
+    #[must_use]
+    pub const fn character(&self) -> Ulid {
         self.character
     }
 }
@@ -225,7 +231,7 @@ impl From<(Character, MessageId, UserId)> for History {
         ));
 
         Self {
-            history,
+            previous: history,
             seconds_taken_and_choices: Vec::new(),
             current_page: 0,
             character: character.id(),

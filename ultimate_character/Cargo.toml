@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_character"
-version = "0.0.5"
+version = "0.0.6"
 edition = "2024"
 
 [dependencies]
@@ -17,6 +17,7 @@ ulid = { version = "1.2.1", features = ["serde"] }
 ultimate_config = { path = "../ultimate_config" }
 ultimate_phrases = { path = "../ultimate_phrases" }
 ultimate_modals = { path = "../ultimate_modals" }
+url = "2.5.4"
 
 [lints.rust]
 unsafe_code = "forbid"

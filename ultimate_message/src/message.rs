@@ -29,7 +29,7 @@ pub struct Message {
     /// The message "revision," 0 is the original (unedited) message, 1 is the
     /// first edit, 2 is the second edit, etc.
     chosen_revision: usize,
-    original_message: OriginalMessage,
+    original: Original,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -47,7 +47,7 @@ pub enum Role {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum OriginalMessage {
+enum Original {
     Discord {
         user_id: UserId,
         // TODO: maybe store message ids and make a MESSAGES file/static instead?
@@ -77,7 +77,7 @@ impl Message {
             timestamp: Zoned::now(),
             edits: Vec::new(),
             chosen_revision: 0,
-            original_message: OriginalMessage::Character { character_id: id },
+            original: Original::Character { character_id: id },
         }
     }
 
@@ -90,7 +90,7 @@ impl Message {
             timestamp: Zoned::now(),
             edits: Vec::new(),
             chosen_revision: 0,
-            original_message: OriginalMessage::ExampleMessage { user_id },
+            original: Original::ExampleMessage { user_id },
         }
     }
 
@@ -102,7 +102,7 @@ impl Message {
             timestamp: Zoned::now(),
             edits: Vec::new(),
             chosen_revision: 0,
-            original_message: OriginalMessage::System,
+            original: Original::System,
         }
     }
 
@@ -131,7 +131,8 @@ impl Message {
         }
     }
 
-    pub fn revisions_len(&self) -> usize {
+    #[must_use]
+    pub const fn revisions_len(&self) -> usize {
         self.edits.len()
     }
 
@@ -142,7 +143,7 @@ impl Message {
         }
     }
 
-    pub fn set_revision(&mut self, revision: usize) {
+    pub const fn set_revision(&mut self, revision: usize) {
         self.chosen_revision = revision;
     }
 }
@@ -158,7 +159,7 @@ impl TryFrom<(Character, CreateChatCompletionResponse)> for Message {
             timestamp: Zoned::now(),
             edits: Vec::new(),
             chosen_revision: 0,
-            original_message: OriginalMessage::from((character, response)),
+            original: Original::from((character, response)),
         })
     }
 }
@@ -179,21 +180,21 @@ impl From<DiscordMessage> for Message {
             // least not such that i can see it)
             edits: Vec::new(),
             chosen_revision: 0,
-            original_message: OriginalMessage::from(input),
+            original: Original::from(input),
         }
     }
 }
 
 impl From<Message> for ChatCompletionRequestMessage {
     fn from(input: Message) -> Self {
-        match input.original_message {
-            OriginalMessage::Discord { user_id, .. } => {
+        match input.original {
+            Original::Discord { user_id, .. } | Original::ExampleMessage { user_id, .. } => {
                 Self::User(ChatCompletionRequestUserMessage {
                     content: ChatCompletionRequestUserMessageContent::Text(input.content),
                     name: Some(CONFIG.read().substitute_name(user_id)),
                 })
             }
-            OriginalMessage::OpenAi { character, .. } => {
+            Original::OpenAi { character, .. } => {
                 let name = CHARACTERS
                     .read()
                     .get_by_id(character)
@@ -205,7 +206,7 @@ impl From<Message> for ChatCompletionRequestMessage {
                     ..Default::default()
                 })
             }
-            OriginalMessage::Character { character_id: id } => {
+            Original::Character { character_id: id } => {
                 let name = CHARACTERS
                     .read()
                     .get_by_id(id)
@@ -216,13 +217,7 @@ impl From<Message> for ChatCompletionRequestMessage {
                     ..Default::default()
                 })
             }
-            OriginalMessage::ExampleMessage { user_id } => {
-                Self::User(ChatCompletionRequestUserMessage {
-                    content: ChatCompletionRequestUserMessageContent::Text(input.content),
-                    name: Some(CONFIG.read().substitute_name(user_id)),
-                })
-            }
-            OriginalMessage::System => Self::System(ChatCompletionRequestSystemMessage {
+            Original::System => Self::System(ChatCompletionRequestSystemMessage {
                 content: input.content.into(),
                 name: Some("System".to_owned()),
             }),
@@ -230,7 +225,7 @@ impl From<Message> for ChatCompletionRequestMessage {
     }
 }
 
-impl From<DiscordMessage> for OriginalMessage {
+impl From<DiscordMessage> for Original {
     fn from(input: DiscordMessage) -> Self {
         Self::Discord {
             user_id: input.author.id,
@@ -239,7 +234,7 @@ impl From<DiscordMessage> for OriginalMessage {
     }
 }
 
-impl From<(Character, CreateChatCompletionResponse)> for OriginalMessage {
+impl From<(Character, CreateChatCompletionResponse)> for Original {
     fn from(input: (Character, CreateChatCompletionResponse)) -> Self {
         let (character, response) = input;
         Self::OpenAi {

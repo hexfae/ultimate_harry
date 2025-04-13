@@ -1,88 +1,98 @@
-use poise::{
-    CreateReply, Modal, ReplyHandle, execute_modal_on_component_interaction,
-    serenity_prelude::{ComponentInteractionCollector, CreateActionRow, CreateButton},
+use std::fmt::Display;
+
+use crate::{
+    Context, DeferEphemeralOrBroadcast, EditMessageSnafu, FIVE_SECONDS, ONE_MINUTE, Result,
+    SendMessageSnafu,
+    traits::{DeleteSelfAndInvokingMessageIfPrefix, EditWith, ShowModal},
 };
-use snafu::Snafu;
+use miette::Report;
+use poise::{
+    CreateReply, Modal, ReplyHandle,
+    serenity_prelude::{
+        ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateButton,
+    },
+};
+use snafu::ResultExt;
+use tokio::time::sleep;
 use ultimate_character::{CHARACTERS, Character};
-use ultimate_harry::{Context, FIVE_SECONDS, ONE_HOUR, Result, delete_invoking_message_if_prefix};
 use ultimate_modals::{CreateCharacterModal, SecondCreateCharacterModal};
-use ultimate_phrases::{CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, CREATED_PHRASES, sample};
+use ultimate_phrases::{
+    CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, CREATED_PHRASES, TIMEOUT_PHRASES, sample, sample_name,
+};
 use ultimate_statistics::STATISTICS;
 
-#[derive(Debug, Snafu)]
-enum CreateError {
-    #[snafu(display("Fick ingen modal tillbaka"))]
-    NoModalReturned,
-}
-
 #[poise::command(slash_command, prefix_command, rename = "skapa")]
-pub async fn create(ctx: Context<'_>) -> Result<()> {
-    let (modal, second_modal) =
-        show_two_modals::<CreateCharacterModal, SecondCreateCharacterModal>(ctx).await?;
+pub async fn create(ctx: Context<'_>) -> Result<(), Report> {
+    let msg = send_initial_message(ctx).await?;
+    let Some(first_modal): Option<CreateCharacterModal> = show_modal_button(ctx, &msg).await?
+    else {
+        return Ok(());
+    };
+    edit_message(ctx, &msg).await?;
+    let Some(second_modal): Option<SecondCreateCharacterModal> =
+        show_modal_button(ctx, &msg).await?
+    else {
+        return Ok(());
+    };
 
-    let character = Character::builder()
-        .name(modal.name)
-        .greeting(modal.greeting)
-        .maybe_nickname(modal.nickname)
-        .maybe_description(modal.description)
-        .maybe_personality(modal.personality)
-        .maybe_avatar(second_modal.avatar)
-        .maybe_emoji(second_modal.emoji)
-        .creator(ctx.author().id)
-        .maybe_system_prompt(second_modal.system_prompt)
-        .maybe_prompt(second_modal.prompt)
-        .maybe_scenario(second_modal.scenario)
-        .build();
+    let character = Character::from((first_modal, second_modal, ctx.author().id));
 
-    let msg = ctx
-        .say(sample(CREATED_PHRASES).replace("{character}", &character.name()))
-        .await?;
+    let response = sample_name(CREATED_PHRASES, character.name());
+    msg.edit_with(ctx, response).await?;
 
     CHARACTERS.write().insert(character);
     STATISTICS.write().character_created_by(ctx.author());
 
-    std::thread::sleep(FIVE_SECONDS);
-    msg.delete(ctx).await?;
-    delete_invoking_message_if_prefix(ctx).await?;
-
+    sleep(FIVE_SECONDS).await;
+    msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
     Ok(())
 }
 
-async fn show_two_modals<M: Modal, S: Modal>(ctx: Context<'_>) -> Result<(M, S)> {
-    Ok((show_modal::<M>(ctx).await?, show_modal::<S>(ctx).await?))
+async fn send_initial_message(ctx: Context<'_>) -> Result<ReplyHandle<'_>> {
+    ctx.defer_ephemeral_or_broadcast().await?;
+    ctx.send(create_reply_with_tempting_button(ctx.id()))
+        .await
+        .context(SendMessageSnafu)
 }
 
-async fn show_modal<M: Modal>(ctx: Context<'_>) -> Result<M> {
-    let msg = send_tempting_button(ctx).await?;
-    let id = ctx.id().to_string();
-    let author = ctx.author().id;
-    let collector = ComponentInteractionCollector::new(ctx.serenity_context())
-        .author_id(author)
-        .custom_ids(vec![id.clone()])
-        .timeout(ONE_HOUR)
-        .await;
+async fn edit_message(ctx: Context<'_>, msg: &ReplyHandle<'_>) -> Result<()> {
+    msg.edit(ctx, create_reply_with_tempting_button(ctx.id()))
+        .await
+        .context(EditMessageSnafu)
+}
 
-    if let Some(interaction) = collector {
-        msg.delete(ctx).await?;
-        execute_modal_on_component_interaction::<M>(ctx, interaction, None, None)
-            .await?
-            .ok_or(CreateError::NoModalReturned.into())
+#[must_use]
+async fn await_button_interaction(ctx: Context<'_>) -> Option<ComponentInteraction> {
+    ComponentInteractionCollector::new(ctx)
+        .author_id(ctx.author().id)
+        .custom_ids(vec![ctx.id().to_string()])
+        .timeout(ONE_MINUTE)
+        .await
+}
+
+async fn show_modal_button<M: Modal>(ctx: Context<'_>, msg: &ReplyHandle<'_>) -> Result<Option<M>> {
+    ctx.defer_ephemeral_or_broadcast().await?;
+
+    if let Some(interaction) = await_button_interaction(ctx).await {
+        ctx.show_modal(interaction).await
     } else {
-        Err(CreateError::NoModalReturned.into())
+        let response = sample(TIMEOUT_PHRASES);
+        msg.edit_with(ctx, response).await?;
+        sleep(FIVE_SECONDS).await;
+        msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
+        Ok(None)
     }
 }
 
-async fn send_tempting_button(ctx: Context<'_>) -> Result<ReplyHandle<'_>> {
-    let id = ctx.id().to_string();
+#[must_use]
+fn create_reply_with_tempting_button(id: impl Display) -> CreateReply {
+    let id = id.to_string();
     let click_me = sample(CLICK_ME_PHRASES);
     let click_below = sample(CLICK_BELOW_PHRASES);
     let button = vec![CreateButton::new(id).label(click_me)];
     let component = vec![CreateActionRow::Buttons(button)];
-    ctx.send(
-        CreateReply::default()
-            .content(click_below)
-            .components(component),
-    )
-    .await
-    .map_err(Into::into)
+
+    CreateReply::default()
+        .content(click_below)
+        .components(component)
 }

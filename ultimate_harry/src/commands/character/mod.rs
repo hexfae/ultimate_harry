@@ -1,7 +1,6 @@
 use create::create;
 use delete::delete;
 use edit::edit;
-use ultimate_harry::{Context, Result};
 use view::view;
 
 mod create;
@@ -16,6 +15,8 @@ mod view;
     subcommand_required,
     rename = "gubbe"
 )]
-pub async fn character(_: Context<'_>) -> Result<()> {
+// poise requires this to be async
+#[allow(clippy::unused_async)]
+pub async fn character(_: crate::Context<'_>) -> Result<(), miette::Report> {
     Ok(())
 }

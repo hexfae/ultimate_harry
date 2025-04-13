@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_message"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 
 [dependencies]
@@ -12,3 +12,13 @@ snafu = "0.8.5"
 jiff = { version = "0.2.5", features = ["serde"] }
 ulid = "1.2.1"
 serde = { version = "1.0.219", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+missing-errors-doc = "allow"                 # TODO: remove
+enum_glob_use = "deny"
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"

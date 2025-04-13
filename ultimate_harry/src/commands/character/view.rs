@@ -1,17 +1,26 @@
+use crate::{
+    Context, DeferEphemeralOrBroadcast, Error, FIVE_SECONDS, Result, SendMessageSnafu,
+    SendResponseSnafu, TEN_MINUTES,
+    traits::{DeleteSelfAndInvokingMessageIfPrefix, SayWith},
+};
+use miette::Report;
 use poise::{
     CreateReply, ReplyHandle,
     serenity_prelude::{
-        ComponentInteractionCollector, CreateActionRow, CreateButton, CreateInteractionResponse,
-        CreateInteractionResponseMessage,
+        ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateButton,
+        CreateInteractionResponse, CreateInteractionResponseMessage,
     },
 };
+use snafu::ResultExt;
+use tokio::time::sleep;
 use ultimate_character::{CHARACTERS, Character};
-use ultimate_harry::{
-    Context, DeferEphemeralOrBroadcast, FIVE_SECONDS, Result, TEN_MINUTES,
-    delete_invoking_message_if_prefix,
-};
 use ultimate_phrases::{NO_CHARACTER_PHRASES, sample};
 use ultimate_statistics::STATISTICS;
+
+enum InteractionType {
+    Prev,
+    Next,
+}
 
 #[poise::command(slash_command, prefix_command, rename = "visa")]
 pub async fn view(
@@ -20,7 +29,7 @@ pub async fn view(
     #[rename = "namn"]
     #[description = "Gubbens namn"]
     name: Option<String>,
-) -> Result<()> {
+) -> Result<(), Report> {
     ctx.defer_ephemeral_or_broadcast().await?;
     match name {
         Some(name) => sorted_by_similarity(ctx, name).await?,
@@ -33,20 +42,24 @@ async fn sorted_by_similarity(ctx: Context<'_>, name: impl AsRef<str>) -> Result
     let characters = CHARACTERS.read().get_all_sorted_by_similarity(name);
 
     if characters.is_empty() {
-        let msg = ctx.say(sample(NO_CHARACTER_PHRASES)).await?;
-        std::thread::sleep(FIVE_SECONDS);
-        msg.delete(ctx).await?;
-        delete_invoking_message_if_prefix(ctx).await?;
+        let response = sample(NO_CHARACTER_PHRASES);
+        let msg = ctx.say_with(response).await?;
+        sleep(FIVE_SECONDS).await;
+        msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
         return Ok(());
     }
 
+    let pages = characters.len();
     let characters_and_footer_text = characters
         .into_iter()
-        .map(|(similarity, character)| {
+        .enumerate()
+        .map(|(index, (similarity, character))| {
+            let index = index + 1;
             let similarity = format!("{:.0}", similarity * 100.0);
             let conversations_had = character.conversations_had();
-            let footer_text =
-                format!("{conversations_had} konversationer | {similarity}% namnlikhet");
+            let footer_text = format!(
+                "{index}/{pages} | {conversations_had} konversationer | {similarity}% namnlikhet"
+            );
             (character, footer_text)
         })
         .collect();
@@ -58,17 +71,24 @@ async fn sorted_by_usage(ctx: Context<'_>) -> Result<()> {
     let characters = CHARACTERS.read().get_all_sorted_by_usage();
 
     if characters.is_empty() {
-        let msg = ctx.say(sample(NO_CHARACTER_PHRASES)).await?;
-        std::thread::sleep(FIVE_SECONDS);
-        msg.delete(ctx).await?;
-        delete_invoking_message_if_prefix(ctx).await?;
+        let msg = ctx
+            .say(sample(NO_CHARACTER_PHRASES))
+            .await
+            .context(SendMessageSnafu)?;
+        sleep(FIVE_SECONDS).await;
+        msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
         return Ok(());
     }
 
+    let pages = characters.len();
     let characters_and_footer_text = characters
         .into_iter()
-        .map(|character| {
-            let footer_text = format!("{} konversationer", character.conversations_had());
+        .enumerate()
+        .map(|(index, character)| {
+            let footer_text = format!(
+                "{index}/{pages} | {} konversationer",
+                character.conversations_had()
+            );
             (character, footer_text)
         })
         .collect();
@@ -95,13 +115,13 @@ async fn display_pagination(
         .timeout(TEN_MINUTES)
         .await
     {
-        let interaction_id = interaction.data.custom_id.clone();
-        if interaction_id == prev {
-            current_page = current_page.checked_sub(1).unwrap_or(pages - 1);
-        } else if interaction_id == next {
-            current_page += 1;
-            if current_page >= pages {
-                current_page = 0;
+        let interaction_type = InteractionType::try_from(&interaction)?;
+        match interaction_type {
+            InteractionType::Prev => {
+                current_page = (current_page + pages - 1) % pages;
+            }
+            InteractionType::Next => {
+                current_page = (current_page + 1) % pages;
             }
         }
 
@@ -115,12 +135,11 @@ async fn display_pagination(
                     CreateInteractionResponseMessage::new().embed(embed),
                 ),
             )
-            .await?;
+            .await
+            .context(SendResponseSnafu)?;
     }
 
-    delete_invoking_message_if_prefix(ctx).await?;
-    msg.delete(ctx).await?;
-
+    msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
     Ok(())
 }
 
@@ -133,7 +152,7 @@ async fn send_initial_embed(
     let buttons = create_buttons(id);
     ctx.send(CreateReply::default().embed(embed).components(buttons))
         .await
-        .map_err(Into::into)
+        .context(SendMessageSnafu)
 }
 
 pub fn create_buttons(id: u64) -> Vec<CreateActionRow> {
@@ -144,4 +163,18 @@ pub fn create_buttons(id: u64) -> Vec<CreateActionRow> {
         CreateButton::new(&next).emoji('▶'),
     ]);
     vec![components]
+}
+
+impl TryFrom<&ComponentInteraction> for InteractionType {
+    type Error = Error;
+
+    fn try_from(input: &ComponentInteraction) -> Result<Self, Self::Error> {
+        match input.data.custom_id.as_str() {
+            i if i.ends_with("prev") => Ok(Self::Prev),
+            i if i.ends_with("next") => Ok(Self::Next),
+            i => Err(Error::UnknownInteraction {
+                found: i.to_string(),
+            }),
+        }
+    }
 }

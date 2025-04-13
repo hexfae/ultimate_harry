@@ -6,6 +6,12 @@ pub fn sample<T: Clone>(list: &[T]) -> T {
     list[index].clone()
 }
 
+pub fn sample_name(list: &[&str], name: impl AsRef<str>) -> String {
+    let mut rng = nanorand::tls_rng();
+    let index = rng.generate_range(0..list.len());
+    list[index].replace("{character}", name.as_ref())
+}
+
 pub const YES_PHRASES: &[&str] = &[
     "Ja",
     "Japp",
@@ -102,6 +108,14 @@ pub const DELETED_PHRASES: &[&str] = &[
     "Bra jobbat, soldat.",
     "Stå för rättvisa.",
     "En ängel gråter.",
+];
+
+pub const EDITING_PHRASES: &[&str] = &["Konst håller på att skapas…"];
+
+pub const TIMEOUT_PHRASES: &[&str] = &[
+    "Tror du att jag har hela dagen på mig att vänta?",
+    "Jag är en upptagen robot. Jag kommer inte att vänta på dig längre.",
+    "Oj då, där tog du lite för lång tid på dig. Synd!",
 ];
 
 pub const CLICK_BELOW_PHRASES: &[&str] = &[
