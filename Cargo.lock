@@ -171,9 +171,9 @@ dependencies = [
 
 [[package]]
 name = "bon"
-version = "3.5.1"
+version = "3.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65268237be94042665b92034f979c42d431d2fd998b49809543afe3e66abad1c"
+checksum = "ced38439e7a86a4761f7f7d5ded5ff009135939ecb464a24452eaa4c1696af7d"
 dependencies = [
  "bon-macros",
  "rustversion",
@@ -181,9 +181,9 @@ dependencies = [
 
 [[package]]
 name = "bon-macros"
-version = "3.5.1"
+version = "3.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "803c95b2ecf650eb10b5f87dda6b9f6a1b758cee53245e2b7b825c9b3803a443"
+checksum = "0ce61d2d3844c6b8d31b2353d9f66cf5e632b3e9549583fe3cac2f4f6136725e"
 dependencies = [
  "darling",
  "ident_case",
@@ -424,6 +424,7 @@ dependencies = [
  "lock_api",
  "once_cell",
  "parking_lot_core",
+ "serde",
 ]
 
 [[package]]
@@ -1563,9 +1564,9 @@ dependencies = [
 
 [[package]]
 name = "prettyplease"
-version = "0.2.31"
+version = "0.2.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5316f57387668042f561aae71480de936257848f9c43ce528e311d89a07cadeb"
+checksum = "664ec5419c51e34154eec046ebcba56312d5a2fc3b09a06da188e1ad21afadf6"
 dependencies = [
  "proc-macro2",
  "syn 2.0.100",
@@ -1880,9 +1881,9 @@ dependencies = [
 
 [[package]]
 name = "ron"
-version = "0.9.0"
+version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63f3aa105dea217ef30d89581b65a4d527a19afc95ef5750be3890e8d3c5b837"
+checksum = "beceb6f7bf81c73e73aeef6dd1356d9a1b2b4909e1f0fc3e59b034f9572d7b7f"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.9.0",
@@ -2788,11 +2789,11 @@ dependencies = [
 
 [[package]]
 name = "ultimate_character"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "bon",
+ "dashmap 6.1.0",
  "jiff",
- "parking_lot",
  "poise",
  "ron",
  "serde",
@@ -2829,7 +2830,6 @@ dependencies = [
  "poise",
  "snafu",
  "tokio",
- "tracing",
  "ulid",
  "ultimate_character",
  "ultimate_config",
@@ -2843,10 +2843,10 @@ dependencies = [
 
 [[package]]
 name = "ultimate_history"
-version = "0.0.3"
+version = "0.0.4"
 dependencies = [
  "async-openai",
- "parking_lot",
+ "dashmap 6.1.0",
  "ron",
  "serde",
  "serenity",
@@ -2897,11 +2897,10 @@ dependencies = [
 
 [[package]]
 name = "ultimate_statistics"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "dashmap 6.1.0",
  "miette",
- "parking_lot",
  "serde",
  "serenity",
  "snafu",

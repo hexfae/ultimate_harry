@@ -1,10 +1,9 @@
+use dashmap::DashMap;
 use miette::Diagnostic;
-use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use serenity::all::UserId;
 use snafu::{ResultExt, Snafu};
 use std::{
-    collections::HashMap,
     fs::{read_to_string, write},
     path::Path,
     sync::LazyLock,
@@ -15,11 +14,11 @@ type Result<T, E = Error> = std::result::Result<T, E>;
 
 const STATISTICS_PATH: &str = "statistics.toml";
 
-pub static STATISTICS: LazyLock<RwLock<Statistics>> =
-    LazyLock::new(|| RwLock::new(Statistics::load().expect("valid statistics")));
+pub static STATISTICS: LazyLock<Statistics> =
+    LazyLock::new(|| Statistics::load().expect("valid statistics"));
 
 #[derive(Serialize, Deserialize)]
-pub struct Statistics(HashMap<UserId, UserStatistic>);
+pub struct Statistics(DashMap<UserId, UserStatistic>);
 
 #[derive(Default, Serialize, Deserialize)]
 struct UserStatistic {
@@ -62,7 +61,7 @@ impl Statistics {
         }
     }
 
-    pub fn character_created_by(&mut self, user: impl Into<UserId>) {
+    pub fn character_created_by(&self, user: impl Into<UserId>) {
         self.0
             .entry(user.into())
             .and_modify(|statistic| {
@@ -75,7 +74,7 @@ impl Statistics {
         self.save();
     }
 
-    pub fn character_edited_by(&mut self, user: impl Into<UserId>) {
+    pub fn character_edited_by(&self, user: impl Into<UserId>) {
         self.0
             .entry(user.into())
             .and_modify(|statistic| {
@@ -88,7 +87,7 @@ impl Statistics {
         self.save();
     }
 
-    pub fn character_viewed_by(&mut self, user: impl Into<UserId>) {
+    pub fn character_viewed_by(&self, user: impl Into<UserId>) {
         self.0
             .entry(user.into())
             .and_modify(|statistic| {
@@ -101,7 +100,7 @@ impl Statistics {
         self.save();
     }
 
-    pub fn character_deleted_by(&mut self, user: impl Into<UserId>) {
+    pub fn character_deleted_by(&self, user: impl Into<UserId>) {
         self.0
             .entry(user.into())
             .and_modify(|statistic| {
@@ -114,7 +113,7 @@ impl Statistics {
         self.save();
     }
 
-    pub fn conversation_started_by(&mut self, user: impl Into<UserId>) {
+    pub fn conversation_started_by(&self, user: impl Into<UserId>) {
         self.0
             .entry(user.into())
             .and_modify(|statistic| {
@@ -130,7 +129,7 @@ impl Statistics {
 
 impl Default for Statistics {
     fn default() -> Self {
-        let statistics = Self(HashMap::new());
+        let statistics = Self(DashMap::new());
         if !Path::new(STATISTICS_PATH).exists() {
             statistics.save();
         }

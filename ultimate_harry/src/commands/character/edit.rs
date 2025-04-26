@@ -40,7 +40,7 @@ pub async fn edit(
 ) -> Result<(), Report> {
     ctx.defer_ephemeral_or_broadcast().await?;
 
-    let characters = CHARACTERS.read().get_all_sorted_by_similarity(name);
+    let characters = CHARACTERS.get_all_sorted_by_similarity(name);
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
@@ -97,7 +97,7 @@ async fn display_pagination(
                 current_page = (current_page + 1) % pages;
             }
             InteractionType::Confirm => {
-                STATISTICS.write().character_edited_by(ctx.author());
+                STATISTICS.character_edited_by(ctx.author());
                 edit_confirmed(
                     ctx,
                     interaction.clone(),
@@ -184,10 +184,10 @@ async fn edit_confirmed(
 
     character.edit_from_modals(ctx.author(), modal, second_modal);
     let character_name = character.name().to_owned();
-    CHARACTERS.write().supersede_by_id(old_id, character.id());
+    CHARACTERS.supersede_by_id(old_id, character.id());
 
-    CHARACTERS.write().insert(character);
-    STATISTICS.write().character_edited_by(ctx.author());
+    CHARACTERS.insert(character);
+    STATISTICS.character_edited_by(ctx.author());
 
     interaction
         .edit_response(

@@ -37,7 +37,7 @@ pub async fn delete(
 ) -> Result<(), Report> {
     ctx.defer_ephemeral_or_broadcast().await?;
 
-    let characters = CHARACTERS.read().get_all_sorted_by_similarity(&name);
+    let characters = CHARACTERS.get_all_sorted_by_similarity(&name);
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
@@ -217,8 +217,8 @@ async fn delete_confirmed(
     interaction: ComponentInteraction,
     id: impl Into<Ulid>,
 ) -> Result<()> {
-    CHARACTERS.write().delete_by_id(id.into(), ctx.author());
-    STATISTICS.write().character_deleted_by(ctx.author());
+    CHARACTERS.delete_by_id(id.into(), ctx.author());
+    STATISTICS.character_deleted_by(ctx.author());
 
     let response = sample(DELETED_PHRASES);
     ctx.respond_to_with(&interaction, response).await?;

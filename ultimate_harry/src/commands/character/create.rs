@@ -40,8 +40,8 @@ pub async fn create(ctx: Context<'_>) -> Result<(), Report> {
     let response = sample_name(CREATED_PHRASES, character.name());
     msg.edit_with(ctx, response).await?;
 
-    CHARACTERS.write().insert(character);
-    STATISTICS.write().character_created_by(ctx.author());
+    CHARACTERS.insert(character);
+    STATISTICS.character_created_by(ctx.author());
 
     sleep(FIVE_SECONDS).await;
     msg.delete_self_and_invoking_message_if_prefix(ctx).await?;

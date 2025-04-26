@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fs::{read, write},
     path::Path,
     sync::LazyLock,
@@ -7,7 +6,7 @@ use std::{
 };
 
 use async_openai::types::ChatCompletionRequestMessage;
-use parking_lot::RwLock;
+use dashmap::DashMap;
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
 use serenity::all::{MessageId, UserId};
@@ -33,8 +32,8 @@ const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du in
 
 const HISTORIES_PATH: &str = "histories.ron";
 
-pub static HISTORIES: LazyLock<RwLock<Histories>> =
-    LazyLock::new(|| RwLock::new(Histories::load().expect("valid histories")));
+pub static HISTORIES: LazyLock<Histories> =
+    LazyLock::new(|| Histories::load().expect("valid histories"));
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -57,7 +56,7 @@ pub struct History {
     id: MessageId,
 }
 
-pub struct Histories(HashMap<MessageId, History>);
+pub struct Histories(DashMap<MessageId, History>);
 
 impl Histories {
     fn load() -> Result<Self, Error> {
@@ -71,7 +70,7 @@ impl Histories {
                     histories
                         .into_iter()
                         .map(|history| (history.id, history))
-                        .collect::<HashMap<MessageId, History>>()
+                        .collect::<DashMap<MessageId, History>>()
                 })
                 .map(Self)
         } else {
@@ -81,7 +80,11 @@ impl Histories {
 
     fn save(&self) {
         if let Err(why) = ron::ser::to_string_pretty(
-            &self.0.values().collect::<Vec<&History>>(),
+            &self
+                .0
+                .iter()
+                .map(|c| c.value().to_owned())
+                .collect::<Vec<History>>(),
             PrettyConfig::new(),
         )
         .context(SerializeSnafu)
@@ -91,19 +94,19 @@ impl Histories {
         }
     }
 
-    pub fn insert(&mut self, history: History) {
+    pub fn insert(&self, history: History) {
         self.0.insert(history.id, history);
         self.save();
     }
 
     pub fn get(&self, id: MessageId) -> Option<History> {
-        self.0.get(&id).cloned()
+        self.0.get(&id).map(|c| c.value().to_owned())
     }
 }
 
 impl Default for Histories {
     fn default() -> Self {
-        let characters = Self(HashMap::new());
+        let characters = Self(DashMap::new());
         if !Path::new(HISTORIES_PATH).exists() {
             characters.save();
         }

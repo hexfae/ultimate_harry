@@ -196,7 +196,6 @@ impl From<Message> for ChatCompletionRequestMessage {
             }
             Original::OpenAi { character, .. } => {
                 let name = CHARACTERS
-                    .read()
                     .get_by_id(character)
                     .map(|character| character.name().to_owned());
 
@@ -208,7 +207,6 @@ impl From<Message> for ChatCompletionRequestMessage {
             }
             Original::Character { character_id: id } => {
                 let name = CHARACTERS
-                    .read()
                     .get_by_id(id)
                     .map(|character| character.name().to_owned());
                 Self::Assistant(ChatCompletionRequestAssistantMessage {

@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_history"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 
 [dependencies]
@@ -8,12 +8,12 @@ ultimate_message = { path = "../ultimate_message" }
 ultimate_character = { path = "../ultimate_character" }
 serenity = "0.12.4"
 ulid = "1.2.1"
-parking_lot = "0.12.3"
-ron = "0.9.0"
+ron = "0.10.1"
 snafu = "0.8.5"
 serde = { version = "1.0.219", features = ["derive"] }
 tracing = "0.1.41"
 async-openai = "0.28.1"
+dashmap = { version = "6.1.0", features = ["serde"] }
 
 [lints.rust]
 unsafe_code = "forbid"

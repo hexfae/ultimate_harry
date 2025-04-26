@@ -17,7 +17,6 @@ ultimate_history = { path = "../ultimate_history" }
 ultimate_requester = { path = "../ultimate_requester" }
 nanorand = "0.7.0"
 snafu = "0.8.5"
-tracing = "0.1.41"
 miette = "7.5.0"
 
 [lints.rust]

@@ -34,7 +34,7 @@ pub async fn chat(
 ) -> Result<(), Report> {
     ctx.defer_or_broadcast().await.context(DeferSnafu)?;
 
-    let characters = CHARACTERS.read().get_all_sorted_by_similarity(name);
+    let characters = CHARACTERS.get_all_sorted_by_similarity(name);
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
@@ -44,7 +44,7 @@ pub async fn chat(
         return Ok(());
     }
 
-    STATISTICS.write().conversation_started_by(ctx.author());
+    STATISTICS.conversation_started_by(ctx.author());
 
     let pages = characters.len();
     let mut current_page: usize = 0;
@@ -130,7 +130,7 @@ async fn handle_post_interaction(
 ) -> Result<()> {
     let (similarity, character, history) = similarities_characters_histories[current_page].clone();
 
-    HISTORIES.write().insert(history.clone());
+    HISTORIES.insert(history.clone());
 
     let current_revision = revisions_per_page[current_page];
 
@@ -208,7 +208,7 @@ async fn send_initial_message(
         };
         let msg_id = msg.message().await.context(RetrieveMessageSnafu)?.id;
         let history = History::from((character, msg_id, ctx.author().id));
-        HISTORIES.write().insert(history);
+        HISTORIES.insert(history);
         (msg, msg_id)
     };
     Ok((msg, msg_id))

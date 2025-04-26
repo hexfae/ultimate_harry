@@ -1,6 +1,6 @@
 use bon::Builder;
+use dashmap::DashMap;
 use jiff::Zoned;
-use parking_lot::RwLock;
 use poise::{
     CreateReply,
     serenity_prelude::{
@@ -38,11 +38,11 @@ const CHARACTERS_PATH: &str = "characters.ron";
 
 const CHARACTER_LIMIT: u16 = 4096;
 
-pub static CHARACTERS: LazyLock<RwLock<Characters>> =
-    LazyLock::new(|| RwLock::new(Characters::load().expect("valid characters")));
+pub static CHARACTERS: LazyLock<Characters> =
+    LazyLock::new(|| Characters::load().expect("valid characters"));
 
 #[derive(Serialize, Deserialize)]
-pub struct Characters(HashMap<Ulid, Character>);
+pub struct Characters(DashMap<Ulid, Character>);
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -74,13 +74,17 @@ impl Characters {
                 })
                 .map(Self)
         } else {
-            Ok(Self(HashMap::new()))
+            Ok(Self(DashMap::new()))
         }
     }
 
     fn save(&self) {
         let characters = match ron::ser::to_string_pretty(
-            &self.0.values().collect::<Vec<&Character>>(),
+            &self
+                .0
+                .iter()
+                .map(|c| c.value().to_owned())
+                .collect::<Vec<Character>>(),
             PrettyConfig::new(),
         )
         .context(SerializeSnafu)
@@ -97,21 +101,22 @@ impl Characters {
         }
     }
 
-    fn characters(&self) -> impl Iterator<Item = &Character> {
+    fn characters(&self) -> impl Iterator<Item = Character> {
         self.0
-            .values()
+            .iter()
+            .map(|c| c.value().to_owned())
             .filter(|character| character.deleted_by.is_none())
             .filter(|character| character.next_version.is_none())
     }
 
-    pub fn insert(&mut self, character: Character) {
+    pub fn insert(&self, character: Character) {
         self.0.insert(character.id, character);
         self.save();
     }
 
     #[must_use]
     pub fn get_all_sorted_by_usage(&self) -> Vec<Character> {
-        let mut characters = self.characters().cloned().collect::<Vec<Character>>();
+        let mut characters = self.characters().collect::<Vec<Character>>();
         characters.sort_by(|a, b| a.conversations_had.cmp(&b.conversations_had));
         characters.reverse();
         characters
@@ -126,21 +131,18 @@ impl Characters {
                     character,
                 )
             })
-            .collect::<Vec<(f64, &Character)>>();
+            .collect::<Vec<(f64, Character)>>();
         similarities_and_characters.sort_by(|(a, _), (b, _)| f64::total_cmp(a, b));
         similarities_and_characters.reverse();
         similarities_and_characters
-            .into_iter()
-            .map(|(similarity, character)| (similarity, character.to_owned()))
-            .collect()
     }
 
     pub fn get_by_id(&self, id: impl Into<Ulid>) -> Option<Character> {
-        self.0.get(&id.into()).cloned()
+        self.0.get(&id.into()).map(|c| c.value().to_owned())
     }
 
-    pub fn delete_by_id(&mut self, id: impl Into<Ulid>, user: impl Into<UserId>) -> Option<()> {
-        if let Some(character) = self.0.get_mut(&id.into()) {
+    pub fn delete_by_id(&self, id: impl Into<Ulid>, user: impl Into<UserId>) -> Option<()> {
+        if let Some(mut character) = self.0.get_mut(&id.into()) {
             character.deleted_by = Some(user.into());
             character.deleted_at = Some(Zoned::now());
             self.save();
@@ -150,8 +152,8 @@ impl Characters {
         }
     }
 
-    pub fn supersede_by_id(&mut self, old_id: impl Into<Ulid>, new_id: impl Into<Ulid>) {
-        if let Some(character) = self.0.get_mut(&old_id.into()) {
+    pub fn supersede_by_id(&self, old_id: impl Into<Ulid>, new_id: impl Into<Ulid>) {
+        if let Some(mut character) = self.0.get_mut(&old_id.into()) {
             character.next_version = Some(new_id.into());
             self.save();
         }

@@ -72,10 +72,10 @@ async fn message_received(event: &FullEvent, ctx: &Context) -> Result<(), Report
     let Some(reply) = message.get_reply() else {
         return Ok(());
     };
-    let Some(mut history) = HISTORIES.read().get(reply.id) else {
+    let Some(mut history) = HISTORIES.get(reply.id) else {
         return Ok(());
     };
-    let Some(character) = CHARACTERS.read().get_by_id(history.character()) else {
+    let Some(character) = CHARACTERS.get_by_id(history.character()) else {
         return Ok(());
     };
 
@@ -100,7 +100,7 @@ async fn message_received(event: &FullEvent, ctx: &Context) -> Result<(), Report
 
     history.set_id(message);
 
-    HISTORIES.write().insert(history);
+    HISTORIES.insert(history);
 
     Ok(())
 }

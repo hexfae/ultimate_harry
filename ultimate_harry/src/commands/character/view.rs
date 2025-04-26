@@ -39,7 +39,7 @@ pub async fn view(
 }
 
 async fn sorted_by_similarity(ctx: Context<'_>, name: impl AsRef<str>) -> Result<()> {
-    let characters = CHARACTERS.read().get_all_sorted_by_similarity(name);
+    let characters = CHARACTERS.get_all_sorted_by_similarity(name);
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
@@ -68,7 +68,7 @@ async fn sorted_by_similarity(ctx: Context<'_>, name: impl AsRef<str>) -> Result
 }
 
 async fn sorted_by_usage(ctx: Context<'_>) -> Result<()> {
-    let characters = CHARACTERS.read().get_all_sorted_by_usage();
+    let characters = CHARACTERS.get_all_sorted_by_usage();
 
     if characters.is_empty() {
         let msg = ctx
@@ -105,7 +105,7 @@ async fn display_pagination(
     let next = format!("{id}next");
     let mut current_page: usize = 0;
     let pages = characters_and_footer_text.len();
-    STATISTICS.write().character_viewed_by(ctx.author());
+    STATISTICS.character_viewed_by(ctx.author());
 
     // index into 0 is safe because we checked `is_empty()` earlier
     let msg = send_initial_embed(ctx, characters_and_footer_text[0].clone()).await?;
