@@ -25,8 +25,23 @@ pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    model: String,
+    model_settings: ModelSettings,
     name_substitutions: HashMap<UserId, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSettings {
+    model: String,
+    api_key: String,
+    api_base: String,
+    /// The default frequency penalty for requests.
+    frequency_penalty: f32,
+    /// The default presence penalty for requests
+    presence_penalty: f32,
+    /// The default temperature for requests.
+    temperature: f32,
+    /// The default top-p value for requests.
+    top_p: f32,
 }
 
 #[derive(Debug, Snafu, Diagnostic)]
@@ -65,8 +80,8 @@ impl Config {
         }
     }
 
-    pub fn model(&self) -> String {
-        self.model.clone()
+    pub fn model_settings(&self) -> ModelSettings {
+        self.model_settings.clone()
     }
 
     pub fn substitute_name(&self, user_id: impl AsRef<UserId>) -> String {
@@ -77,10 +92,56 @@ impl Config {
     }
 }
 
+impl ModelSettings {
+    #[must_use]
+    pub fn model(&self) -> String {
+        self.model.clone()
+    }
+
+    #[must_use]
+    pub fn api_key(&self) -> String {
+        self.api_key.clone()
+    }
+
+    #[must_use]
+    pub fn api_base(&self) -> String {
+        self.api_base.clone()
+    }
+
+    #[must_use]
+    pub const fn frequency_penalty(&self) -> f32 {
+        self.frequency_penalty
+    }
+
+    #[must_use]
+    pub const fn presence_penalty(&self) -> f32 {
+        self.presence_penalty
+    }
+
+    #[must_use]
+    pub const fn temperature(&self) -> f32 {
+        self.temperature
+    }
+
+    #[must_use]
+    pub const fn top_p(&self) -> f32 {
+        self.top_p
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let config = Self {
-            model: "deepseek-chat".to_owned(),
+            model_settings: ModelSettings {
+                model: String::new(),
+                api_key: String::new(),
+                api_base: String::new(),
+                // TODO: what are default values for all of these?
+                frequency_penalty: 0.0,
+                presence_penalty: 0.0,
+                temperature: 0.0,
+                top_p: 0.0,
+            },
             name_substitutions: HashMap::new(),
         };
         if !Path::new(CONFIG_PATH).exists() {

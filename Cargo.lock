@@ -52,9 +52,9 @@ dependencies = [
 
 [[package]]
 name = "async-openai"
-version = "0.28.0"
+version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36c566b15aa847e60a9e6c9b9b4b9d4be94bbf776804624279afa69559fea7e1"
+checksum = "14d76e2f5af19477d6254415acc95ba97c6cc6f3b1e3cb4676b7f0fab8194298"
 dependencies = [
  "async-openai-macros",
  "backoff",
@@ -2512,9 +2512,9 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokio"
-version = "1.44.1"
+version = "1.44.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f382da615b842244d4b8738c82ed1275e6c5dd90c459a30941cd07080b06c91a"
+checksum = "e6b88822cbe49de4185e3a4cbf8321dd487cf5fe0c5c65695fef6346371e9c48"
 dependencies = [
  "backtrace",
  "bytes",
@@ -2788,7 +2788,7 @@ dependencies = [
 
 [[package]]
 name = "ultimate_character"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "bon",
  "jiff",
@@ -2808,7 +2808,7 @@ dependencies = [
 
 [[package]]
 name = "ultimate_config"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "miette",
  "notify",
@@ -2822,7 +2822,7 @@ dependencies = [
 
 [[package]]
 name = "ultimate_harry"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "miette",
  "nanorand",
@@ -2837,13 +2837,15 @@ dependencies = [
  "ultimate_message",
  "ultimate_modals",
  "ultimate_phrases",
+ "ultimate_requester",
  "ultimate_statistics",
 ]
 
 [[package]]
 name = "ultimate_history"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
+ "async-openai",
  "parking_lot",
  "ron",
  "serde",
@@ -2881,6 +2883,16 @@ name = "ultimate_phrases"
 version = "0.0.3"
 dependencies = [
  "nanorand",
+]
+
+[[package]]
+name = "ultimate_requester"
+version = "0.0.1"
+dependencies = [
+ "async-openai",
+ "snafu",
+ "ultimate_config",
+ "ultimate_history",
 ]
 
 [[package]]

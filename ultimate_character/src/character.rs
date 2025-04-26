@@ -1,12 +1,3 @@
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::Display,
-    fs::{read, write},
-    path::Path,
-    sync::LazyLock,
-    time::Duration,
-};
-
 use bon::Builder;
 use jiff::Zoned;
 use parking_lot::RwLock;
@@ -23,10 +14,18 @@ use poise::{
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt, Snafu};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+    fs::{read, write},
+    path::Path,
+    sync::LazyLock,
+    time::Duration,
+};
 use strsim::normalized_damerau_levenshtein;
 use tracing::warn;
 use ulid::Ulid;
-use ultimate_config::CONFIG;
+use ultimate_config::{CONFIG, ModelSettings};
 use ultimate_modals::{
     CreateCharacterModal, EditCharacterModal, SecondCreateCharacterModal, SecondEditCharacterModal,
 };
@@ -36,6 +35,8 @@ use url::Url;
 type Result<T, E = Error> = std::result::Result<T, E>;
 
 const CHARACTERS_PATH: &str = "characters.ron";
+
+const CHARACTER_LIMIT: u16 = 4096;
 
 pub static CHARACTERS: LazyLock<RwLock<Characters>> =
     LazyLock::new(|| RwLock::new(Characters::load().expect("valid characters")));
@@ -69,28 +70,38 @@ impl Characters {
                     characters
                         .into_iter()
                         .map(|character| (character.id, character))
-                        .collect::<HashMap<Ulid, Character>>()
+                        .collect()
                 })
                 .map(Self)
         } else {
-            Ok(Self::default())
+            Ok(Self(HashMap::new()))
         }
     }
 
     fn save(&self) {
-        if let Err(why) = ron::ser::to_string_pretty(
+        let characters = match ron::ser::to_string_pretty(
             &self.0.values().collect::<Vec<&Character>>(),
             PrettyConfig::new(),
         )
         .context(SerializeSnafu)
-        .and_then(|string| write(CHARACTERS_PATH, string).context(WriteSnafu))
         {
-            warn!("Error while saving characters: {why}");
+            Ok(characters) => characters,
+            Err(why) => {
+                warn!("{why}");
+                return;
+            }
+        };
+
+        if let Err(why) = write(CHARACTERS_PATH, characters).context(WriteSnafu) {
+            warn!("{why}");
         }
     }
 
-    fn characters(&self) -> Vec<Character> {
-        self.0.values().cloned().collect()
+    fn characters(&self) -> impl Iterator<Item = &Character> {
+        self.0
+            .values()
+            .filter(|character| character.deleted_by.is_none())
+            .filter(|character| character.next_version.is_none())
     }
 
     pub fn insert(&mut self, character: Character) {
@@ -98,32 +109,9 @@ impl Characters {
         self.save();
     }
 
-    pub fn get_closest(&self, input: impl AsRef<str>) -> Result<Character> {
-        self.characters()
-            .iter()
-            .filter(|character| character.deleted_by.is_none())
-            .filter(|character| character.next_version.is_none())
-            .map(|character| {
-                (
-                    normalized_damerau_levenshtein(input.as_ref(), &character.name()),
-                    character,
-                )
-            })
-            .max_by(|(a, _), (b, _)| f64::total_cmp(a, b))
-            .map(|(_, character)| character)
-            .cloned()
-            .ok_or(Error::NotFound)
-    }
-
     #[must_use]
     pub fn get_all_sorted_by_usage(&self) -> Vec<Character> {
-        let mut characters = self
-            .characters()
-            .iter()
-            .filter(|character| character.deleted_by.is_none())
-            .filter(|character| character.next_version.is_none())
-            .cloned()
-            .collect::<Vec<Character>>();
+        let mut characters = self.characters().cloned().collect::<Vec<Character>>();
         characters.sort_by(|a, b| a.conversations_had.cmp(&b.conversations_had));
         characters.reverse();
         characters
@@ -132,19 +120,19 @@ impl Characters {
     pub fn get_all_sorted_by_similarity(&self, input: impl AsRef<str>) -> Vec<(f64, Character)> {
         let mut similarities_and_characters = self
             .characters()
-            .iter()
-            .filter(|character| character.deleted_by.is_none())
-            .filter(|character| character.next_version.is_none())
             .map(|character| {
                 (
-                    normalized_damerau_levenshtein(input.as_ref(), &character.name()),
-                    character.to_owned(),
+                    normalized_damerau_levenshtein(input.as_ref(), character.name()),
+                    character,
                 )
             })
-            .collect::<Vec<(f64, Character)>>();
+            .collect::<Vec<(f64, &Character)>>();
         similarities_and_characters.sort_by(|(a, _), (b, _)| f64::total_cmp(a, b));
         similarities_and_characters.reverse();
         similarities_and_characters
+            .into_iter()
+            .map(|(similarity, character)| (similarity, character.to_owned()))
+            .collect()
     }
 
     pub fn get_by_id(&self, id: impl Into<Ulid>) -> Option<Character> {
@@ -154,6 +142,7 @@ impl Characters {
     pub fn delete_by_id(&mut self, id: impl Into<Ulid>, user: impl Into<UserId>) -> Option<()> {
         if let Some(character) = self.0.get_mut(&id.into()) {
             character.deleted_by = Some(user.into());
+            character.deleted_at = Some(Zoned::now());
             self.save();
             Some(())
         } else {
@@ -166,16 +155,6 @@ impl Characters {
             character.next_version = Some(new_id.into());
             self.save();
         }
-    }
-}
-
-impl Default for Characters {
-    fn default() -> Self {
-        let characters = Self(HashMap::new());
-        if !Path::new(CHARACTERS_PATH).exists() {
-            characters.save();
-        }
-        characters
     }
 }
 
@@ -293,63 +272,51 @@ pub struct Character {
     /// second is the character's response to that message.
     #[builder(default)]
     example_messages: Vec<(Option<String>, String)>,
-    /// The frequency penalty for the character.
+    /// The model settings override for the character.
     ///
-    /// If set, this overrides the default frequency penalty for requests.
-    frequency_penalty: Option<f32>,
-    /// The presence penalty for the character.
-    ///
-    /// If set, this overrides the default presence penalty for requests.
-    presence_penalty: Option<f32>,
-    /// The temperature for the character.
-    ///
-    /// If set, this overrides the default temperature for requests.
-    temperature: Option<f32>,
-    /// The top-p value for the character.
-    ///
-    /// If set, this overrides the default top-p value for requests.
-    top_p: Option<f32>,
+    /// If set, this overrides the default model settings for requests.
+    model_settings: Option<ModelSettings>,
 }
 
 impl Character {
     #[must_use]
-    pub fn name(&self) -> String {
-        self.name.clone()
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     #[must_use]
-    pub fn greeting(&self) -> String {
-        self.greeting.clone()
+    pub fn greeting(&self) -> &str {
+        &self.greeting
     }
 
     #[must_use]
-    pub fn personality(&self) -> Option<String> {
-        self.personality.clone()
+    pub fn personality(&self) -> Option<&str> {
+        self.personality.as_deref()
     }
 
     #[must_use]
-    pub fn prompt(&self) -> Option<String> {
-        self.prompt.clone()
+    pub fn prompt(&self) -> Option<&str> {
+        self.prompt.as_deref()
     }
 
     #[must_use]
-    pub fn system_prompt(&self) -> Option<String> {
-        self.system_prompt.clone()
+    pub fn system_prompt(&self) -> Option<&str> {
+        self.system_prompt.as_deref()
     }
 
     #[must_use]
-    pub fn scenario(&self) -> Option<String> {
-        self.scenario.clone()
+    pub fn scenario(&self) -> Option<&str> {
+        self.scenario.as_deref()
     }
 
     #[must_use]
-    pub fn example_messages(&self) -> Vec<(Option<String>, String)> {
-        self.example_messages.clone()
+    pub const fn example_messages(&self) -> &[(Option<String>, String)] {
+        self.example_messages.as_slice()
     }
 
     #[must_use]
-    pub fn avatar(&self) -> Option<String> {
-        self.avatar.clone()
+    pub fn avatar(&self) -> Option<&str> {
+        self.avatar.as_deref()
     }
 
     #[must_use]
@@ -367,21 +334,25 @@ impl Character {
         self.conversations_had
     }
 
+    #[must_use]
+    pub fn model_settings(&self) -> Option<ModelSettings> {
+        self.model_settings.clone()
+    }
+
     pub fn edit_from_modals(
         &mut self,
-        editor: impl Into<UserId> + Copy,
+        editor: impl Into<UserId>,
         modal: EditCharacterModal,
         second_modal: SecondEditCharacterModal,
     ) {
-        self.latest_editor = Some(editor.into());
-        self.all_editors.insert(editor.into());
+        let editor = editor.into();
+        self.latest_editor = Some(editor);
+        self.all_editors.insert(editor);
         self.edited_at.push(Zoned::now());
         self.version += 1;
         self.previous_version = Some(self.id);
         self.id = Ulid::new();
-        let avatar = second_modal
-            .avatar
-            .and_then(|a| Url::parse(&a).ok().map(|_| a));
+        let avatar = validate_url(second_modal.avatar);
         // the reason why these can't just be `self.foo = bar` is because
         // if the user doesn't fill in a field, it will be None, and we
         // don't want to overwrite a potentially existing value
@@ -425,7 +396,7 @@ impl Character {
             HasUndo::No,
             HasRedo::No,
         );
-        let footer = CreateEmbedFooter::new("1/1 | tar 0.0s | 0/4096");
+        let footer = CreateEmbedFooter::new(format!("1/1 | tar 0.0s | 0/{CHARACTER_LIMIT}"));
         let mut embed = CreateEmbed::new()
             .title(self.name())
             .description("…")
@@ -452,7 +423,7 @@ impl Character {
         let elapsed = elapsed.into();
         let len = input.len();
         let buttons = create_buttons(id, HasPrevious::No, finished, HasUndo::No, HasRedo::No);
-        let footer_text = format!("{index}/{index} | tar {elapsed}s | {len}/4096");
+        let footer_text = format!("{index}/{index} | tar {elapsed}s | {len}/{CHARACTER_LIMIT}");
         let footer = CreateEmbedFooter::new(footer_text);
         let mut embed = CreateEmbed::new()
             .title(self.name())
@@ -526,7 +497,7 @@ impl Character {
                 )
             };
 
-            let len = format!(" | {}/4096", content.len());
+            let len = format!(" | {}/{CHARACTER_LIMIT}", content.len());
 
             let footer = format!("{pages}{similarity}{elapsed}{len}{edit_pages}");
             CreateEmbedFooter::new(footer)
@@ -719,7 +690,7 @@ impl From<(CreateCharacterModal, SecondCreateCharacterModal, UserId)> for Charac
     fn from(
         (first, second, creator): (CreateCharacterModal, SecondCreateCharacterModal, UserId),
     ) -> Self {
-        let avatar = second.avatar.and_then(|a| Url::parse(&a).ok().map(|_| a));
+        let avatar = validate_url(second.avatar);
         Self::builder()
             .name(first.name)
             .greeting(first.greeting)
@@ -745,7 +716,12 @@ impl Display for Character {
     }
 }
 
-// having to do
+fn validate_url(url: Option<String>) -> Option<String> {
+    url.and_then(|url| Url::parse(&url).ok())
+        .filter(|url| url.scheme() == "https" || url.scheme() == "http")
+        .map(|url| url.to_string())
+}
+
 #[allow(clippy::needless_pass_by_value)]
 fn create_buttons(
     id: impl Into<u64>,

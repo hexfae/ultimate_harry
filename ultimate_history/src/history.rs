@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 
+use async_openai::types::ChatCompletionRequestMessage;
 use parking_lot::RwLock;
 use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,15 @@ pub enum Error {
     Serialize { source: ron::error::Error },
     #[snafu(display("Error while writing histories: {source}"))]
     Write { source: std::io::Error },
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct History {
+    previous: Vec<(MessageType, Message)>,
+    seconds_taken_and_choices: Vec<(Duration, (MessageType, Message))>,
+    current_page: usize,
+    character: Ulid,
+    id: MessageId,
 }
 
 pub struct Histories(HashMap<MessageId, History>);
@@ -101,17 +111,7 @@ impl Default for Histories {
     }
 }
 
-// TODO: remove debug from everything
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct History {
-    previous: Vec<(MessageType, Message)>,
-    seconds_taken_and_choices: Vec<(Duration, (MessageType, Message))>,
-    current_page: usize,
-    character: Ulid,
-    id: MessageId,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum MessageType {
     Greeting,
     Description,
@@ -146,6 +146,10 @@ impl History {
         }
     }
 
+    pub fn set_id(&mut self, id: impl Into<MessageId>) {
+        self.id = id.into();
+    }
+
     /// # Panics
     ///
     /// Since a history will never be empty, this will never panic.
@@ -161,6 +165,10 @@ impl History {
     #[must_use]
     pub const fn character(&self) -> Ulid {
         self.character
+    }
+
+    pub fn push(&mut self, message: impl Into<Message>) {
+        self.previous.push((MessageType::Chat, message.into()));
     }
 }
 
@@ -179,13 +187,13 @@ impl From<(Character, MessageId, UserId)> for History {
 
         if let Some(prompt) = character.prompt() {
             let mut begin_prompt = BEGIN_PROMPT.to_owned();
-            begin_prompt.push_str(&prompt);
+            begin_prompt.push_str(prompt);
             history.push((MessageType::Prompt, Message::new_system(begin_prompt)));
         }
 
         if let Some(scenario) = character.scenario() {
             let mut begin_scenario = BEGIN_SCENARIO.to_owned();
-            begin_scenario.push_str(&scenario);
+            begin_scenario.push_str(scenario);
 
             history.push((MessageType::Scenario, Message::new_system(begin_scenario)));
         }
@@ -237,5 +245,15 @@ impl From<(Character, MessageId, UserId)> for History {
             character: character.id(),
             id,
         }
+    }
+}
+
+impl From<History> for Vec<ChatCompletionRequestMessage> {
+    fn from(history: History) -> Self {
+        history
+            .previous
+            .into_iter()
+            .map(|(_, msg)| msg.into())
+            .collect()
     }
 }

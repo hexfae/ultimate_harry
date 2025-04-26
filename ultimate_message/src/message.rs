@@ -198,7 +198,7 @@ impl From<Message> for ChatCompletionRequestMessage {
                 let name = CHARACTERS
                     .read()
                     .get_by_id(character)
-                    .map(|character| character.name());
+                    .map(|character| character.name().to_owned());
 
                 Self::Assistant(ChatCompletionRequestAssistantMessage {
                     content: Some(input.content.into()),
@@ -210,7 +210,7 @@ impl From<Message> for ChatCompletionRequestMessage {
                 let name = CHARACTERS
                     .read()
                     .get_by_id(id)
-                    .map(|character| character.name());
+                    .map(|character| character.name().to_owned());
                 Self::Assistant(ChatCompletionRequestAssistantMessage {
                     content: Some(input.content.into()),
                     name,

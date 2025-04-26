@@ -183,7 +183,7 @@ async fn edit_confirmed(
     let old_id = character.id();
 
     character.edit_from_modals(ctx.author(), modal, second_modal);
-    let character_name: String = character.name();
+    let character_name = character.name().to_owned();
     CHARACTERS.write().supersede_by_id(old_id, character.id());
 
     CHARACTERS.write().insert(character);

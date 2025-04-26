@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_history"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 
 [dependencies]
@@ -13,6 +13,7 @@ ron = "0.9.0"
 snafu = "0.8.5"
 serde = { version = "1.0.219", features = ["derive"] }
 tracing = "0.1.41"
+async-openai = "0.28.1"
 
 [lints.rust]
 unsafe_code = "forbid"

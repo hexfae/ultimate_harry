@@ -4,7 +4,7 @@ version = "0.0.3"
 edition = "2024"
 
 [dependencies]
-async-openai = "0.28.0"
+async-openai = "0.28.1"
 serenity = "0.12.4"
 ultimate_config = { path = "../ultimate_config" }
 ultimate_character = { path = "../ultimate_character" }
