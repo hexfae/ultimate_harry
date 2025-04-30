@@ -38,6 +38,12 @@ const CHARACTERS_PATH: &str = "characters.ron";
 
 const CHARACTER_LIMIT: u16 = 4096;
 
+const PREVIOUS: &str = "⬅️";
+const NEXT: &str = "➡️";
+const EDIT: &str = "✏️";
+const UNDO: &str = "↩️";
+const REDO: &str = "↪️";
+
 pub static CHARACTERS: LazyLock<Characters> =
     LazyLock::new(|| Characters::load().expect("valid characters"));
 
@@ -54,8 +60,6 @@ pub enum Error {
     Serialize { source: ron::error::Error },
     #[snafu(display("Error while writing characters: {source}"))]
     Write { source: std::io::Error },
-    #[snafu(display("Ingen gubbe hittades, tyvärr!"))]
-    NotFound,
 }
 
 impl Characters {
@@ -445,17 +449,12 @@ impl Character {
     pub fn master_reply(
         &self,
         id: impl Into<u64>,
-        // (current, total)
-        content_pages: (usize, usize),
-        // (current, total, editor (None if message is unedited))
-        edit_pages_and_editor: (usize, usize, Option<impl Into<UserId>>),
+        (current_page, total_pages): (usize, usize),
+        (current_edit, total_edits, current_editor): (usize, usize, Option<impl Into<UserId>>),
         similarity: Option<f64>,
         content: impl Into<String>,
         elapsed: Option<Duration>,
         has_finished: HasFinished,
-        has_previous: HasPrevious,
-        has_undo: HasUndo,
-        has_redo: HasRedo,
     ) -> CreateReply {
         let name = &self.name;
         let content = content.into();
@@ -463,10 +462,10 @@ impl Character {
         let color = self.color;
 
         let footer = {
-            let pages = if content_pages.1 == 0 {
+            let pages = if total_pages == 0 {
                 String::new()
             } else {
-                format!("{}/{}", content_pages.0 + 1, content_pages.1)
+                format!("{}/{}", current_page + 1, total_pages)
             };
 
             let elapsed = elapsed.map_or_else(String::new, |elapsed| {
@@ -481,22 +480,17 @@ impl Character {
                 format!(" | {:.0}% namnlikhet", similarity * 100.0)
             });
 
-            let editor = edit_pages_and_editor.2.map_or_else(String::new, |editor| {
+            let editor = current_editor.map_or_else(String::new, |editor| {
                 format!(
                     "(redigerad av {})",
                     CONFIG.read().substitute_name(editor.into())
                 )
             });
 
-            let edit_pages = if edit_pages_and_editor.1 == 0 {
+            let edit_pages = if total_edits == 0 {
                 String::new()
             } else {
-                format!(
-                    " | {}/{} {}",
-                    edit_pages_and_editor.0 + 1,
-                    edit_pages_and_editor.1 + 1,
-                    editor
-                )
+                format!(" | {}/{} {}", current_edit + 1, total_edits + 1, editor)
             };
 
             let len = format!(" | {}/{CHARACTER_LIMIT}", content.len());
@@ -517,6 +511,21 @@ impl Character {
             embed = embed.color(color);
         }
 
+        let has_previous = if total_pages > 1 {
+            HasPrevious::Yes
+        } else {
+            HasPrevious::No
+        };
+        let has_undo = if total_edits > 0 {
+            HasUndo::Yes
+        } else {
+            HasUndo::No
+        };
+        let has_redo = if current_edit < total_edits {
+            HasRedo::Yes
+        } else {
+            HasRedo::No
+        };
         let components = create_buttons(id, has_previous, has_finished, has_undo, has_redo);
 
         CreateReply::default().embed(embed).components(components)
@@ -748,23 +757,23 @@ fn create_buttons(
         CreateButton::new(prev_msg_id)
             .disabled(!has_finished || !has_previous)
             .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode("⬅️".to_owned())),
+            .emoji(ReactionType::Unicode(PREVIOUS.to_owned())),
         CreateButton::new(next_msg_id)
             .disabled(!has_finished)
             .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode("➡️".to_owned())),
+            .emoji(ReactionType::Unicode(NEXT.to_owned())),
         CreateButton::new(edit_msg_id)
             .disabled(!has_finished)
             .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode("✏️".to_owned())),
+            .emoji(ReactionType::Unicode(EDIT.to_owned())),
         CreateButton::new(undo_id)
             .disabled(!has_undo)
             .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode("↩️".to_owned())),
+            .emoji(ReactionType::Unicode(UNDO.to_owned())),
         CreateButton::new(redo_id)
             .disabled(!has_redo)
             .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode("↪️".to_owned())),
+            .emoji(ReactionType::Unicode(REDO.to_owned())),
     ])]
 }
 
@@ -782,6 +791,12 @@ fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
     ])]
 }
 
+#[derive(PartialEq, Eq)]
+pub enum HasFinished {
+    Yes,
+    No,
+}
+
 /// If this message has a previous version (a previous page).
 ///
 /// Note that this should be `Self::Yes` if the current page is the first page
@@ -789,25 +804,19 @@ fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
 /// The only time this should be `Self::No` is if this is the first (and only)
 /// page.
 #[derive(PartialEq, Eq)]
-pub enum HasPrevious {
+enum HasPrevious {
     Yes,
     No,
 }
 
 #[derive(PartialEq, Eq)]
-pub enum HasFinished {
+enum HasUndo {
     Yes,
     No,
 }
 
 #[derive(PartialEq, Eq)]
-pub enum HasUndo {
-    Yes,
-    No,
-}
-
-#[derive(PartialEq, Eq)]
-pub enum HasRedo {
+enum HasRedo {
     Yes,
     No,
 }

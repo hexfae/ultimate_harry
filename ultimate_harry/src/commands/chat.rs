@@ -10,7 +10,7 @@ use poise::{
 };
 use snafu::ResultExt;
 use tokio::time::sleep;
-use ultimate_character::{CHARACTERS, Character, HasFinished, HasPrevious, HasRedo, HasUndo};
+use ultimate_character::{CHARACTERS, Character, HasFinished};
 use ultimate_history::{HISTORIES, History};
 use ultimate_modals::EditMessageModal;
 use ultimate_phrases::{NO_CHARACTER_PHRASES, sample};
@@ -145,17 +145,6 @@ async fn handle_post_interaction(
     );
     let content = last.get_version_content(current_revision);
     let has_finished = HasFinished::Yes;
-    let has_previous = HasPrevious::Yes;
-    let has_undo = if last.revisions_len() > 0 {
-        HasUndo::Yes
-    } else {
-        HasUndo::No
-    };
-    let has_redo = if current_revision < last.revisions_len() {
-        HasRedo::Yes
-    } else {
-        HasRedo::No
-    };
 
     msg.edit(
         ctx,
@@ -167,9 +156,6 @@ async fn handle_post_interaction(
             content,
             None,
             has_finished,
-            has_previous,
-            has_undo,
-            has_redo,
         ),
     )
     .await
@@ -194,13 +180,6 @@ async fn send_initial_message(
                     character.greeting(),
                     None,
                     HasFinished::Yes,
-                    if characters.len() == 1 {
-                        HasPrevious::No
-                    } else {
-                        HasPrevious::Yes
-                    },
-                    HasUndo::No,
-                    HasRedo::No,
                 ))
                 .await
                 .context(SendMessageSnafu)?;

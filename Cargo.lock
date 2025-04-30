@@ -2789,7 +2789,7 @@ dependencies = [
 
 [[package]]
 name = "ultimate_character"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "bon",
  "dashmap 6.1.0",
