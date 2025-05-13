@@ -14,7 +14,8 @@ use poise::{
 };
 use snafu::ResultExt;
 use tokio::time::sleep;
-use ultimate_character::{CHARACTERS, Character};
+use ultimate_character::Character;
+use ultimate_database::DB;
 use ultimate_modals::{CreateCharacterModal, SecondCreateCharacterModal};
 use ultimate_phrases::{
     CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, CREATED_PHRASES, TIMEOUT_PHRASES, sample, sample_name,
@@ -40,7 +41,7 @@ pub async fn create(ctx: Context<'_>) -> Result<(), Report> {
     let response = sample_name(CREATED_PHRASES, character.name());
     msg.edit_with(ctx, response).await?;
 
-    CHARACTERS.insert(character);
+    DB.insert_character(character).await?;
     STATISTICS.character_created_by(ctx.author());
 
     sleep(FIVE_SECONDS).await;

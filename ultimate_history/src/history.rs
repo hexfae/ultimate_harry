@@ -1,18 +1,9 @@
-use std::{
-    fs::{read, write},
-    path::Path,
-    sync::LazyLock,
-    time::Duration,
-};
+use std::time::Duration;
 
 use async_openai::types::ChatCompletionRequestMessage;
-use dashmap::DashMap;
-use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
 use serenity::all::{MessageId, UserId};
-use snafu::{ResultExt, Snafu};
-use tracing::warn;
-use ulid::Ulid;
+use surrealdb::RecordId;
 use ultimate_character::Character;
 use ultimate_message::{Message, MessageEdit};
 
@@ -30,88 +21,13 @@ const EXAMPLE_MESSAGE_SEPARATOR: &str = "Nytt exempelmeddelande.";
 
 const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du inte längra avbryta rollspelet, gå ur karaktär, eller skriva åt användaren.";
 
-const HISTORIES_PATH: &str = "histories.ron";
-
-pub static HISTORIES: LazyLock<Histories> =
-    LazyLock::new(|| Histories::load().expect("valid histories"));
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Error while reading histories: {source}"))]
-    Read { source: std::io::Error },
-    #[snafu(display("Error while deserializing histories: {source}"))]
-    Deserialize { source: ron::de::SpannedError },
-    #[snafu(display("Error while serializing histories: {source}"))]
-    Serialize { source: ron::error::Error },
-    #[snafu(display("Error while writing histories: {source}"))]
-    Write { source: std::io::Error },
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 pub struct History {
     previous: Vec<(MessageType, Message)>,
     seconds_taken_and_choices: Vec<(Duration, (MessageType, Message))>,
     current_page: usize,
-    character: Ulid,
-    id: MessageId,
-}
-
-pub struct Histories(DashMap<MessageId, History>);
-
-impl Histories {
-    fn load() -> Result<Self, Error> {
-        if Path::new(HISTORIES_PATH).exists() {
-            read(HISTORIES_PATH)
-                .context(ReadSnafu)
-                .and_then(|bytes| {
-                    ron::de::from_bytes::<Vec<History>>(&bytes).context(DeserializeSnafu)
-                })
-                .map(|histories| {
-                    histories
-                        .into_iter()
-                        .map(|history| (history.id, history))
-                        .collect::<DashMap<MessageId, History>>()
-                })
-                .map(Self)
-        } else {
-            Ok(Self::default())
-        }
-    }
-
-    fn save(&self) {
-        if let Err(why) = ron::ser::to_string_pretty(
-            &self
-                .0
-                .iter()
-                .map(|c| c.value().to_owned())
-                .collect::<Vec<History>>(),
-            PrettyConfig::new(),
-        )
-        .context(SerializeSnafu)
-        .and_then(|string| write(HISTORIES_PATH, string).context(WriteSnafu))
-        {
-            warn!("Error while saving histories: {why}");
-        }
-    }
-
-    pub fn insert(&self, history: History) {
-        self.0.insert(history.id, history);
-        self.save();
-    }
-
-    pub fn get(&self, id: MessageId) -> Option<History> {
-        self.0.get(&id).map(|c| c.value().to_owned())
-    }
-}
-
-impl Default for Histories {
-    fn default() -> Self {
-        let characters = Self(DashMap::new());
-        if !Path::new(HISTORIES_PATH).exists() {
-            characters.save();
-        }
-        characters
-    }
+    character: RecordId,
+    id: RecordId,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -149,8 +65,13 @@ impl History {
         }
     }
 
+    #[must_use]
+    pub fn id(&self) -> RecordId {
+        self.id.clone()
+    }
+
     pub fn set_id(&mut self, id: impl Into<MessageId>) {
-        self.id = id.into();
+        self.id = RecordId::from(("history", id.into().to_string()));
     }
 
     /// # Panics
@@ -166,8 +87,8 @@ impl History {
     }
 
     #[must_use]
-    pub const fn character(&self) -> Ulid {
-        self.character
+    pub fn character(&self) -> RecordId {
+        self.character.clone()
     }
 
     pub fn push(&mut self, message: impl Into<Message>) {
@@ -184,7 +105,7 @@ impl From<(Character, MessageId, UserId)> for History {
             history.push((MessageType::System, Message::new_system(BEGIN_PERSONALITY)));
             history.push((
                 MessageType::Personality,
-                Message::new_assistant(personality, character.id()),
+                Message::new_assistant(personality, &character),
             ));
         }
 
@@ -217,7 +138,7 @@ impl From<(Character, MessageId, UserId)> for History {
 
                 history.push((
                     MessageType::ExampleMessage,
-                    Message::new_assistant(assistant_message, character.id()),
+                    Message::new_assistant(assistant_message, &character),
                 ));
 
                 history.push((
@@ -230,7 +151,7 @@ impl From<(Character, MessageId, UserId)> for History {
         if let Some(system_prompt) = character.system_prompt() {
             history.push((
                 MessageType::SystemPrompt,
-                Message::new_assistant(system_prompt, character.id()),
+                Message::new_assistant(system_prompt, &character),
             ));
         }
 
@@ -238,8 +159,10 @@ impl From<(Character, MessageId, UserId)> for History {
 
         history.push((
             MessageType::Greeting,
-            Message::new_assistant(character.greeting(), character.id()),
+            Message::new_assistant(character.greeting(), &character),
         ));
+
+        let id = RecordId::from(("history", id.to_string()));
 
         Self {
             previous: history,

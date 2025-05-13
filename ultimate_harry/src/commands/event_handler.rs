@@ -7,9 +7,9 @@ use poise::{
     BoxFuture, FrameworkContext,
     serenity_prelude::{ActivityData, ActivityType, Context, EditMessage, FullEvent, Message},
 };
-use ultimate_character::{CHARACTERS, Character};
+use ultimate_character::Character;
 use ultimate_config::CONFIG;
-use ultimate_history::HISTORIES;
+use ultimate_database::DB;
 use ultimate_requester::Requester;
 
 // poise event_handler requires it to be borrowed
@@ -72,10 +72,10 @@ async fn message_received(event: &FullEvent, ctx: &Context) -> Result<(), Report
     let Some(reply) = message.get_reply() else {
         return Ok(());
     };
-    let Some(mut history) = HISTORIES.get(reply.id) else {
+    let Some(mut history) = DB.history(reply.id).await? else {
         return Ok(());
     };
-    let Some(character) = CHARACTERS.get_by_id(history.character()) else {
+    let Some(character) = DB.character(history.character()).await? else {
         return Ok(());
     };
 
@@ -100,7 +100,7 @@ async fn message_received(event: &FullEvent, ctx: &Context) -> Result<(), Report
 
     history.set_id(message);
 
-    HISTORIES.insert(history);
+    DB.insert_history(history).await?;
 
     Ok(())
 }

@@ -13,7 +13,8 @@ use poise::{
 };
 use snafu::ResultExt;
 use tokio::time::sleep;
-use ultimate_character::{CHARACTERS, Character};
+use ultimate_character::Character;
+use ultimate_database::DB;
 use ultimate_phrases::{NO_CHARACTER_PHRASES, sample};
 use ultimate_statistics::STATISTICS;
 
@@ -38,8 +39,8 @@ pub async fn view(
     Ok(())
 }
 
-async fn sorted_by_similarity(ctx: Context<'_>, name: impl AsRef<str>) -> Result<()> {
-    let characters = CHARACTERS.get_all_sorted_by_similarity(name);
+async fn sorted_by_similarity(ctx: Context<'_>, name: String) -> Result<(), Report> {
+    let characters = DB.characters_by_similarity(name).await?;
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
@@ -53,9 +54,9 @@ async fn sorted_by_similarity(ctx: Context<'_>, name: impl AsRef<str>) -> Result
     let characters_and_footer_text = characters
         .into_iter()
         .enumerate()
-        .map(|(index, (similarity, character))| {
+        .map(|(index, character)| {
             let index = index + 1;
-            let similarity = format!("{:.0}", similarity * 100.0);
+            let similarity = character.similarity();
             let conversations_had = character.conversations_had();
             let footer_text = format!(
                 "{index}/{pages} | {conversations_had} konversationer | {similarity}% namnlikhet"
@@ -67,8 +68,8 @@ async fn sorted_by_similarity(ctx: Context<'_>, name: impl AsRef<str>) -> Result
     Ok(())
 }
 
-async fn sorted_by_usage(ctx: Context<'_>) -> Result<()> {
-    let characters = CHARACTERS.get_all_sorted_by_usage();
+async fn sorted_by_usage(ctx: Context<'_>) -> Result<(), Report> {
+    let characters = DB.characters_by_usage().await?;
 
     if characters.is_empty() {
         let msg = ctx

@@ -1,5 +1,4 @@
 use bon::Builder;
-use dashmap::DashMap;
 use jiff::Zoned;
 use poise::{
     CreateReply,
@@ -11,19 +10,16 @@ use poise::{
         },
     },
 };
-use ron::ser::PrettyConfig;
 use serde::{Deserialize, Serialize};
-use snafu::{ResultExt, Snafu};
 use std::{
     collections::{HashMap, HashSet},
     fmt::Display,
-    fs::{read, write},
-    path::Path,
-    sync::LazyLock,
     time::Duration,
 };
-use strsim::normalized_damerau_levenshtein;
-use tracing::warn;
+use surrealdb::{
+    RecordId,
+    opt::{IntoResource, Resource},
+};
 use ulid::Ulid;
 use ultimate_config::{CONFIG, ModelSettings};
 use ultimate_modals::{
@@ -32,10 +28,6 @@ use ultimate_modals::{
 use ultimate_phrases::{NO_PHRASES, YES_PHRASES, sample};
 use url::Url;
 
-type Result<T, E = Error> = std::result::Result<T, E>;
-
-const CHARACTERS_PATH: &str = "characters.ron";
-
 const CHARACTER_LIMIT: u16 = 4096;
 
 const PREVIOUS: &str = "⬅️";
@@ -43,126 +35,6 @@ const NEXT: &str = "➡️";
 const EDIT: &str = "✏️";
 const UNDO: &str = "↩️";
 const REDO: &str = "↪️";
-
-pub static CHARACTERS: LazyLock<Characters> =
-    LazyLock::new(|| Characters::load().expect("valid characters"));
-
-#[derive(Serialize, Deserialize)]
-pub struct Characters(DashMap<Ulid, Character>);
-
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("Error while reading characters: {source}"))]
-    Read { source: std::io::Error },
-    #[snafu(display("Error while deserializing characters: {source}"))]
-    Deserialize { source: ron::de::SpannedError },
-    #[snafu(display("Error while serializing characters: {source}"))]
-    Serialize { source: ron::error::Error },
-    #[snafu(display("Error while writing characters: {source}"))]
-    Write { source: std::io::Error },
-}
-
-impl Characters {
-    fn load() -> Result<Self, Error> {
-        if Path::new(CHARACTERS_PATH).exists() {
-            read(CHARACTERS_PATH)
-                .context(ReadSnafu)
-                .and_then(|bytes| {
-                    ron::de::from_bytes::<Vec<Character>>(&bytes).context(DeserializeSnafu)
-                })
-                .map(|characters| {
-                    characters
-                        .into_iter()
-                        .map(|character| (character.id, character))
-                        .collect()
-                })
-                .map(Self)
-        } else {
-            Ok(Self(DashMap::new()))
-        }
-    }
-
-    fn save(&self) {
-        let characters = match ron::ser::to_string_pretty(
-            &self
-                .0
-                .iter()
-                .map(|c| c.value().to_owned())
-                .collect::<Vec<Character>>(),
-            PrettyConfig::new(),
-        )
-        .context(SerializeSnafu)
-        {
-            Ok(characters) => characters,
-            Err(why) => {
-                warn!("{why}");
-                return;
-            }
-        };
-
-        if let Err(why) = write(CHARACTERS_PATH, characters).context(WriteSnafu) {
-            warn!("{why}");
-        }
-    }
-
-    fn characters(&self) -> impl Iterator<Item = Character> {
-        self.0
-            .iter()
-            .map(|c| c.value().to_owned())
-            .filter(|character| character.deleted_by.is_none())
-            .filter(|character| character.next_version.is_none())
-    }
-
-    pub fn insert(&self, character: Character) {
-        self.0.insert(character.id, character);
-        self.save();
-    }
-
-    #[must_use]
-    pub fn get_all_sorted_by_usage(&self) -> Vec<Character> {
-        let mut characters = self.characters().collect::<Vec<Character>>();
-        characters.sort_by(|a, b| a.conversations_had.cmp(&b.conversations_had));
-        characters.reverse();
-        characters
-    }
-
-    pub fn get_all_sorted_by_similarity(&self, input: impl AsRef<str>) -> Vec<(f64, Character)> {
-        let mut similarities_and_characters = self
-            .characters()
-            .map(|character| {
-                (
-                    normalized_damerau_levenshtein(input.as_ref(), character.name()),
-                    character,
-                )
-            })
-            .collect::<Vec<(f64, Character)>>();
-        similarities_and_characters.sort_by(|(a, _), (b, _)| f64::total_cmp(a, b));
-        similarities_and_characters.reverse();
-        similarities_and_characters
-    }
-
-    pub fn get_by_id(&self, id: impl Into<Ulid>) -> Option<Character> {
-        self.0.get(&id.into()).map(|c| c.value().to_owned())
-    }
-
-    pub fn delete_by_id(&self, id: impl Into<Ulid>, user: impl Into<UserId>) -> Option<()> {
-        if let Some(mut character) = self.0.get_mut(&id.into()) {
-            character.deleted_by = Some(user.into());
-            character.deleted_at = Some(Zoned::now());
-            self.save();
-            Some(())
-        } else {
-            None
-        }
-    }
-
-    pub fn supersede_by_id(&self, old_id: impl Into<Ulid>, new_id: impl Into<Ulid>) {
-        if let Some(mut character) = self.0.get_mut(&old_id.into()) {
-            character.next_version = Some(new_id.into());
-            self.save();
-        }
-    }
-}
 
 /// A character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -176,8 +48,7 @@ pub struct Character {
     #[builder(into)]
     greeting: String,
     /// The character's unique ID, generated on creation.
-    #[builder(default = Ulid::new())]
-    id: Ulid,
+    id: RecordId,
     /// The Discord user ID of the character's original creator.
     #[builder(into)]
     creator: UserId,
@@ -189,11 +60,11 @@ pub struct Character {
     /// The ID of the next version of the character.
     ///
     /// If Some, the character will no longer be visible.
-    next_version: Option<Ulid>,
+    next_version: Option<RecordId>,
     /// The ID of the previous version of the character.
     ///
     /// This is used for rollback purposes.
-    previous_version: Option<Ulid>,
+    previous_version: Option<RecordId>,
     /// The character's nickname.
     ///
     /// This is intented to be a short version of the name, to
@@ -282,6 +153,10 @@ pub struct Character {
     ///
     /// If set, this overrides the default model settings for requests.
     model_settings: Option<ModelSettings>,
+    /// The similarity of the character to the input.
+    ///
+    /// This is `Some` when the user searches a character by name, e.g. `chat` or `delete`. and `None` in e.g. `view`.
+    similarity: Option<f64>,
 }
 
 impl Character {
@@ -331,8 +206,8 @@ impl Character {
     }
 
     #[must_use]
-    pub const fn id(&self) -> Ulid {
-        self.id
+    pub fn id(&self) -> RecordId {
+        self.id.clone()
     }
 
     #[must_use]
@@ -343,6 +218,14 @@ impl Character {
     #[must_use]
     pub fn model_settings(&self) -> Option<ModelSettings> {
         self.model_settings.clone()
+    }
+
+    #[must_use]
+    pub fn similarity(&self) -> String {
+        self.similarity.map_or_else(
+            || "???%".to_owned(),
+            |similarity| format!("{:.0}%", similarity * 100.0),
+        )
     }
 
     pub fn edit_from_modals(
@@ -356,8 +239,8 @@ impl Character {
         self.all_editors.insert(editor);
         self.edited_at.push(Zoned::now());
         self.version += 1;
-        self.previous_version = Some(self.id);
-        self.id = Ulid::new();
+        self.previous_version = Some(self.id.clone());
+        self.id = RecordId::from(("character", Ulid::new().to_string()));
         let avatar = validate_url(second_modal.avatar);
         // the reason why these can't just be `self.foo = bar` is because
         // if the user doesn't fill in a field, it will be None, and we
@@ -451,7 +334,7 @@ impl Character {
         id: impl Into<u64>,
         (current_page, total_pages): (usize, usize),
         (current_edit, total_edits, current_editor): (usize, usize, Option<impl Into<UserId>>),
-        similarity: Option<f64>,
+        similarity: Option<String>,
         content: impl Into<String>,
         elapsed: Option<Duration>,
         has_finished: HasFinished,
@@ -476,9 +359,7 @@ impl Character {
                 }
             });
 
-            let similarity = similarity.map_or_else(String::new, |similarity| {
-                format!(" | {:.0}% namnlikhet", similarity * 100.0)
-            });
+            let similarity = similarity.unwrap_or_default();
 
             let editor = current_editor.map_or_else(String::new, |editor| {
                 format!(
@@ -705,6 +586,7 @@ impl From<(CreateCharacterModal, SecondCreateCharacterModal, UserId)> for Charac
         Self::builder()
             .name(first.name)
             .greeting(first.greeting)
+            .id(RecordId::from(("character", Ulid::new().to_string())))
             .maybe_nickname(first.nickname)
             .maybe_description(first.description)
             .maybe_personality(first.personality)
@@ -819,4 +701,10 @@ enum HasUndo {
 enum HasRedo {
     Yes,
     No,
+}
+
+impl<O> IntoResource<O> for Character {
+    fn into_resource(self) -> Result<Resource, surrealdb::Error> {
+        Ok(Resource::RecordId(self.id()))
+    }
 }

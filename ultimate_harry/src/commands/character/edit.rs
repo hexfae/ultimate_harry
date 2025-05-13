@@ -15,7 +15,8 @@ use poise::{
 };
 use snafu::ResultExt;
 use tokio::time::sleep;
-use ultimate_character::{CHARACTERS, Character};
+use ultimate_character::Character;
+use ultimate_database::DB;
 use ultimate_modals::{EditCharacterModal, SecondEditCharacterModal};
 use ultimate_phrases::{
     CANCELLED_PHRASES, CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, EDITED_PHRASES, NO_CHARACTER_PHRASES,
@@ -40,7 +41,7 @@ pub async fn edit(
 ) -> Result<(), Report> {
     ctx.defer_ephemeral_or_broadcast().await?;
 
-    let characters = CHARACTERS.get_all_sorted_by_similarity(name);
+    let characters = DB.characters_by_similarity(name).await?;
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
@@ -54,9 +55,9 @@ pub async fn edit(
     let characters_and_footer_text = characters
         .into_iter()
         .enumerate()
-        .map(|(index, (similarity, character))| {
+        .map(|(index, character)| {
             let index = index + 1;
-            let similarity = format!("{:.0}", similarity * 100.0);
+            let similarity = character.similarity();
             let conversations_had = character.conversations_had();
             let footer_text = format!(
                 "{index}/{pages} | {conversations_had} konversationer | {similarity}% namnlikhet"
@@ -72,7 +73,7 @@ pub async fn edit(
 async fn display_pagination(
     ctx: Context<'_>,
     characters_and_footer_text: Vec<(Character, String)>,
-) -> Result<()> {
+) -> Result<(), Report> {
     let id = ctx.id();
     let custom_ids = ["prev", "next", "confirm", "cancel"]
         .map(|s| format!("{id}{s}"))
@@ -169,7 +170,7 @@ async fn edit_confirmed(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
     mut character: Character,
-) -> Result<()> {
+) -> Result<(), Report> {
     let Some(modal) = show_first_modal::<EditCharacterModal>(ctx, interaction.clone()).await?
     else {
         return Ok(());
@@ -184,9 +185,10 @@ async fn edit_confirmed(
 
     character.edit_from_modals(ctx.author(), modal, second_modal);
     let character_name = character.name().to_owned();
-    CHARACTERS.supersede_by_id(old_id, character.id());
 
-    CHARACTERS.insert(character);
+    DB.supersede_character(character.id(), old_id).await?;
+    DB.insert_character(character).await?;
+
     STATISTICS.character_edited_by(ctx.author());
 
     interaction

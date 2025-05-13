@@ -10,8 +10,9 @@ use poise::{
 };
 use snafu::ResultExt;
 use tokio::time::sleep;
-use ultimate_character::{CHARACTERS, Character, HasFinished};
-use ultimate_history::{HISTORIES, History};
+use ultimate_character::{Character, HasFinished};
+use ultimate_database::DB;
+use ultimate_history::History;
 use ultimate_modals::EditMessageModal;
 use ultimate_phrases::{NO_CHARACTER_PHRASES, sample};
 use ultimate_statistics::STATISTICS;
@@ -34,7 +35,7 @@ pub async fn chat(
 ) -> Result<(), Report> {
     ctx.defer_or_broadcast().await.context(DeferSnafu)?;
 
-    let characters = CHARACTERS.get_all_sorted_by_similarity(name);
+    let characters = DB.characters_by_similarity(name).await?;
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
@@ -56,8 +57,7 @@ pub async fn chat(
 
     let (msg, msg_id) = send_initial_message(ctx, characters.clone()).await?;
 
-    let mut similarities_characters_histories =
-        to_similarities_characters_histories(characters, msg_id, ctx.author());
+    let mut characters_histories = to_characters_histories(characters, msg_id, ctx.author());
 
     while let Some(interaction) = ComponentInteractionCollector::new(ctx)
         .custom_ids(custom_ids.clone())
@@ -65,7 +65,7 @@ pub async fn chat(
         .await
     {
         let interaction_type = InteractionType::try_from(&interaction)?;
-        let mut history = similarities_characters_histories[current_page].2.clone();
+        let mut history = characters_histories[current_page].1.clone();
 
         let last = history.last();
 
@@ -83,7 +83,7 @@ pub async fn chat(
                 let response = display_edit_modal(ctx, interaction.clone()).await?;
                 if let Some(response) = response {
                     history.edit_content(response, ctx.author());
-                    similarities_characters_histories[current_page].2 = history.clone();
+                    characters_histories[current_page].1 = history.clone();
                     revisions_per_page[current_page] = history.last().revisions_len();
                 }
             }
@@ -106,7 +106,7 @@ pub async fn chat(
 
         handle_post_interaction(
             ctx,
-            similarities_characters_histories.clone(),
+            characters_histories.clone(),
             current_page,
             pages,
             revisions_per_page.clone(),
@@ -122,15 +122,15 @@ pub async fn chat(
 
 async fn handle_post_interaction(
     ctx: Context<'_>,
-    similarities_characters_histories: Vec<(f64, Character, History)>,
+    similarities_characters_histories: Vec<(Character, History)>,
     current_page: usize,
     pages: usize,
     revisions_per_page: Vec<usize>,
     msg: &ReplyHandle<'_>,
-) -> Result<()> {
-    let (similarity, character, history) = similarities_characters_histories[current_page].clone();
+) -> Result<(), Report> {
+    let (character, history) = similarities_characters_histories[current_page].clone();
 
-    HISTORIES.insert(history.clone());
+    DB.insert_history(history.clone()).await?;
 
     let current_revision = revisions_per_page[current_page];
 
@@ -152,7 +152,7 @@ async fn handle_post_interaction(
             ctx.id(),
             content_pages,
             edit_pages_and_editor,
-            Some(similarity),
+            Some(character.similarity()),
             content,
             None,
             has_finished,
@@ -165,18 +165,18 @@ async fn handle_post_interaction(
 
 async fn send_initial_message(
     ctx: Context<'_>,
-    characters: Vec<(f64, Character)>,
-) -> Result<(ReplyHandle<'_>, MessageId)> {
+    characters: Vec<Character>,
+) -> Result<(ReplyHandle<'_>, MessageId), Report> {
     let (msg, msg_id) = {
         let (msg, character) = {
-            let (similarity, character) = characters[0].clone();
+            let character = characters[0].clone();
 
             let msg = ctx
                 .send(character.master_reply(
                     ctx.id(),
                     (0, characters.len()),
                     (0, 0, None::<UserId>),
-                    Some(similarity),
+                    Some(character.similarity()),
                     character.greeting(),
                     None,
                     HasFinished::Yes,
@@ -187,22 +187,21 @@ async fn send_initial_message(
         };
         let msg_id = msg.message().await.context(RetrieveMessageSnafu)?.id;
         let history = History::from((character, msg_id, ctx.author().id));
-        HISTORIES.insert(history);
+        DB.insert_history(history).await?;
         (msg, msg_id)
     };
     Ok((msg, msg_id))
 }
 
-fn to_similarities_characters_histories(
-    characters: Vec<(f64, Character)>,
+fn to_characters_histories(
+    characters: Vec<Character>,
     msg_id: MessageId,
     user_id: &(impl Into<UserId> + Clone),
-) -> Vec<(f64, Character, History)> {
+) -> Vec<(Character, History)> {
     characters
         .into_iter()
-        .map(|(similarity, character)| {
+        .map(|character| {
             (
-                similarity,
                 character.clone(),
                 History::from((character, msg_id, user_id.clone().into())),
             )

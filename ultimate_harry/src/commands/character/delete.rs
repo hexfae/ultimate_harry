@@ -12,9 +12,10 @@ use poise::{
     },
 };
 use snafu::ResultExt;
+use surrealdb::RecordId;
 use tokio::time::sleep;
-use ulid::Ulid;
-use ultimate_character::{CHARACTERS, Character};
+use ultimate_character::Character;
+use ultimate_database::DB;
 use ultimate_phrases::{
     ASK_DELETE_PHRASES, CANCELLED_PHRASES, DELETED_PHRASES, NO_CHARACTER_PHRASES, sample,
 };
@@ -37,7 +38,7 @@ pub async fn delete(
 ) -> Result<(), Report> {
     ctx.defer_ephemeral_or_broadcast().await?;
 
-    let characters = CHARACTERS.get_all_sorted_by_similarity(&name);
+    let characters = DB.characters_by_similarity(&name).await?;
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
@@ -51,9 +52,9 @@ pub async fn delete(
     let characters_and_footer_text = characters
         .into_iter()
         .enumerate()
-        .map(|(index, (similarity, character))| {
+        .map(|(index, character)| {
             let index = index + 1;
-            let similarity = format!("{:.0}", similarity * 100.0);
+            let similarity = character.similarity();
             let conversations_had = character.conversations_had();
             let footer_text = format!(
                 "{index}/{pages} | {conversations_had} konversationer | {similarity}% namnlikhet"
@@ -69,7 +70,7 @@ pub async fn delete(
 async fn display_pagination(
     ctx: Context<'_>,
     characters_and_footer_text: Vec<(Character, String)>,
-) -> Result<()> {
+) -> Result<(), Report> {
     let id = ctx.id();
     let custom_ids = ["confirm", "cancel", "prev", "next"]
         .map(|s| format!("{id}{s}"))
@@ -215,9 +216,9 @@ async fn ask_for_confirmation(
 async fn delete_confirmed(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
-    id: impl Into<Ulid>,
-) -> Result<()> {
-    CHARACTERS.delete_by_id(id.into(), ctx.author());
+    id: RecordId,
+) -> Result<(), Report> {
+    DB.delete_character(id, ctx.author()).await?;
     STATISTICS.character_deleted_by(ctx.author());
 
     let response = sample(DELETED_PHRASES);

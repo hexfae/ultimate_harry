@@ -1,23 +1,19 @@
 [package]
 name = "ultimate_character"
-version = "0.0.9"
+version = "0.0.10"
 edition = "2024"
 
 [dependencies]
 bon = "3.5.1"
 jiff = { version = "0.2.5", features = ["serde"] }
 poise = "0.6.1"
-ron = "0.10.1"
 serde = { version = "1.0.219", features = ["derive"] }
-snafu = "0.8.5"
-strsim = "0.11.1"
-tracing = "0.1.41"
 ulid = { version = "1.2.1", features = ["serde"] }
 ultimate_config = { path = "../ultimate_config" }
 ultimate_phrases = { path = "../ultimate_phrases" }
 ultimate_modals = { path = "../ultimate_modals" }
 url = "2.5.4"
-dashmap = { version = "6.1.0", features = ["serde"] }
+surrealdb = "2.3.1"
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_harry"
-version = "0.0.5"
+version = "0.0.6"
 edition = "2024"
 
 [dependencies]
@@ -15,9 +15,11 @@ ultimate_phrases = { path = "../ultimate_phrases" }
 ultimate_modals = { path = "../ultimate_modals" }
 ultimate_history = { path = "../ultimate_history" }
 ultimate_requester = { path = "../ultimate_requester" }
+ultimate_database = { path = "../ultimate_database" }
 nanorand = "0.7.0"
 snafu = "0.8.5"
 miette = "7.5.0"
+surrealdb = "2.3.1"
 
 [lints.rust]
 unsafe_code = "forbid"
