@@ -1,32 +1,76 @@
-use std::sync::LazyLock;
-
-use miette::Diagnostic;
-use serde::Serialize;
+use bon::Builder;
+use miette::{Diagnostic, Report};
+use serde::{Deserialize, Serialize};
 use serenity::all::{MessageId, UserId};
 use snafu::{OptionExt, ResultExt, Snafu};
-use surrealdb::{RecordId, Surreal, engine::remote::ws::Client};
-use ultimate_character::Character;
+use std::sync::LazyLock;
+use surrealdb::{
+    RecordId, Surreal,
+    engine::remote::ws::{Client, Ws},
+    opt::auth::Root,
+};
+use ultimate_character::{Character, CharacterPages};
 use ultimate_history::History;
 
 pub static DB: LazyLock<Database> = LazyLock::new(Database::init);
 
 const MOST_SIMILAR_TO: &str = "
-SELECT
+LET $names = SELECT
     *,
-    string::distance::normalized_damerau_levenshtein(name, $input) AS similarity_score
-FROM character
+    string::distance::normalized_damerau_levenshtein(name, $input) AS similarity
+FROM
+    character
+WHERE
+    deleted_at IS NONE
+    AND next_version IS NONE
+    AND nickname IS NONE
+;
+
+let $nicknames = SELECT
+    *,
+    math::max([
+        string::distance::normalized_damerau_levenshtein(name, $input),
+        string::distance::normalized_damerau_levenshtein(nickname, $input)
+    ]) AS similarity
+FROM
+    character
+WHERE
+    deleted_at IS NONE
+    AND next_version IS NONE
+    AND nickname IS not(NONE)
+;
+
+RETURN (
+    SELECT
+        *
+    FROM
+        array::concat($names, $nicknames)
+    ORDER BY
+        similarity DESC,
+        conversations_had DESC
+    LIMIT 25
+);
+";
+
+// TODO: does this actually select a random character?
+const RANDOM: &str = "
+SELECT
+    *
+FROM
+    character
 WHERE
     deleted_at IS NONE
     AND next_version IS NONE
 ORDER BY
-    similarity_score DESC,
-    conversations_had DESC;
+    rand()
+LIMIT 25
 ";
 
 const BY_USAGE: &str = "
 SELECT
     *
-FROM character
+FROM
+    character
 WHERE
     deleted_at IS NONE
     AND next_version IS NONE
@@ -36,9 +80,37 @@ ORDER BY
 
 pub struct Database(Surreal<Client>);
 
+#[derive(Serialize, Deserialize, Builder)]
+pub struct Name {
+    #[builder(with = |id: impl Into<UserId>| RecordId::from(("name", id.into().to_string())))]
+    id: RecordId,
+    #[builder(into)]
+    name: String,
+}
+
 impl Database {
     pub fn init() -> Self {
         Self(Surreal::init())
+    }
+
+    pub async fn connect(&self) -> Result<(), Report> {
+        self.0
+            .connect::<Ws>("localhost:8000")
+            .await
+            .context(ConnectSnafu)?;
+        self.0
+            .signin(Root {
+                username: "root",
+                password: "root",
+            })
+            .await
+            .context(ConnectSnafu)?;
+        Ok(self
+            .0
+            .use_ns("harry")
+            .use_db("harry")
+            .await
+            .context(ConnectSnafu)?)
     }
 
     pub async fn character(&self, id: RecordId) -> Result<Option<Character>, Error> {
@@ -51,16 +123,25 @@ impl Database {
     ) -> Result<Vec<Character>, Error> {
         self.0
             .query(MOST_SIMILAR_TO)
-            .bind(("name", name.into()))
+            .bind(("input", name.into()))
             .await
             .context(GetSnafu)?
-            .take(0)
+            .take(2)
             .context(GetSnafu)
     }
 
     pub async fn characters_by_usage(&self) -> Result<Vec<Character>, Error> {
         self.0
             .query(BY_USAGE)
+            .await
+            .context(GetSnafu)?
+            .take(0)
+            .context(GetSnafu)
+    }
+
+    pub async fn random_characters(&self) -> Result<Vec<Character>, Error> {
+        self.0
+            .query(RANDOM)
             .await
             .context(GetSnafu)?
             .take(0)
@@ -77,14 +158,12 @@ impl Database {
 
     pub async fn delete_character(
         &self,
-        id: RecordId,
+        id: &RecordId,
         deleted_by: impl Into<UserId>,
     ) -> Result<Option<Character>, Error> {
         self.0
             .update(id)
-            .content(DeletedBy {
-                deleted_by: deleted_by.into(),
-            })
+            .content(DeletedBy::from(deleted_by.into()))
             .await
             .context(DeleteSnafu)
     }
@@ -92,16 +171,25 @@ impl Database {
     pub async fn supersede_character(
         &self,
         new_id: RecordId,
-        old_id: RecordId,
-    ) -> Result<(), Error> {
+        old_id: &RecordId,
+    ) -> Result<Option<Character>, Error> {
         self.0
             .update(old_id)
-            .content(NextVersion {
-                next_version: Some(new_id),
-            })
+            .content(NextVersion::from(new_id))
             .await
             .context(UpdateSnafu)?
             .context(NoCharacterSnafu)
+    }
+
+    pub async fn insert_character_pages(
+        &self,
+        character_page: CharacterPages,
+    ) -> Result<Option<CharacterPages>, Error> {
+        self.0
+            .insert(character_page.id())
+            .content(character_page)
+            .await
+            .context(InsertSnafu)
     }
 
     pub async fn history(&self, id: impl Into<MessageId>) -> Result<Option<History>, Error> {
@@ -118,6 +206,42 @@ impl Database {
             .await
             .context(InsertSnafu)
     }
+
+    pub async fn update_history(&self, history: History) -> Result<Option<History>, Error> {
+        self.0
+            .update(history.id())
+            .content(history)
+            .await
+            .context(UpdateSnafu)
+    }
+
+    /// Returns `Användaren` if no matching name was found.
+    pub async fn name(&self, id: impl Into<UserId>) -> Result<String, Error> {
+        self.0
+            .select(("name", id.into().to_string()))
+            .await
+            .context(GetSnafu)
+            .map(|name| name.unwrap_or_else(|| "Användaren".to_owned()))
+    }
+
+    pub async fn insert_name(
+        &self,
+        id: impl Into<UserId>,
+        name: impl Into<String>,
+    ) -> Result<Option<Name>, Error> {
+        let name = Name::builder().id(id).name(name).build();
+        self.0
+            .insert(name.id())
+            .content(name)
+            .await
+            .context(InsertSnafu)
+    }
+}
+
+impl Name {
+    fn id(&self) -> RecordId {
+        self.id.clone()
+    }
 }
 
 #[derive(Serialize)]
@@ -127,11 +251,25 @@ struct DeletedBy {
 
 #[derive(Serialize)]
 struct NextVersion {
-    next_version: Option<RecordId>,
+    next_version: RecordId,
+}
+
+impl From<UserId> for DeletedBy {
+    fn from(deleted_by: UserId) -> Self {
+        Self { deleted_by }
+    }
+}
+
+impl From<RecordId> for NextVersion {
+    fn from(next_version: RecordId) -> Self {
+        Self { next_version }
+    }
 }
 
 #[derive(Debug, Snafu, Diagnostic)]
 pub enum Error {
+    #[snafu(display("Error connecting to the database: {source}"))]
+    Connect { source: surrealdb::Error },
     #[snafu(display("Error getting from the database: {source}"))]
     Get { source: surrealdb::Error },
     #[snafu(display("Error inserting into the database: {source}"))]

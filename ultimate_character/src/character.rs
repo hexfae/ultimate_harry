@@ -3,23 +3,20 @@ use jiff::Zoned;
 use poise::{
     CreateReply,
     serenity_prelude::{
-        CreateInteractionResponse, CreateInteractionResponseMessage, ReactionType,
+        CreateInteractionResponse, CreateInteractionResponseMessage, MessageId, ReactionType,
         all::{
             ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter,
-            CreateMessage, EditMessage, UserId,
+            UserId,
         },
     },
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Display,
+    fmt::{Display, Write},
     time::Duration,
 };
-use surrealdb::{
-    RecordId,
-    opt::{IntoResource, Resource},
-};
+use surrealdb::RecordId;
 use ulid::Ulid;
 use ultimate_config::{CONFIG, ModelSettings};
 use ultimate_modals::{
@@ -35,6 +32,9 @@ const NEXT: &str = "➡️";
 const EDIT: &str = "✏️";
 const UNDO: &str = "↩️";
 const REDO: &str = "↪️";
+/// e.g. 16 May, Friday, 2025 | 17:41:14 | 2025-05-16
+/// [jiff::fmt::strtime](https://docs.rs/jiff/latest/jiff/fmt/strtime/index.html)
+const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %R | %F";
 
 /// A character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -117,9 +117,8 @@ pub struct Character {
     /// The time the character was created.
     #[builder(default = Zoned::now())]
     created_at: Zoned,
-    /// The times the character was edited.
-    #[builder(default)]
-    edited_at: Vec<Zoned>,
+    /// If Some, the time this version was created.
+    edited_at: Option<Zoned>,
     /// If Some, the time the character was deleted.
     deleted_at: Option<Zoned>,
     /// The latest time the character had a conversation with a user.
@@ -157,6 +156,20 @@ pub struct Character {
     ///
     /// This is `Some` when the user searches a character by name, e.g. `chat` or `delete`. and `None` in e.g. `view`.
     similarity: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Builder)]
+pub struct CharacterPages {
+    #[builder(with = |id: MessageId| RecordId::from(("character_page", id.to_string())))]
+    id: RecordId,
+    #[builder(with = |cs: &[Character]| cs.iter().map(Character::id).cloned().collect())]
+    characters: Vec<RecordId>,
+    #[builder(default)]
+    current_page: usize,
+    /// `Some` if the user entered a name when running the command.
+    ///
+    /// This is then used to display the similarity of the names.
+    name: Option<String>,
 }
 
 impl Character {
@@ -206,8 +219,8 @@ impl Character {
     }
 
     #[must_use]
-    pub fn id(&self) -> RecordId {
-        self.id.clone()
+    pub const fn id(&self) -> &RecordId {
+        &self.id
     }
 
     #[must_use]
@@ -216,16 +229,27 @@ impl Character {
     }
 
     #[must_use]
+    pub fn formatted_conversations_had(&self) -> String {
+        let mut string = format!("Totalt: {}", self.conversations_had);
+        for (user, count) in &self.conversations_had_with_user {
+            let _ = write!(string, "\nMed {user}: {count}");
+        }
+        string
+    }
+
+    #[must_use]
+    // .clone() instead of .as_ref() because the only thing
+    // we can do with ModelSettings requires it to be owned
     pub fn model_settings(&self) -> Option<ModelSettings> {
         self.model_settings.clone()
     }
 
+    /// Returns e.g. ` | 75% namnlikhet` if `Some(0.75)`, otherwise returns an empty String.
     #[must_use]
     pub fn similarity(&self) -> String {
-        self.similarity.map_or_else(
-            || "???%".to_owned(),
-            |similarity| format!("{:.0}%", similarity * 100.0),
-        )
+        self.similarity.map_or_else(String::new, |similarity| {
+            format!(" | {:.0}% namnlikhet", similarity * 100.0)
+        })
     }
 
     pub fn edit_from_modals(
@@ -237,7 +261,7 @@ impl Character {
         let editor = editor.into();
         self.latest_editor = Some(editor);
         self.all_editors.insert(editor);
-        self.edited_at.push(Zoned::now());
+        self.edited_at = Some(Zoned::now());
         self.version += 1;
         self.previous_version = Some(self.id.clone());
         self.id = RecordId::from(("character", Ulid::new().to_string()));
@@ -277,73 +301,66 @@ impl Character {
         }
     }
 
-    pub fn to_create_message(&self, id: impl Into<u64>) -> CreateMessage {
-        let buttons = create_buttons(
-            id,
-            HasPrevious::No,
-            HasFinished::No,
-            HasUndo::No,
-            HasRedo::No,
-        );
-        let footer = CreateEmbedFooter::new(format!("1/1 | tar 0.0s | 0/{CHARACTER_LIMIT}"));
-        let mut embed = CreateEmbed::new()
-            .title(self.name())
-            .description("…")
-            .footer(footer);
-        if let Some(avatar) = self.avatar() {
-            embed = embed.thumbnail(avatar);
-        }
-        if let Some(color) = self.color() {
-            embed = embed.color(color);
-        }
-        CreateMessage::new().embed(embed).components(buttons)
-    }
-
-    pub fn to_edit_message(
+    pub fn to_bare_response(
         &self,
-        id: impl Into<u64>,
-        index: impl Into<usize>,
-        input: impl Into<String>,
-        elapsed: impl Into<f64>,
-        finished: HasFinished,
-    ) -> EditMessage {
-        let index = index.into();
-        let input = input.into();
-        let elapsed = elapsed.into();
-        let len = input.len();
-        let buttons = create_buttons(id, HasPrevious::No, finished, HasUndo::No, HasRedo::No);
-        let footer_text = format!("{index}/{index} | tar {elapsed}s | {len}/{CHARACTER_LIMIT}");
-        let footer = CreateEmbedFooter::new(footer_text);
+        link: String,
+        content: impl Into<String>,
+        current_editor: Option<impl Into<UserId>>,
+    ) -> CreateReply {
+        let content = content.into();
+        let footer = {
+            let editor = current_editor.map_or_else(String::new, |editor| {
+                format!(
+                    " (redigerad av {})",
+                    CONFIG.read().substitute_name(editor.into())
+                )
+            });
+            let len = format!("{}/{CHARACTER_LIMIT}", content.len());
+
+            let footer = format!("{len}{editor}");
+            CreateEmbedFooter::new(footer)
+        };
         let mut embed = CreateEmbed::new()
-            .title(self.name())
-            .description(input)
+            .title(&self.name)
+            .description(content)
             .footer(footer);
-        if let Some(avatar) = self.avatar() {
+
+        if let Some(avatar) = &self.avatar {
             embed = embed.thumbnail(avatar);
         }
-        if let Some(color) = self.color() {
+        if let Some(color) = self.color {
             embed = embed.color(color);
         }
-        EditMessage::new().embed(embed).components(buttons)
+        CreateReply::default().content(link).embed(embed)
     }
 
     // it is necessary
     #[allow(clippy::too_many_arguments)]
-    pub fn master_reply(
+    pub fn to_response(
         &self,
         id: impl Into<u64>,
         (current_page, total_pages): (usize, usize),
         (current_edit, total_edits, current_editor): (usize, usize, Option<impl Into<UserId>>),
-        similarity: Option<String>,
-        content: impl Into<String>,
+        content: Option<impl Into<String>>,
         elapsed: Option<Duration>,
         has_finished: HasFinished,
     ) -> CreateReply {
-        let name = &self.name;
-        let content = content.into();
-        let avatar = &self.avatar;
-        let color = self.color;
-
+        let has_previous = if total_pages > 1 {
+            HasPrevious::Yes
+        } else {
+            HasPrevious::No
+        };
+        let has_next = if content.is_some() || total_pages > 1 {
+            HasNext::Yes
+        } else {
+            HasNext::No
+        };
+        let has_edit = if total_edits > 0 {
+            HasEdit::Yes
+        } else {
+            HasEdit::No
+        };
+        let content = content.map_or_else(|| self.greeting().to_owned(), Into::into);
         let footer = {
             let pages = if total_pages == 0 {
                 String::new()
@@ -359,7 +376,7 @@ impl Character {
                 }
             });
 
-            let similarity = similarity.unwrap_or_default();
+            let similarity = self.similarity();
 
             let editor = current_editor.map_or_else(String::new, |editor| {
                 format!(
@@ -381,186 +398,61 @@ impl Character {
         };
 
         let mut embed = CreateEmbed::new()
-            .title(name)
+            .title(&self.name)
             .description(content)
             .footer(footer);
 
-        if let Some(avatar) = avatar {
+        if let Some(avatar) = &self.avatar {
             embed = embed.thumbnail(avatar);
         }
-        if let Some(color) = color {
+        if let Some(color) = self.color {
             embed = embed.color(color);
         }
 
-        let has_previous = if total_pages > 1 {
-            HasPrevious::Yes
-        } else {
-            HasPrevious::No
-        };
-        let has_undo = if total_edits > 0 {
-            HasUndo::Yes
-        } else {
-            HasUndo::No
-        };
-        let has_redo = if current_edit < total_edits {
-            HasRedo::Yes
-        } else {
-            HasRedo::No
-        };
-        let components = create_buttons(id, has_previous, has_finished, has_undo, has_redo);
+        let components = create_buttons(id, has_finished, has_previous, has_next, has_edit);
 
         CreateReply::default().embed(embed).components(components)
-    }
-
-    pub fn to_reply_with_similarity_from_message_edit(
-        &self,
-        id: impl Into<u64> + Copy,
-        similarity: f64,
-        content: impl Into<String>,
-    ) -> CreateReply {
-        let (embed, components) = self.to_greeting_embed_with_similarity_and_message_buttons(
-            id,
-            similarity,
-            content.into(),
-        );
-
-        CreateReply::default().embed(embed).components(components)
-    }
-
-    pub fn to_greeting_reply_with_similarity_and_message(
-        &self,
-        id: impl Into<u64> + Copy,
-        similarity: f64,
-        message: impl Into<String>,
-    ) -> CreateReply {
-        let (embed, components) =
-            self.to_greeting_embed_with_similarity_and_message_buttons(id, similarity, message);
-
-        CreateReply::default().embed(embed).components(components)
-    }
-
-    #[must_use]
-    pub fn to_greeting_reply_with_similarity(
-        &self,
-        id: impl Into<u64> + Copy,
-        similarity: f64,
-    ) -> CreateReply {
-        self.to_greeting_reply_with_similarity_and_message(id, similarity, self.greeting())
-    }
-
-    pub fn to_greeting_embed_with_similarity_and_message_buttons(
-        &self,
-        id: impl Into<u64>,
-        similarity: f64,
-        message: impl Into<String>,
-    ) -> (CreateEmbed, Vec<CreateActionRow>) {
-        let name = &self.name;
-        let content = message.into();
-        let avatar = &self.avatar;
-        let color = self.color;
-        let footer = CreateEmbedFooter::new(format!("{:.0}% namnlikhet", similarity * 100.0));
-        let mut embed = CreateEmbed::new()
-            .title(name)
-            .description(content)
-            .footer(footer);
-
-        if let Some(avatar) = avatar {
-            embed = embed.thumbnail(avatar);
-        }
-        if let Some(color) = color {
-            embed = embed.color(color);
-        }
-        let components = create_buttons(
-            id,
-            HasPrevious::Yes,
-            HasFinished::Yes,
-            HasUndo::No,
-            HasRedo::No,
-        );
-        (embed, components)
-    }
-
-    pub fn to_create_interaction_response(
-        &self,
-        id: impl Into<u64>,
-        similarity: f64,
-        custom_message: impl Into<String>,
-    ) -> CreateInteractionResponse {
-        let name = &self.name;
-        let content = custom_message.into();
-        let avatar = &self.avatar;
-        let color = self.color;
-        let components = create_buttons(
-            id,
-            HasPrevious::No,
-            HasFinished::Yes,
-            HasUndo::No,
-            HasRedo::No,
-        );
-        let footer = CreateEmbedFooter::new(format!("{:.0}% namnlikhet", similarity * 100.0));
-        let mut embed = CreateEmbed::new()
-            .title(name)
-            .description(content)
-            .footer(footer);
-
-        if let Some(avatar) = avatar {
-            embed = embed.thumbnail(avatar);
-        }
-        if let Some(color) = color {
-            embed = embed.color(color);
-        }
-        CreateInteractionResponse::UpdateMessage(
-            CreateInteractionResponseMessage::new()
-                .embed(embed)
-                .components(components),
-        )
     }
 
     pub fn to_embed_with_footer_text(&self, footer_text: impl Into<String>) -> CreateEmbed {
-        let name = &self.name;
-        let greeting = &self.greeting;
-        let description = &self.description;
-        let avatar = &self.avatar;
-        let color = self.color;
-        let footer = CreateEmbedFooter::new(footer_text.into());
-
         let mut embed = CreateEmbed::new()
-            .title(name)
-            .field("Hälsning", greeting, false)
-            .footer(footer);
+            .title(self.to_string())
+            .field("Hälsning", &self.greeting, true)
+            .field("Konversationer", self.formatted_conversations_had(), true)
+            .field("Skapare", self.creator.to_string(), true)
+            .field(
+                "Skapad",
+                self.created_at.strftime(GOOD_DATE_FORMAT).to_string(),
+                false,
+            )
+            .footer(CreateEmbedFooter::new(footer_text.into()));
 
-        if let Some(description) = description {
+        if let Some(description) = &self.description {
             embed = embed.description(description);
         }
-        if let Some(avatar) = avatar {
+        if let Some(avatar) = &self.avatar {
             embed = embed.thumbnail(avatar);
         }
-        if let Some(color) = color {
-            embed = embed.color(color);
+        if let Some(nickname) = &self.nickname {
+            embed = embed.field("Smeknamn", nickname, true);
         }
-        for (user, count) in &self.conversations_had_with_user {
-            embed = embed.field(
-                CONFIG.read().substitute_name(user),
-                count.to_string(),
-                false,
-            );
+        if let Some(color) = &self.color {
+            embed = embed.color(*color);
         }
+        if let (Some(edited), Some(editor)) = (&self.edited_at, &self.latest_editor) {
+            let edited = edited.strftime(GOOD_DATE_FORMAT).to_string();
+            let editor = editor.to_string();
+            embed = embed.field("Redigerad", edited, false);
+            embed = embed.field("Redigerare", editor, true);
+        }
+        // for (user, count) in &self.conversations_had_with_user {
+        //     embed = embed.field(
+        //         CONFIG.read().substitute_name(user),
+        //         count.to_string(),
+        //         false,
+        //     );
+        // }
         embed
-    }
-
-    pub fn to_embed(&self) -> CreateEmbed {
-        self.to_embed_with_footer_text(format!("{} konversationer", self.conversations_had()))
-    }
-
-    #[must_use]
-    pub fn to_embed_reply(&self) -> CreateReply {
-        CreateReply::default().embed(self.to_embed())
-    }
-
-    #[must_use]
-    pub fn to_confirm_reply(&self, id: impl Into<u64>, content: impl Into<String>) -> CreateReply {
-        let buttons = create_confirm_buttons(id);
-        self.to_embed_reply().content(content).components(buttons)
     }
 
     #[must_use]
@@ -575,6 +467,13 @@ impl Character {
                 .content(content.into())
                 .components(buttons),
         )
+    }
+}
+
+impl CharacterPages {
+    #[must_use]
+    pub fn id(&self) -> RecordId {
+        self.id.clone()
     }
 }
 
@@ -611,17 +510,17 @@ impl Display for Character {
 
 fn validate_url(url: Option<String>) -> Option<String> {
     url.and_then(|url| Url::parse(&url).ok())
-        .filter(|url| url.scheme() == "https" || url.scheme() == "http")
+        .filter(|url| matches!(url.scheme(), "https" | "http"))
         .map(|url| url.to_string())
 }
 
 #[allow(clippy::needless_pass_by_value)]
 fn create_buttons(
     id: impl Into<u64>,
-    previous: HasPrevious,
     finished: HasFinished,
-    undo: HasUndo,
-    redo: HasRedo,
+    previous: HasPrevious,
+    next: HasNext,
+    edit: HasEdit,
 ) -> Vec<CreateActionRow> {
     let id = id.into();
     let prev_msg_id = format!("{id}prev");
@@ -632,31 +531,23 @@ fn create_buttons(
 
     let has_finished = finished == HasFinished::Yes;
     let has_previous = previous == HasPrevious::Yes;
-    let has_undo = undo == HasUndo::Yes;
-    let has_redo = redo == HasRedo::Yes;
+    let has_next = next == HasNext::Yes;
+    let has_edit = edit == HasEdit::Yes;
 
     vec![CreateActionRow::Buttons(vec![
-        CreateButton::new(prev_msg_id)
-            .disabled(!has_finished || !has_previous)
-            .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode(PREVIOUS.to_owned())),
-        CreateButton::new(next_msg_id)
-            .disabled(!has_finished)
-            .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode(NEXT.to_owned())),
-        CreateButton::new(edit_msg_id)
-            .disabled(!has_finished)
-            .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode(EDIT.to_owned())),
-        CreateButton::new(undo_id)
-            .disabled(!has_undo)
-            .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode(UNDO.to_owned())),
-        CreateButton::new(redo_id)
-            .disabled(!has_redo)
-            .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode(REDO.to_owned())),
+        create_button(prev_msg_id, PREVIOUS, !has_finished || !has_previous),
+        create_button(next_msg_id, NEXT, !has_finished || !has_next),
+        create_button(edit_msg_id, EDIT, !has_finished),
+        create_button(undo_id, UNDO, !has_edit),
+        create_button(redo_id, REDO, !has_edit),
     ])]
+}
+
+fn create_button(custom_id: String, emoji: &'static str, disabled: bool) -> CreateButton {
+    CreateButton::new(custom_id)
+        .disabled(disabled)
+        .style(ButtonStyle::Secondary)
+        .emoji(ReactionType::Unicode(emoji.to_owned()))
 }
 
 fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
@@ -673,7 +564,7 @@ fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
     ])]
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum HasFinished {
     Yes,
     No,
@@ -685,26 +576,31 @@ pub enum HasFinished {
 /// and there are multiple pages (to allow wrapping around to the last page).
 /// The only time this should be `Self::No` is if this is the first (and only)
 /// page.
-#[derive(PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum HasPrevious {
     Yes,
     No,
 }
 
-#[derive(PartialEq, Eq)]
-enum HasUndo {
+/// If this version has a next version (a next page).
+///
+/// Note that this should ONLY be `Self::No` in cases of viewing a list of
+/// characters when there is only one character. In a conversation, the next
+/// button should always be active (to allow for requesting another response from
+/// the bot (a "swipe")), and if multiple characters exist, pressing next on the
+/// last page should wrap around to the first page.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum HasNext {
     Yes,
     No,
 }
 
-#[derive(PartialEq, Eq)]
-enum HasRedo {
+/// If this message has at least one edit made to it.
+///
+/// If so, both the undo and redo button should always be activated (to allow for
+/// wrapping around ot the first/last edit to the last/first edit).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum HasEdit {
     Yes,
     No,
-}
-
-impl<O> IntoResource<O> for Character {
-    fn into_resource(self) -> Result<Resource, surrealdb::Error> {
-        Ok(Resource::RecordId(self.id()))
-    }
 }

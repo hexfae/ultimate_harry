@@ -31,11 +31,15 @@ pub async fn chat(
     #[rest]
     #[rename = "namn"]
     #[description = "Gubbens namn"]
-    name: String,
+    name: Option<String>,
 ) -> Result<(), Report> {
     ctx.defer_or_broadcast().await.context(DeferSnafu)?;
 
-    let characters = DB.characters_by_similarity(name).await?;
+    let characters = if let Some(name) = name {
+        DB.characters_by_similarity(name).await
+    } else {
+        DB.random_characters().await
+    }?;
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
@@ -67,7 +71,7 @@ pub async fn chat(
         let interaction_type = InteractionType::try_from(&interaction)?;
         let mut history = characters_histories[current_page].1.clone();
 
-        let last = history.last();
+        let last = history.chosen_choice();
 
         match interaction_type {
             InteractionType::Prev => {
@@ -82,7 +86,11 @@ pub async fn chat(
                 // no acknowledge because showing a modal is a response
                 let response = display_edit_modal(ctx, interaction.clone()).await?;
                 if let Some(response) = response {
-                    history.edit_content(response, ctx.author());
+                    history.edit_content(
+                        characters_histories[current_page].0.name(),
+                        response,
+                        ctx.author(),
+                    );
                     characters_histories[current_page].1 = history.clone();
                     revisions_per_page[current_page] = history.last().revisions_len();
                 }
@@ -115,8 +123,6 @@ pub async fn chat(
         .await?;
     }
 
-    msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
-
     Ok(())
 }
 
@@ -130,7 +136,7 @@ async fn handle_post_interaction(
 ) -> Result<(), Report> {
     let (character, history) = similarities_characters_histories[current_page].clone();
 
-    DB.insert_history(history.clone()).await?;
+    DB.update_history(history.clone()).await?;
 
     let current_revision = revisions_per_page[current_page];
 
@@ -143,17 +149,16 @@ async fn handle_post_interaction(
         last.revisions_len(),
         last.editor_of_version(current_revision),
     );
-    let content = last.get_version_content(current_revision);
+    let content = last.get_version_part(current_revision);
     let has_finished = HasFinished::Yes;
 
     msg.edit(
         ctx,
-        character.master_reply(
+        character.to_response(
             ctx.id(),
             content_pages,
             edit_pages_and_editor,
-            Some(character.similarity()),
-            content,
+            Some(content.head().content()),
             None,
             has_finished,
         ),
@@ -172,12 +177,11 @@ async fn send_initial_message(
             let character = characters[0].clone();
 
             let msg = ctx
-                .send(character.master_reply(
+                .send(character.to_response(
                     ctx.id(),
                     (0, characters.len()),
                     (0, 0, None::<UserId>),
-                    Some(character.similarity()),
-                    character.greeting(),
+                    None::<&str>,
                     None,
                     HasFinished::Yes,
                 ))

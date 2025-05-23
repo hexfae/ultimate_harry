@@ -1,15 +1,22 @@
-use std::{thread::sleep, time::Instant};
+use std::{
+    thread::sleep,
+    time::{Duration, Instant},
+};
 
-use crate::ONE_MINUTE;
+use crate::{ONE_MINUTE, SendMessageSnafu};
 use miette::{IntoDiagnostic, Report};
 use nanorand::{Rng, tls_rng};
 use poise::{
     BoxFuture, FrameworkContext,
     serenity_prelude::{ActivityData, ActivityType, Context, EditMessage, FullEvent, Message},
 };
-use ultimate_character::Character;
+use snafu::ResultExt;
+use tracing::info;
+use ultimate_character::{Character, HasFinished};
 use ultimate_config::CONFIG;
 use ultimate_database::DB;
+use ultimate_history::History;
+use ultimate_message::Message as UltimateMessage;
 use ultimate_requester::Requester;
 
 // poise event_handler requires it to be borrowed
@@ -30,59 +37,32 @@ pub fn event_handler<'a>(
     }
 }
 
-trait MessageFromEvent {
-    fn message(&self) -> Option<&Message>;
-}
-
-impl MessageFromEvent for FullEvent {
-    fn message(&self) -> Option<&Message> {
-        match self {
-            Self::Message { new_message } => Some(new_message),
-            _ => None,
-        }
-    }
-}
-
-trait ReplyFromMessage {
-    fn get_reply(&self) -> Option<&Message>;
-}
-
-impl ReplyFromMessage for Message {
-    fn get_reply(&self) -> Option<&Message> {
-        self.referenced_message.as_deref()
-    }
-}
-
-async fn create_initial_message(
-    ctx: &Context,
-    message: &Message,
-    character: Character,
-) -> Result<Message, Report> {
-    message
-        .channel_id
-        .send_message(ctx, character.to_create_message(message.id))
-        .await
-        .into_diagnostic()
-}
-
 async fn message_received(event: &FullEvent, ctx: &Context) -> Result<(), Report> {
-    let Some(message) = event.message() else {
-        return Ok(());
-    };
-    let Some(reply) = message.get_reply() else {
-        return Ok(());
-    };
-    let Some(mut history) = DB.history(reply.id).await? else {
-        return Ok(());
-    };
-    let Some(character) = DB.character(history.character()).await? else {
+    let Some((message, mut history, character)) = event.message_history_character().await? else {
         return Ok(());
     };
 
-    history.push(message.to_owned());
+    history.push(history.chosen_choice());
+    history.push((message.clone(), DB.name(&message.author).await?));
 
-    let mut response_message = create_initial_message(ctx, message, character.clone()).await?;
+    let response = character
+        .to_response(
+            message.id,
+            (0, 0),
+            (0, 0, None::<u64>),
+            Some("…"),
+            Some(Duration::from_secs(0)),
+            HasFinished::No,
+        )
+        .to_prefix((&message).into());
 
+    let mut response_message = message
+        .channel_id
+        .send_message(ctx, response)
+        .await
+        .context(SendMessageSnafu)?;
+
+    let now = Instant::now();
     let requester = Requester::new(
         character
             .model_settings()
@@ -91,24 +71,34 @@ async fn message_received(event: &FullEvent, ctx: &Context) -> Result<(), Report
 
     let (content, response) = requester.request(history.clone()).await.into_diagnostic()?;
 
-    response_message
-        .edit(ctx, EditMessage::new().content(content))
-        .await
-        .into_diagnostic()?;
+    let edit = character
+        .to_response(
+            message.id,
+            (0, 0),
+            (0, 0, None::<u64>),
+            Some(&content),
+            Some(now.elapsed()),
+            HasFinished::Yes,
+        )
+        .to_prefix_edit(EditMessage::new());
 
-    history.push(ultimate_message::Message::try_from((character, response)).into_diagnostic()?);
+    response_message.edit(ctx, edit).await.into_diagnostic()?;
 
-    history.set_id(message);
+    history.set_choices(UltimateMessage::try_from((
+        character.clone(),
+        response.clone(),
+    ))?);
+
+    history.set_id(response_message);
 
     DB.insert_history(history).await?;
-
     Ok(())
 }
 
 // event_handler has to return a future
 #[allow(clippy::unused_async)]
 async fn set_uptime_as_activity(ctx: &Context) -> Result<(), Report> {
-    println!("ready");
+    info!("ready");
     let ctx = ctx.clone();
     tokio::spawn(async move {
         let start = Instant::now();
@@ -139,4 +129,63 @@ async fn set_uptime_as_activity(ctx: &Context) -> Result<(), Report> {
         }
     });
     Ok(())
+}
+
+trait MessageFromEvent {
+    fn message(&self) -> Option<Message>;
+}
+
+trait ReplyFromMessage {
+    fn get_reply(&self) -> Option<Message>;
+}
+
+trait HistoryFromReply {
+    async fn reply_history(&self) -> Result<Option<History>, Report>;
+}
+
+trait MessageHistoryCharacter {
+    async fn message_history_character(
+        &self,
+    ) -> Result<Option<(Message, History, Character)>, Report>;
+}
+
+impl MessageFromEvent for FullEvent {
+    fn message(&self) -> Option<Message> {
+        match self {
+            Self::Message { new_message } => Some(new_message.clone()),
+            _ => None,
+        }
+    }
+}
+
+impl ReplyFromMessage for Message {
+    fn get_reply(&self) -> Option<Message> {
+        self.referenced_message.as_deref().cloned()
+    }
+}
+
+impl HistoryFromReply for Message {
+    async fn reply_history(&self) -> Result<Option<History>, Report> {
+        let Some(reply) = self.get_reply() else {
+            return Ok(None);
+        };
+        Ok(DB.history(reply.id).await?)
+    }
+}
+
+impl MessageHistoryCharacter for FullEvent {
+    async fn message_history_character(
+        &self,
+    ) -> Result<Option<(Message, History, Character)>, Report> {
+        let Some(message) = self.message() else {
+            return Ok(None);
+        };
+        let Some(history) = message.reply_history().await? else {
+            return Ok(None);
+        };
+        let Some(character) = DB.character(history.character()).await? else {
+            return Ok(None);
+        };
+        Ok(Some((message, history, character)))
+    }
 }

@@ -216,7 +216,7 @@ async fn ask_for_confirmation(
 async fn delete_confirmed(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
-    id: RecordId,
+    id: &RecordId,
 ) -> Result<(), Report> {
     DB.delete_character(id, ctx.author()).await?;
     STATISTICS.character_deleted_by(ctx.author());

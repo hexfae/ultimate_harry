@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_database"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 
 [dependencies]
@@ -12,12 +12,12 @@ surrealdb = { version = "2.3.1", features = ["kv-surrealkv"] }
 ultimate_character = { path = "../ultimate_character" }
 ultimate_message = { path = "../ultimate_message" }
 ultimate_history = { path = "../ultimate_history" }
+bon = "3.6.3"
 
 [lints.rust]
 unsafe_code = "forbid"
 
 [lints.clippy]
-missing-errors-doc = "allow"                 # TODO: remove
 enum_glob_use = "deny"
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }

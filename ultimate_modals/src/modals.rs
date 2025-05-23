@@ -30,8 +30,9 @@ pub struct CreateCharacterModal {
 pub struct SecondCreateCharacterModal {
     #[paragraph]
     #[name = "Profilbild"]
-    #[placeholder = "En länk till en bild. Använd inte en länk till en bild som du har lagt upp på Discord!"]
+    #[placeholder = "En länk till en bild."]
     pub avatar: Option<String>,
+    #[paragraph]
     #[name = "Emoji"]
     #[placeholder = "Till exempel 🤩, :robot:, eller :cholol:, syns oftast bredvid gubbens namn."]
     pub emoji: Option<String>,

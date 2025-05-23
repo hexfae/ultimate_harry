@@ -181,12 +181,13 @@ async fn edit_confirmed(
         return Ok(());
     };
 
-    let old_id = character.id();
+    let old_id = character.id().clone();
 
     character.edit_from_modals(ctx.author(), modal, second_modal);
     let character_name = character.name().to_owned();
 
-    DB.supersede_character(character.id(), old_id).await?;
+    DB.supersede_character(character.id().to_owned(), &old_id)
+        .await?;
     DB.insert_character(character).await?;
 
     STATISTICS.character_edited_by(ctx.author());

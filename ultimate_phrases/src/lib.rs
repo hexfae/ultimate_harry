@@ -10,6 +10,7 @@ pub use phrases::DELETED_PHRASES;
 pub use phrases::EDITED_PHRASES;
 pub use phrases::EDITING_PHRASES;
 pub use phrases::NO_CHARACTER_PHRASES;
+pub use phrases::NO_HISTORY_PHRASES;
 pub use phrases::NO_PHRASES;
 pub use phrases::TIMEOUT_PHRASES;
 pub use phrases::YES_PHRASES;

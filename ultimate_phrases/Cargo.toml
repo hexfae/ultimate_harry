@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_phrases"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 
 [dependencies]
@@ -10,7 +10,6 @@ nanorand = "0.7.0"
 unsafe_code = "forbid"
 
 [lints.clippy]
-missing-errors-doc = "allow"                 # TODO: remove
 enum_glob_use = "deny"
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }

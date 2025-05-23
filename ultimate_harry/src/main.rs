@@ -1,9 +1,10 @@
-use commands::{character, chat};
+use commands::{character, chat, pin};
 use miette::{IntoDiagnostic, Report};
 use poise::{
     Framework, FrameworkOptions, PrefixFrameworkOptions,
     serenity_prelude::{ClientBuilder, GatewayIntents, GuildId},
 };
+use ultimate_database::DB;
 use ultimate_harry::{
     Result,
     commands::{self, event_handler},
@@ -17,7 +18,9 @@ const GUILD_ID: GuildId = GuildId::new(1113998071194456195);
 
 #[tokio::main]
 async fn main() -> Result<(), Report> {
-    let commands = vec![character(), chat()];
+    tracing_subscriber::fmt::init();
+    DB.connect().await?;
+    let commands = vec![character(), chat(), pin()];
     let framework: Framework<(), Report> = Framework::builder()
         .options(FrameworkOptions {
             commands,

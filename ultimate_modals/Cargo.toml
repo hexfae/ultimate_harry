@@ -10,7 +10,6 @@ poise = "0.6.1"
 unsafe_code = "forbid"
 
 [lints.clippy]
-missing-errors-doc = "allow"                 # TODO: remove
 enum_glob_use = "deny"
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }

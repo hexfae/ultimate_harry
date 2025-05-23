@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_harry"
-version = "0.0.6"
+version = "0.0.7"
 edition = "2024"
 
 [dependencies]
@@ -20,12 +20,13 @@ nanorand = "0.7.0"
 snafu = "0.8.5"
 miette = "7.5.0"
 surrealdb = "2.3.1"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
 
 [lints.rust]
 unsafe_code = "forbid"
 
 [lints.clippy]
-missing-errors-doc = "allow"                 # TODO: remove
 enum_glob_use = "deny"
 pedantic = { level = "deny", priority = -1 }
 nursery = { level = "deny", priority = -1 }

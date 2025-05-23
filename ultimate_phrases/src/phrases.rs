@@ -47,6 +47,17 @@ pub const NO_CHARACTER_PHRASES: &[&str] = &[
     "Prata lite tydligare kanske. (ingen gubbe hittades)",
     "Jag ber så hemskt mycket om ursäkt, men va? (ingen gubbe hittades)",
     "Pröva ge ett riktigt namn nästa gång. (ingen gubbe hittades)",
+    "Jag har aldrig träffat den här mannen i hela mitt liv. (ingen gubbe hittades)",
+];
+
+pub const NO_HISTORY_PHRASES: &[&str] = &[
+    "Menade du att göra det där? (ingen historia hittades)",
+    "Jag känner inte igen det där. (ingen historia hittades)",
+    "Skojar du med mig eller? (ingen historia hittades)",
+    "Jag har ingen aning vad du menar. (ingen historia hittades)",
+    "Prata lite tydligare kanske. (ingen historia hittades)",
+    "Jag ber så hemskt mycket om ursäkt, men va? (ingen historia hittades)",
+    "Pröva ge ett riktigt meddelande nästa gång. (ingen historia hittades)",
 ];
 
 pub const ASK_EDIT_PHRASES: &[&str] = &[
