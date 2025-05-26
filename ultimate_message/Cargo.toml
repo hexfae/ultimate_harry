@@ -9,10 +9,10 @@ serenity = "0.12.4"
 ultimate_config = { path = "../ultimate_config" }
 ultimate_character = { path = "../ultimate_character" }
 snafu = "0.8.5"
-jiff = { version = "0.2.5", features = ["serde"] }
+jiff = { version = "0.2.14", features = ["serde"] }
 ulid = "1.2.1"
 serde = { version = "1.0.219", features = ["derive"] }
-surrealdb = "2.3.1"
+surrealdb = "2.3.3"
 bon = "3.6.3"
 nonempty = { version = "0.11.0", features = ["serialize"] }
 miette = "7.6.0"

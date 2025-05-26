@@ -1,5 +1,5 @@
 use bon::Builder;
-use miette::{Diagnostic, Report};
+use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use serenity::all::{MessageId, UserId};
 use snafu::{OptionExt, ResultExt, Snafu};
@@ -13,6 +13,8 @@ use ultimate_character::{Character, CharacterPages};
 use ultimate_history::History;
 
 pub static DB: LazyLock<Database> = LazyLock::new(Database::init);
+
+const DEFAULT_USER_NAME: &str = "Användaren";
 
 const MOST_SIMILAR_TO: &str = "
 LET $names = SELECT
@@ -52,7 +54,6 @@ RETURN (
 );
 ";
 
-// TODO: does this actually select a random character?
 const RANDOM: &str = "
 SELECT
     *
@@ -93,7 +94,7 @@ impl Database {
         Self(Surreal::init())
     }
 
-    pub async fn connect(&self) -> Result<(), Report> {
+    pub async fn connect(&self) -> Result<(), Error> {
         self.0
             .connect::<Ws>("localhost:8000")
             .await
@@ -105,15 +106,14 @@ impl Database {
             })
             .await
             .context(ConnectSnafu)?;
-        Ok(self
-            .0
+        self.0
             .use_ns("harry")
             .use_db("harry")
             .await
-            .context(ConnectSnafu)?)
+            .context(ConnectSnafu)
     }
 
-    pub async fn character(&self, id: RecordId) -> Result<Option<Character>, Error> {
+    pub async fn character(&self, id: &RecordId) -> Result<Option<Character>, Error> {
         self.0.select(id).await.context(GetSnafu)
     }
 
@@ -221,7 +221,7 @@ impl Database {
             .select(("name", id.into().to_string()))
             .await
             .context(GetSnafu)
-            .map(|name| name.unwrap_or_else(|| "Användaren".to_owned()))
+            .map(|name| name.unwrap_or_else(|| DEFAULT_USER_NAME.to_owned()))
     }
 
     pub async fn insert_name(

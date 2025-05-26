@@ -12,20 +12,6 @@ use snafu::ResultExt;
 
 type Result<T = ()> = std::result::Result<T, crate::Error>;
 
-pub trait AcknowledgeResponse {
-    async fn acknowledge(&self, interaction: ComponentInteraction) -> Result;
-}
-
-impl AcknowledgeResponse for Context<'_> {
-    async fn acknowledge(&self, interaction: ComponentInteraction) -> Result {
-        interaction
-            .create_response(self, CreateInteractionResponse::Acknowledge)
-            .await
-            .context(SendResponseSnafu)?;
-        Ok(())
-    }
-}
-
 /// If this is an application command,
 /// `poise::structs::context::ApplicationContext::defer_ephemeral` is called.
 ///
@@ -158,7 +144,7 @@ pub trait ShowModal<M: Modal> {
     async fn show_modal(&self, interaction: ComponentInteraction) -> Result<Option<M>>;
 }
 
-impl<M: Modal> ShowModal<M> for Context<'_> {
+impl<M: Modal> ShowModal<M> for poise::serenity_prelude::Context {
     async fn show_modal(&self, interaction: ComponentInteraction) -> Result<Option<M>> {
         execute_modal_on_component_interaction::<M>(self, interaction, None, Some(TEN_MINUTES))
             .await

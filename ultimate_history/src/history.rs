@@ -1,11 +1,15 @@
 use async_openai::types::ChatCompletionRequestMessage;
 use bon::Builder;
 use nonempty::NonEmpty;
+use poise::CreateReply;
 use serde::{Deserialize, Serialize};
-use serenity::all::{MessageId, UserId};
+use serenity::all::{
+    ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, MessageId,
+    ReactionType, UserId,
+};
 use surrealdb::RecordId;
 use ultimate_character::Character;
-use ultimate_message::{Message, MessageEdit};
+use ultimate_message::Message;
 
 const SYSTEM_MESSAGE: &str = "Du kommer nu att gå in i ett rollspel med en användare. Under inga omständigheter får du bryta rollspelet, gå ur karaktär, eller prata åt användaren.";
 
@@ -20,6 +24,14 @@ const BEGIN_EXAMPLE_MESSAGES: &str = "Det följande är exempel på hur du ska p
 const EXAMPLE_MESSAGE_SEPARATOR: &str = "Nytt exempelmeddelande.";
 
 const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du inte längra avbryta rollspelet, gå ur karaktär, eller skriva åt användaren.";
+
+const CHARACTER_LIMIT: u16 = 4096;
+
+const PREVIOUS: &str = "⬅️";
+const NEXT: &str = "➡️";
+const EDIT: &str = "✏️";
+const UNDO: &str = "↩️";
+const REDO: &str = "↪️";
 
 /// A log of messages between the user and a character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -49,22 +61,40 @@ impl History {
         self.choices[self.current].edit(author, content, editor);
     }
 
-    pub fn set_revision(&mut self, revision: usize) {
-        self.choices.last_mut().set_revision(revision);
+    pub fn previous(&mut self) {
+        self.current = (self.current + self.choices.len() - 1) % self.choices.len();
+    }
+
+    pub const fn next(&mut self) {
+        self.current += 1;
     }
 
     #[must_use]
-    pub fn chosen_choice(&self) -> Message {
-        self.choices[self.current].clone()
-    }
-
-    pub fn undo(&mut self) -> MessageEdit {
-        self.previous.last_mut().undo()
+    pub const fn current_choice(&self) -> usize {
+        self.current
     }
 
     #[must_use]
-    pub fn id(&self) -> RecordId {
-        self.id.clone()
+    pub fn choices_len(&self) -> usize {
+        self.choices.len()
+    }
+
+    pub fn undo(&mut self) {
+        self.choices[self.current].undo();
+    }
+
+    pub fn redo(&mut self) {
+        self.choices[self.current].redo();
+    }
+
+    #[must_use]
+    pub fn chosen_choice_message(&self) -> &Message {
+        &self.choices[self.current]
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> &RecordId {
+        &self.id
     }
 
     pub fn set_id(&mut self, id: impl Into<MessageId>) {
@@ -72,17 +102,21 @@ impl History {
     }
 
     #[must_use]
-    pub fn last(&self) -> Message {
-        self.previous.last().clone()
+    pub fn last(&self) -> &Message {
+        self.previous.last()
     }
 
     #[must_use]
-    pub fn character(&self) -> RecordId {
-        self.character.clone()
+    pub const fn character(&self) -> &RecordId {
+        &self.character
     }
 
     pub fn push(&mut self, message: impl Into<Message>) {
         self.previous.push(message.into());
+    }
+
+    pub fn reset_choices(&mut self) {
+        self.choices.tail.truncate(0);
     }
 
     pub fn set_choices(&mut self, choices: impl Into<Message>) {
@@ -90,23 +124,130 @@ impl History {
         self.current = 0;
     }
 
-    #[must_use]
-    pub fn testing_function() -> Self {
-        Self::builder()
-            .previous(NonEmpty::new(Message::new_system(SYSTEM_MESSAGE)))
-            .choices(NonEmpty::new(Message::new_assistant(
-                "",
-                &Character::builder()
-                    .name("Character")
-                    .greeting("Greeting")
-                    .id(RecordId::from(("character", "1")))
-                    .creator(1)
-                    .build(),
-            )))
-            .character(&RecordId::from(("character", "1")))
-            .id(MessageId::from(1))
-            .build()
+    pub fn push_choice(&mut self, choice: impl Into<Message>) {
+        self.choices.push(choice.into());
+        self.current = self.choices_len() - 1;
     }
+
+    #[must_use]
+    pub fn to_placeholder(&self, character: &Character) -> CreateReply {
+        let (has_finished, has_previous, has_edit) = (false, false, false);
+
+        let footer = {
+            let pages = if self.choices.is_empty() {
+                String::new()
+            } else {
+                format!("{}/{}", self.current + 2, self.choices.len() + 1)
+            };
+            CreateEmbedFooter::new(pages)
+        };
+
+        let mut embed = CreateEmbed::new()
+            .title(character.name())
+            .description("…")
+            .footer(footer);
+
+        if let Some(avatar) = character.avatar() {
+            embed = embed.thumbnail(avatar);
+        }
+        if let Some(color) = character.color() {
+            embed = embed.color(color);
+        }
+
+        let components = create_buttons(1, has_finished, has_previous, has_edit);
+
+        CreateReply::default().embed(embed).components(components)
+    }
+
+    #[must_use]
+    pub fn to_response(&self, character: &Character, id: MessageId) -> CreateReply {
+        let chosen = self.chosen_choice_message();
+
+        let has_previous = self.choices.len() > 1;
+        let has_edit = chosen.revisions_len() > 0;
+        let content = chosen.chosen_revision().head().content();
+        let has_finished = true;
+        let footer = {
+            let pages = if self.choices.is_empty() {
+                String::new()
+            } else {
+                format!("{}/{}", self.current + 1, self.choices.len())
+            };
+
+            let elapsed = if chosen.current_editor().is_some() {
+                String::new()
+            } else {
+                chosen.time_taken().map_or_else(String::new, |elapsed| {
+                    format!(" | tog {:.1}s", elapsed.as_secs_f64())
+                })
+            };
+
+            let similarity = character.similarity();
+
+            let editor = chosen.current_editor().map_or_else(String::new, |editor| {
+                format!(
+                    "(redigerad av {})",
+                    "TODO" // CONFIG.read().substitute_name(editor.into())
+                )
+            });
+
+            let edit_pages = if chosen.revisions_len() == 0 {
+                String::new()
+            } else {
+                format!(
+                    " | {}/{} {}",
+                    chosen.revision() + 1,
+                    chosen.revisions_len() + 1,
+                    editor
+                )
+            };
+
+            let len = format!(" | {}/{CHARACTER_LIMIT}", content.len());
+
+            let footer = format!("{pages}{similarity}{elapsed}{len}{edit_pages}");
+            CreateEmbedFooter::new(footer)
+        };
+
+        let mut embed = CreateEmbed::new()
+            .title(character.name())
+            .description(content)
+            .footer(footer);
+
+        if let Some(avatar) = character.avatar() {
+            embed = embed.thumbnail(avatar);
+        }
+        if let Some(color) = character.color() {
+            embed = embed.color(color);
+        }
+
+        let components = create_buttons(id.into(), has_finished, has_previous, has_edit);
+
+        CreateReply::default().embed(embed).components(components)
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn create_buttons(id: u64, finished: bool, previous: bool, edit: bool) -> Vec<CreateActionRow> {
+    let prev_msg_id = format!("{id}prev");
+    let next_msg_id = format!("{id}next");
+    let edit_msg_id = format!("{id}edit");
+    let undo_id = format!("{id}undo");
+    let redo_id = format!("{id}redo");
+
+    vec![CreateActionRow::Buttons(vec![
+        create_button(prev_msg_id, PREVIOUS, !finished || !previous),
+        create_button(next_msg_id, NEXT, !finished),
+        create_button(edit_msg_id, EDIT, !finished),
+        create_button(undo_id, UNDO, !edit),
+        create_button(redo_id, REDO, !edit),
+    ])]
+}
+
+fn create_button(custom_id: String, emoji: &'static str, disabled: bool) -> CreateButton {
+    CreateButton::new(custom_id)
+        .disabled(disabled)
+        .style(ButtonStyle::Secondary)
+        .emoji(ReactionType::Unicode(emoji.to_owned()))
 }
 
 impl From<(Character, MessageId, UserId)> for History {
@@ -167,8 +308,7 @@ impl From<History> for Vec<ChatCompletionRequestMessage> {
         history
             .previous
             .into_iter()
-            .map(|msg| Into::<NonEmpty<ChatCompletionRequestMessage>>::into(msg).into())
-            .collect::<Vec<Self>>()
-            .concat()
+            .flat_map(Into::<NonEmpty<ChatCompletionRequestMessage>>::into)
+            .collect()
     }
 }

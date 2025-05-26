@@ -75,7 +75,7 @@ async fn show_modal_button<M: Modal>(ctx: Context<'_>, msg: &ReplyHandle<'_>) ->
     ctx.defer_ephemeral_or_broadcast().await?;
 
     if let Some(interaction) = await_button_interaction(ctx).await {
-        ctx.show_modal(interaction).await
+        ctx.serenity_context().show_modal(interaction).await
     } else {
         let response = sample(TIMEOUT_PHRASES);
         msg.edit_with(ctx, response).await?;

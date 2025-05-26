@@ -8,7 +8,7 @@ miette = "7.6.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serenity = "0.12.4"
 snafu = "0.8.5"
-surrealdb = { version = "2.3.1", features = ["kv-surrealkv"] }
+surrealdb = { version = "2.3.3", features = ["kv-surrealkv"] }
 ultimate_character = { path = "../ultimate_character" }
 ultimate_message = { path = "../ultimate_message" }
 ultimate_history = { path = "../ultimate_history" }

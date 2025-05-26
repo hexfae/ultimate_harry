@@ -2,8 +2,9 @@ use std::time::Duration;
 
 use async_openai::types::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestMessage,
-    ChatCompletionRequestSystemMessage, ChatCompletionRequestUserMessage,
-    CreateChatCompletionResponse,
+    ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestSystemMessage,
+    ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContentPart,
+    CreateChatCompletionResponse, ImageUrl,
 };
 use bon::Builder;
 use jiff::Zoned;
@@ -29,7 +30,7 @@ pub struct Message {
     /// If this message originates from Discord, the message's Discord ID, otherwise a ulid ID.
     #[builder(default = RecordId::from(("message", Ulid::new().to_string())), with = |id: MessageId| RecordId::from(("message", id.to_string())))]
     id: RecordId,
-    /// The "parts" of the mssage. A message will ONLY have multiple parts if created from a user's Discord
+    /// The "parts" of the message. A message will ONLY have multiple parts if created from a user's Discord
     /// message. If so, the "parts" of it are every line.
     ///
     /// This allows the user to "send" multiple messages in one, like:
@@ -44,18 +45,18 @@ pub struct Message {
     parts: Parts,
     /// The time this message was created.
     #[builder(default = Zoned::now())]
-    timestamp: Zoned,
+    created: Zoned,
     /// If Some, the time it took to generate this message.
-    time_taken: Option<Duration>,
+    elapsed: Option<Duration>,
     #[builder(default)]
-    edits: Vec<MessageEdit>,
+    revisions: Vec<Revision>,
     /// The URLs of all attached images, if any.
     #[builder(default, with = |attachments: &[Attachment]| attachments.iter().map(|a| a.url.clone()).collect::<Vec<String>>()  )]
     images: Vec<String>,
     /// The message "revision," 0 is the original (unedited) message, 1 is the
     /// first edit, 2 is the second edit, etc.
     #[builder(default)]
-    chosen_revision: usize,
+    revision: usize,
     /// The original source of this message (Discord, AI, example message, etc.)..
     #[builder(into)]
     original: Original,
@@ -66,15 +67,15 @@ pub struct Parts(NonEmpty<Part>);
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, Builder)]
 pub struct Part {
-    author: String,
+    name: String,
     content: String,
     role: Role,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
-pub struct MessageEdit {
+pub struct Revision {
     #[builder(default = Zoned::now())]
-    timestamp: Zoned,
+    created: Zoned,
     #[builder(into)]
     parts: Parts,
     #[builder(into)]
@@ -112,8 +113,8 @@ enum Original {
 
 impl Message {
     #[must_use]
-    pub fn id(&self) -> RecordId {
-        self.id.clone()
+    pub const fn id(&self) -> &RecordId {
+        &self.id
     }
 
     /// Unsplit on newlines.
@@ -150,65 +151,74 @@ impl Message {
         content: impl Into<String>,
         editor: impl Into<UserId>,
     ) {
-        self.edits.push(
-            MessageEdit::builder()
+        self.revisions.push(
+            Revision::builder()
                 .parts((author.into(), content.into(), Role::Assistant))
                 .editor(editor)
                 .build(),
         );
-        self.chosen_revision = self.edits.len();
-    }
-
-    pub fn undo(&mut self) -> MessageEdit {
-        if self.chosen_revision == 0 {
-            self.chosen_revision = self.edits.len();
-        } else {
-            self.chosen_revision -= 1;
-        }
-        self.edits[self.chosen_revision].clone()
+        self.revision = self.revisions.len();
     }
 
     #[must_use]
-    pub fn chosen_revision(&self) -> Parts {
-        match self.chosen_revision {
-            0 => self.parts.clone(),
-            other => self.edits[other - 1].parts.clone(),
+    pub fn chosen_revision(&self) -> &Parts {
+        match self.revision {
+            0 => &self.parts,
+            other => &self.revisions[other - 1].parts,
         }
     }
 
-    pub fn get_version_part(&self, version: impl Into<usize> + Copy) -> Parts {
+    pub fn get_version_part(&self, version: impl Into<usize> + Copy) -> &Parts {
         match version.into() {
-            0 => self.parts.clone(),
-            other => self.edits[other - 1].parts.clone(),
+            0 => &self.parts,
+            other => &self.revisions[other - 1].parts,
         }
     }
 
     #[must_use]
     pub const fn revisions_len(&self) -> usize {
-        self.edits.len()
+        self.revisions.len()
     }
 
     pub fn editor_of_version(&self, version: impl Into<usize> + Copy) -> Option<UserId> {
         match version.into() {
             0 => None,
-            _ => Some(self.edits[version.into() - 1].editor),
+            _ => Some(self.revisions[version.into() - 1].editor),
         }
     }
 
     #[must_use]
     /// The editor of the currently chosen revision, if any.
     pub fn current_editor(&self) -> Option<UserId> {
-        self.editor_of_version(self.chosen_revision)
+        self.editor_of_version(self.revision)
     }
 
-    pub const fn set_revision(&mut self, revision: usize) {
-        self.chosen_revision = revision;
+    #[must_use]
+    pub const fn revision(&self) -> usize {
+        self.revision
+    }
+
+    pub const fn undo(&mut self) {
+        self.revision = (self.revision + self.revisions_len()) % (self.revisions_len() + 1);
+    }
+
+    pub const fn redo(&mut self) {
+        self.revision = (self.revision + 1) % (self.revisions_len() + 1);
+    }
+
+    #[must_use]
+    pub const fn time_taken(&self) -> Option<Duration> {
+        self.elapsed
     }
 }
 
 impl Parts {
-    pub fn head(&self) -> Part {
-        self.0.head.clone()
+    pub const fn head(&self) -> &Part {
+        &self.0.head
+    }
+
+    pub fn tail(&self) -> Vec<&Part> {
+        self.0.tail.iter().collect()
     }
 }
 
@@ -219,11 +229,12 @@ impl Part {
     }
 }
 
-impl TryFrom<(Character, CreateChatCompletionResponse)> for Message {
+impl TryFrom<(Character, CreateChatCompletionResponse, Duration)> for Message {
     type Error = Error;
 
-    fn try_from(input: (Character, CreateChatCompletionResponse)) -> Result<Self, Self::Error> {
-        let (character, response) = input;
+    fn try_from(
+        (character, response, time_taken): (Character, CreateChatCompletionResponse, Duration),
+    ) -> Result<Self, Self::Error> {
         Ok(Self::builder()
             .parts((
                 character.name().to_owned(),
@@ -231,64 +242,91 @@ impl TryFrom<(Character, CreateChatCompletionResponse)> for Message {
                 Role::Assistant,
             ))
             .original((character, response))
+            .elapsed(time_taken)
             .build())
     }
 }
 
 impl From<(DiscordMessage, String)> for Message {
-    fn from((message, author): (DiscordMessage, String)) -> Self {
+    fn from((message, name): (DiscordMessage, String)) -> Self {
         let parts = message
             .content
             .lines()
             .map(|line| {
-                let (author, content) = if let Some((author, _)) = line.split_once(": ") {
-                    (author.to_owned(), line.to_owned())
+                let (name, content) = if let Some((name, _)) = line.split_once(": ") {
+                    (name.to_owned(), line.to_owned())
                 } else {
-                    (author.clone(), format!("{author}: {line}"))
+                    (name.clone(), format!("{name}: {line}"))
                 };
-                let role = if message.author.bot || author.to_lowercase() == "ai" {
+                let role = if message.author.bot || name.to_lowercase() == "ai" {
                     Role::Assistant
-                } else if author.to_lowercase() == "system" {
+                } else if name.to_lowercase() == "system" {
                     Role::System
                 } else {
                     Role::User
                 };
                 Part::builder()
-                    .author(author)
+                    .name(name)
                     .content(content)
                     .role(role)
                     .build()
             })
             .collect::<Vec<Part>>();
-        let out = Self::builder()
+        Self::builder()
             .id(message.id)
             .parts(parts)
             .images(&message.attachments)
             .original(message)
-            .build();
-        dbg!(&out);
-        out
+            .build()
     }
 }
 
 impl From<Message> for NonEmpty<ChatCompletionRequestMessage> {
     fn from(input: Message) -> Self {
         match input.original {
+            // TODO: refactor this whole thing holy shit
             Original::Discord { .. } | Original::ExampleMessage { .. } => {
-                let mut parts = Self::new(input.parts.head().into());
-                parts.append(&mut input.parts.0.tail.into_iter().map(Into::into).collect());
+                // i don't think using chosen_revision is really necessary here,
+                // but still doing it for future-proofing or something
+                let chosen = input.chosen_revision();
+                let mut parts = Self::new(chosen.head().to_owned().into());
+                parts.append(&mut chosen.tail().into_iter().cloned().map(Into::into).collect());
+                // TODO: make this not always be user, sometimes assistant/system
+                let mut content = vec![ChatCompletionRequestUserMessageContentPart::Text(
+                    chosen.0.last().content.clone().into(),
+                )];
+                let mut images = input
+                    .images
+                    .iter()
+                    .map(|image| {
+                        ChatCompletionRequestUserMessageContentPart::ImageUrl(
+                            ChatCompletionRequestMessageContentPartImage {
+                                image_url: ImageUrl {
+                                    url: image.to_owned(),
+                                    detail: None,
+                                },
+                            },
+                        )
+                    })
+                    .collect();
+                content.append(&mut images);
+                *parts.last_mut() =
+                    ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
+                        content: content.into(),
+                        name: Some(input.chosen_revision().head().name.clone()),
+                    });
                 parts
             }
-            Original::OpenAi { name, .. } | Original::Character { name, .. } => Self::new(
+            Original::OpenAi { ref name, .. } | Original::Character { ref name, .. } => Self::new(
                 ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
-                    content: Some(input.parts.0.head.content.into()),
-                    name: Some(name),
+                    content: Some(input.chosen_revision().head().content.clone().into()),
+                    name: Some(name.to_owned()),
                     ..Default::default()
                 }),
             ),
             Original::System => Self::new(ChatCompletionRequestMessage::System(
                 ChatCompletionRequestSystemMessage {
-                    content: input.parts.0.head.content.into(),
+                    content: input.chosen_revision().head().content.clone().into(),
                     name: Some("System".to_owned()),
                 },
             )),
@@ -362,16 +400,16 @@ impl From<Part> for ChatCompletionRequestMessage {
         match part.role {
             Role::User => Self::User(ChatCompletionRequestUserMessage {
                 content: part.content.into(),
-                name: Some(part.author),
+                name: Some(part.name),
             }),
             Role::Assistant => Self::Assistant(ChatCompletionRequestAssistantMessage {
                 content: Some(part.content.into()),
-                name: Some(part.author),
+                name: Some(part.name),
                 ..Default::default()
             }),
             Role::System => Self::System(ChatCompletionRequestSystemMessage {
                 content: part.content.into(),
-                name: Some(part.author),
+                name: Some(part.name),
             }),
         }
     }
@@ -384,10 +422,10 @@ impl From<Vec<Part>> for Parts {
 }
 
 impl From<(String, String, Role)> for Parts {
-    fn from((author, content, role): (String, String, Role)) -> Self {
+    fn from((name, content, role): (String, String, Role)) -> Self {
         Self(NonEmpty::new(
             Part::builder()
-                .author(author)
+                .name(name)
                 .content(content)
                 .role(role)
                 .build(),

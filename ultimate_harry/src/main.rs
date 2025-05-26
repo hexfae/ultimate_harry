@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use commands::{character, chat, pin};
 use miette::{IntoDiagnostic, Report};
 use poise::{
@@ -7,7 +9,8 @@ use poise::{
 use ultimate_database::DB;
 use ultimate_harry::{
     Result,
-    commands::{self, event_handler},
+    commands::{self},
+    event_handler,
 };
 
 const TOKEN: &str = "REDACTED_DISCORD_TOKEN";
@@ -26,7 +29,7 @@ async fn main() -> Result<(), Report> {
             commands,
             event_handler,
             prefix_options: PrefixFrameworkOptions {
-                prefix: Some("+".to_owned()),
+                prefix: Some(Cow::Borrowed("+")),
                 ..Default::default()
             },
             ..Default::default()

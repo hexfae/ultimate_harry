@@ -226,9 +226,14 @@ async fn show_first_modal<M: Modal>(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
 ) -> Result<Option<M>> {
-    execute_modal_on_component_interaction::<M>(ctx, interaction, None, Some(ONE_HOUR))
-        .await
-        .context(ShowModalSnafu)
+    execute_modal_on_component_interaction::<M>(
+        ctx.serenity_context(),
+        interaction,
+        None,
+        Some(ONE_HOUR),
+    )
+    .await
+    .context(ShowModalSnafu)
 }
 
 async fn show_second_modal<M: Modal>(
@@ -245,7 +250,7 @@ async fn show_second_modal<M: Modal>(
         .await;
 
     if let Some(interaction) = collector {
-        execute_modal_on_component_interaction::<M>(ctx, interaction, None, None)
+        execute_modal_on_component_interaction::<M>(ctx.serenity_context(), interaction, None, None)
             .await
             .context(ShowModalSnafu)
     } else {

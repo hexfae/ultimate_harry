@@ -4,8 +4,8 @@ version = "0.0.7"
 edition = "2024"
 
 [dependencies]
-poise = "0.6.1"
-tokio = { version = "1.44.1", features = ["rt-multi-thread"] }
+poise = { git = "https://github.com/serenity-rs/poise.git", branch = "next" }
+tokio = { version = "1.45.0", features = ["rt-multi-thread"] }
 ulid = "1.2.1"
 ultimate_character = { path = "../ultimate_character" }
 ultimate_message = { path = "../ultimate_message" }
@@ -18,8 +18,8 @@ ultimate_requester = { path = "../ultimate_requester" }
 ultimate_database = { path = "../ultimate_database" }
 nanorand = "0.7.0"
 snafu = "0.8.5"
-miette = "7.5.0"
-surrealdb = "2.3.1"
+miette = "7.6.0"
+surrealdb = "2.3.3"
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 

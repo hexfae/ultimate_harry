@@ -34,7 +34,7 @@ const UNDO: &str = "↩️";
 const REDO: &str = "↪️";
 /// e.g. 16 May, Friday, 2025 | 17:41:14 | 2025-05-16
 /// [jiff::fmt::strtime](https://docs.rs/jiff/latest/jiff/fmt/strtime/index.html)
-const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %R | %F";
+const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %T | %F";
 
 /// A character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -409,7 +409,7 @@ impl Character {
             embed = embed.color(color);
         }
 
-        let components = create_buttons(id, has_finished, has_previous, has_next, has_edit);
+        let components = create_buttons(id.into(), has_finished, has_previous, has_next, has_edit);
 
         CreateReply::default().embed(embed).components(components)
     }
@@ -516,13 +516,12 @@ fn validate_url(url: Option<String>) -> Option<String> {
 
 #[allow(clippy::needless_pass_by_value)]
 fn create_buttons(
-    id: impl Into<u64>,
+    id: u64,
     finished: HasFinished,
     previous: HasPrevious,
     next: HasNext,
     edit: HasEdit,
 ) -> Vec<CreateActionRow> {
-    let id = id.into();
     let prev_msg_id = format!("{id}prev");
     let next_msg_id = format!("{id}next");
     let edit_msg_id = format!("{id}edit");

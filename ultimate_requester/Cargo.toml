@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 async-openai = "0.28.1"
+miette = "7.6.0"
 snafu = "0.8.5"
 ultimate_history = { path = "../ultimate_history" }
 ultimate_config = { path = "../ultimate_config" }

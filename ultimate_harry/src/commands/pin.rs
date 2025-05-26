@@ -34,8 +34,12 @@ pub async fn pin(ctx: Context<'_>, message: Message) -> Result<(), Report> {
 
     let reply = character.to_bare_response(
         message.link(),
-        history.chosen_choice().chosen_revision().head().content(),
-        history.chosen_choice().current_editor(),
+        history
+            .chosen_choice_message()
+            .chosen_revision()
+            .head()
+            .content(),
+        history.chosen_choice_message().current_editor(),
     );
 
     let pin = PIN_CHANNEL
