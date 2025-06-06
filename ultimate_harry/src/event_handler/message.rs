@@ -9,15 +9,29 @@ use ultimate_history::History;
 use ultimate_message::Message as UltimateMessage;
 use ultimate_requester::Requester;
 
-use crate::{EditMessageSnafu, SendMessageSnafu};
+use crate::{EditMessageSnafu, ReactSnafu, SendMessageSnafu};
 
 pub async fn message(ctx: &Context, new_message: &Message) -> Result<(), Report> {
+    {
+        let emojis = DB.user_emoji().await?;
+        for mention in &new_message.mentions {
+            if let Some(user_emoji) = emojis.iter().find(|e| e.user_id == mention.id) {
+                new_message
+                    .react(ctx, user_emoji.emoji.clone())
+                    .await
+                    .context(ReactSnafu)?;
+            }
+        }
+    }
     let Some((mut history, character)) = new_message.history_character().await? else {
         return Ok(());
     };
 
     history.push(history.chosen_choice_message().to_owned());
-    history.push((new_message.clone(), DB.name(&new_message.author).await?));
+    history.push((
+        new_message.clone(),
+        CONFIG.read().substitute_name(new_message.author.id),
+    ));
     history.reset_choices();
 
     let placeholder = history

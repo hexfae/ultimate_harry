@@ -59,9 +59,8 @@ pub async fn edit(
             let index = index + 1;
             let similarity = character.similarity();
             let conversations_had = character.conversations_had();
-            let footer_text = format!(
-                "{index}/{pages} | {conversations_had} konversationer | {similarity}% namnlikhet"
-            );
+            let footer_text =
+                format!("{index}/{pages} | {conversations_had} konversationer{similarity}");
             (character, footer_text)
         })
         .collect();

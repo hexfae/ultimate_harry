@@ -1,20 +1,15 @@
 use bon::Builder;
 use jiff::Zoned;
-use poise::{
-    CreateReply,
-    serenity_prelude::{
-        CreateInteractionResponse, CreateInteractionResponseMessage, MessageId, ReactionType,
-        all::{
-            ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter,
-            UserId,
-        },
+use poise::serenity_prelude::{
+    CreateInteractionResponse, CreateInteractionResponseMessage, MessageId,
+    all::{
+        ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, UserId,
     },
 };
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     fmt::{Display, Write},
-    time::Duration,
 };
 use surrealdb::RecordId;
 use ulid::Ulid;
@@ -25,13 +20,6 @@ use ultimate_modals::{
 use ultimate_phrases::{NO_PHRASES, YES_PHRASES, sample};
 use url::Url;
 
-const CHARACTER_LIMIT: u16 = 4096;
-
-const PREVIOUS: &str = "⬅️";
-const NEXT: &str = "➡️";
-const EDIT: &str = "✏️";
-const UNDO: &str = "↩️";
-const REDO: &str = "↪️";
 /// e.g. 16 May, Friday, 2025 | 17:41:14 | 2025-05-16
 /// [jiff::fmt::strtime](https://docs.rs/jiff/latest/jiff/fmt/strtime/index.html)
 const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %T | %F";
@@ -232,6 +220,7 @@ impl Character {
     pub fn formatted_conversations_had(&self) -> String {
         let mut string = format!("Totalt: {}", self.conversations_had);
         for (user, count) in &self.conversations_had_with_user {
+            let user = CONFIG.read().substitute_name(user);
             let _ = write!(string, "\nMed {user}: {count}");
         }
         string
@@ -301,157 +290,63 @@ impl Character {
         }
     }
 
-    pub fn to_bare_response(
-        &self,
-        link: String,
-        content: impl Into<String>,
-        current_editor: Option<impl Into<UserId>>,
-    ) -> CreateReply {
-        let content = content.into();
-        let footer = {
-            let editor = current_editor.map_or_else(String::new, |editor| {
-                format!(
-                    " (redigerad av {})",
-                    CONFIG.read().substitute_name(editor.into())
-                )
-            });
-            let len = format!("{}/{CHARACTER_LIMIT}", content.len());
-
-            let footer = format!("{len}{editor}");
-            CreateEmbedFooter::new(footer)
-        };
-        let mut embed = CreateEmbed::new()
-            .title(&self.name)
-            .description(content)
-            .footer(footer);
-
-        if let Some(avatar) = &self.avatar {
-            embed = embed.thumbnail(avatar);
-        }
-        if let Some(color) = self.color {
-            embed = embed.color(color);
-        }
-        CreateReply::default().content(link).embed(embed)
-    }
-
-    // it is necessary
-    #[allow(clippy::too_many_arguments)]
-    pub fn to_response(
-        &self,
-        id: impl Into<u64>,
-        (current_page, total_pages): (usize, usize),
-        (current_edit, total_edits, current_editor): (usize, usize, Option<impl Into<UserId>>),
-        content: Option<impl Into<String>>,
-        elapsed: Option<Duration>,
-        has_finished: HasFinished,
-    ) -> CreateReply {
-        let has_previous = if total_pages > 1 {
-            HasPrevious::Yes
-        } else {
-            HasPrevious::No
-        };
-        let has_next = if content.is_some() || total_pages > 1 {
-            HasNext::Yes
-        } else {
-            HasNext::No
-        };
-        let has_edit = if total_edits > 0 {
-            HasEdit::Yes
-        } else {
-            HasEdit::No
-        };
-        let content = content.map_or_else(|| self.greeting().to_owned(), Into::into);
-        let footer = {
-            let pages = if total_pages == 0 {
-                String::new()
-            } else {
-                format!("{}/{}", current_page + 1, total_pages)
-            };
-
-            let elapsed = elapsed.map_or_else(String::new, |elapsed| {
-                if has_finished == HasFinished::Yes {
-                    format!(" | tog {:.1}s", elapsed.as_secs_f64())
-                } else {
-                    format!(" | tar {:.1}s", elapsed.as_secs_f64())
-                }
-            });
-
-            let similarity = self.similarity();
-
-            let editor = current_editor.map_or_else(String::new, |editor| {
-                format!(
-                    "(redigerad av {})",
-                    CONFIG.read().substitute_name(editor.into())
-                )
-            });
-
-            let edit_pages = if total_edits == 0 {
-                String::new()
-            } else {
-                format!(" | {}/{} {}", current_edit + 1, total_edits + 1, editor)
-            };
-
-            let len = format!(" | {}/{CHARACTER_LIMIT}", content.len());
-
-            let footer = format!("{pages}{similarity}{elapsed}{len}{edit_pages}");
-            CreateEmbedFooter::new(footer)
-        };
-
-        let mut embed = CreateEmbed::new()
-            .title(&self.name)
-            .description(content)
-            .footer(footer);
-
-        if let Some(avatar) = &self.avatar {
-            embed = embed.thumbnail(avatar);
-        }
-        if let Some(color) = self.color {
-            embed = embed.color(color);
-        }
-
-        let components = create_buttons(id.into(), has_finished, has_previous, has_next, has_edit);
-
-        CreateReply::default().embed(embed).components(components)
-    }
-
     pub fn to_embed_with_footer_text(&self, footer_text: impl Into<String>) -> CreateEmbed {
         let mut embed = CreateEmbed::new()
             .title(self.to_string())
             .field("Hälsning", &self.greeting, true)
             .field("Konversationer", self.formatted_conversations_had(), true)
-            .field("Skapare", self.creator.to_string(), true)
-            .field(
-                "Skapad",
-                self.created_at.strftime(GOOD_DATE_FORMAT).to_string(),
-                false,
-            )
-            .footer(CreateEmbedFooter::new(footer_text.into()));
+            .field("Version", (self.version + 1).to_string(), true);
 
-        if let Some(description) = &self.description {
-            embed = embed.description(description);
-        }
-        if let Some(avatar) = &self.avatar {
-            embed = embed.thumbnail(avatar);
-        }
         if let Some(nickname) = &self.nickname {
             embed = embed.field("Smeknamn", nickname, true);
+        }
+
+        if let Some(personality) = &self.personality {
+            embed = embed.field("Personlighet", personality, true);
+        }
+
+        if let Some(prompt) = &self.prompt {
+            embed = embed.field("Prompt", prompt, true);
+        }
+
+        if let Some(system_prompt) = &self.system_prompt {
+            embed = embed.field("System Prompt", system_prompt, true);
+        }
+
+        if let Some(scenario) = &self.scenario {
+            embed = embed.field("Scenario", scenario, true);
+        }
+
+        embed = embed.field("Skapare", CONFIG.read().substitute_name(self.creator), true);
+
+        if let Some(editor) = &self.latest_editor {
+            let editor = CONFIG.read().substitute_name(editor);
+            embed = embed.field("Redigerare", editor, true);
+        }
+
+        embed = embed.field(
+            "Skapad",
+            self.created_at.strftime(GOOD_DATE_FORMAT).to_string(),
+            false,
+        );
+        if let Some(edited) = &self.edited_at {
+            let edited = edited.strftime(GOOD_DATE_FORMAT).to_string();
+            embed = embed.field("Redigerad", edited, false);
+        }
+        embed = embed
+            .field("ID", self.id.key().to_string(), false)
+            .footer(CreateEmbedFooter::new(footer_text.into()));
+
+        if let Some(avatar) = &self.avatar {
+            embed = embed.thumbnail(avatar);
         }
         if let Some(color) = &self.color {
             embed = embed.color(*color);
         }
-        if let (Some(edited), Some(editor)) = (&self.edited_at, &self.latest_editor) {
-            let edited = edited.strftime(GOOD_DATE_FORMAT).to_string();
-            let editor = editor.to_string();
-            embed = embed.field("Redigerad", edited, false);
-            embed = embed.field("Redigerare", editor, true);
+        if let Some(description) = &self.description {
+            embed = embed.description(description);
         }
-        // for (user, count) in &self.conversations_had_with_user {
-        //     embed = embed.field(
-        //         CONFIG.read().substitute_name(user),
-        //         count.to_string(),
-        //         false,
-        //     );
-        // }
+        // TODO: previous/next buttons
         embed
     }
 
@@ -514,41 +409,6 @@ fn validate_url(url: Option<String>) -> Option<String> {
         .map(|url| url.to_string())
 }
 
-#[allow(clippy::needless_pass_by_value)]
-fn create_buttons(
-    id: u64,
-    finished: HasFinished,
-    previous: HasPrevious,
-    next: HasNext,
-    edit: HasEdit,
-) -> Vec<CreateActionRow> {
-    let prev_msg_id = format!("{id}prev");
-    let next_msg_id = format!("{id}next");
-    let edit_msg_id = format!("{id}edit");
-    let undo_id = format!("{id}undo");
-    let redo_id = format!("{id}redo");
-
-    let has_finished = finished == HasFinished::Yes;
-    let has_previous = previous == HasPrevious::Yes;
-    let has_next = next == HasNext::Yes;
-    let has_edit = edit == HasEdit::Yes;
-
-    vec![CreateActionRow::Buttons(vec![
-        create_button(prev_msg_id, PREVIOUS, !has_finished || !has_previous),
-        create_button(next_msg_id, NEXT, !has_finished || !has_next),
-        create_button(edit_msg_id, EDIT, !has_finished),
-        create_button(undo_id, UNDO, !has_edit),
-        create_button(redo_id, REDO, !has_edit),
-    ])]
-}
-
-fn create_button(custom_id: String, emoji: &'static str, disabled: bool) -> CreateButton {
-    CreateButton::new(custom_id)
-        .disabled(disabled)
-        .style(ButtonStyle::Secondary)
-        .emoji(ReactionType::Unicode(emoji.to_owned()))
-}
-
 fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
     let id = id.into();
     let confirm_id = format!("{id}confirm");
@@ -561,45 +421,4 @@ fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
             .style(ButtonStyle::Secondary)
             .label(sample(NO_PHRASES)),
     ])]
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum HasFinished {
-    Yes,
-    No,
-}
-
-/// If this message has a previous version (a previous page).
-///
-/// Note that this should be `Self::Yes` if the current page is the first page
-/// and there are multiple pages (to allow wrapping around to the last page).
-/// The only time this should be `Self::No` is if this is the first (and only)
-/// page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum HasPrevious {
-    Yes,
-    No,
-}
-
-/// If this version has a next version (a next page).
-///
-/// Note that this should ONLY be `Self::No` in cases of viewing a list of
-/// characters when there is only one character. In a conversation, the next
-/// button should always be active (to allow for requesting another response from
-/// the bot (a "swipe")), and if multiple characters exist, pressing next on the
-/// last page should wrap around to the first page.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum HasNext {
-    Yes,
-    No,
-}
-
-/// If this message has at least one edit made to it.
-///
-/// If so, both the undo and redo button should always be activated (to allow for
-/// wrapping around ot the first/last edit to the last/first edit).
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum HasEdit {
-    Yes,
-    No,
 }

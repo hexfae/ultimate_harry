@@ -9,6 +9,7 @@ use serenity::all::{
 };
 use surrealdb::RecordId;
 use ultimate_character::Character;
+use ultimate_config::CONFIG;
 use ultimate_message::Message;
 
 const SYSTEM_MESSAGE: &str = "Du kommer nu att gå in i ett rollspel med en användare. Under inga omständigheter får du bryta rollspelet, gå ur karaktär, eller prata åt användaren.";
@@ -56,7 +57,7 @@ impl History {
         &mut self,
         author: impl Into<String>,
         content: impl Into<String>,
-        editor: impl Into<UserId>,
+        editor: Option<impl Into<UserId>>,
     ) {
         self.choices[self.current].edit(author, content, editor);
     }
@@ -160,6 +161,39 @@ impl History {
     }
 
     #[must_use]
+    pub fn to_bare_response(&self, character: &Character, link: String) -> CreateReply {
+        let content = self
+            .chosen_choice_message()
+            .chosen_revision()
+            .head()
+            .content();
+        let footer = {
+            let editor = self
+                .chosen_choice_message()
+                .current_editor()
+                .map_or_else(String::new, |editor| {
+                    format!(" (redigerad av {})", CONFIG.read().substitute_name(editor))
+                });
+            let len = format!("{}/{CHARACTER_LIMIT}", content.len());
+
+            let footer = format!("{len}{editor}");
+            CreateEmbedFooter::new(footer)
+        };
+        let mut embed = CreateEmbed::new()
+            .title(character.name())
+            .description(content)
+            .footer(footer);
+
+        if let Some(avatar) = character.avatar() {
+            embed = embed.thumbnail(avatar);
+        }
+        if let Some(color) = character.color() {
+            embed = embed.color(color);
+        }
+        CreateReply::default().content(link).embed(embed)
+    }
+
+    #[must_use]
     pub fn to_response(&self, character: &Character, id: MessageId) -> CreateReply {
         let chosen = self.chosen_choice_message();
 
@@ -185,10 +219,7 @@ impl History {
             let similarity = character.similarity();
 
             let editor = chosen.current_editor().map_or_else(String::new, |editor| {
-                format!(
-                    "(redigerad av {})",
-                    "TODO" // CONFIG.read().substitute_name(editor.into())
-                )
+                format!("(redigerad av {})", CONFIG.read().substitute_name(editor))
             });
 
             let edit_pages = if chosen.revisions_len() == 0 {
@@ -250,13 +281,13 @@ fn create_button(custom_id: String, emoji: &'static str, disabled: bool) -> Crea
         .emoji(ReactionType::Unicode(emoji.to_owned()))
 }
 
-impl From<(Character, MessageId, UserId)> for History {
-    fn from((character, id, user_id): (Character, MessageId, UserId)) -> Self {
+impl From<(&Character, MessageId, UserId)> for History {
+    fn from((character, id, user_id): (&Character, MessageId, UserId)) -> Self {
         let mut history = NonEmpty::new(Message::new_system(SYSTEM_MESSAGE));
 
         if let Some(personality) = character.personality() {
             history.push(Message::new_system(BEGIN_PERSONALITY));
-            history.push(Message::new_assistant(personality, &character));
+            history.push(Message::new_assistant(personality, character));
         }
 
         if let Some(prompt) = character.prompt() {
@@ -280,7 +311,7 @@ impl From<(Character, MessageId, UserId)> for History {
                     history.push(Message::new_user("Användaren", user_message, user_id));
                 }
 
-                history.push(Message::new_assistant(assistant_message, &character));
+                history.push(Message::new_assistant(assistant_message, character));
 
                 history.push(Message::new_system(EXAMPLE_MESSAGE_SEPARATOR));
             }
@@ -292,7 +323,9 @@ impl From<(Character, MessageId, UserId)> for History {
 
         history.push(Message::new_system(BEGIN_MESSAGE));
 
-        let choices = NonEmpty::new(Message::new_assistant(character.greeting(), &character));
+        let mut message = Message::new_system("");
+        message.edit(character.name(), character.greeting(), None::<u64>);
+        let choices = NonEmpty::new(message);
 
         Self::builder()
             .previous(history)

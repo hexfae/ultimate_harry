@@ -1,11 +1,12 @@
 [package]
 name = "ultimate_history"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 
 [dependencies]
 ultimate_message = { path = "../ultimate_message" }
 ultimate_character = { path = "../ultimate_character" }
+ultimate_config = { path = "../ultimate_config" }
 serenity = "0.12.4"
 snafu = "0.8.5"
 serde = { version = "1.0.219", features = ["derive"] }

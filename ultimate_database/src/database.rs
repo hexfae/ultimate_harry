@@ -1,20 +1,25 @@
-use bon::Builder;
+use jiff::Zoned;
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
-use serenity::all::{MessageId, UserId};
+use serenity::all::{MessageId, ReactionType, UserId};
 use snafu::{OptionExt, ResultExt, Snafu};
 use std::sync::LazyLock;
+#[expect(
+    unused_imports,
+    reason = "Db and SurrealKv are used in release mode, Client and Ws are used in debug mode"
+)]
 use surrealdb::{
     RecordId, Surreal,
-    engine::remote::ws::{Client, Ws},
+    engine::{
+        local::{Db, SurrealKv},
+        remote::ws::{Client, Ws},
+    },
     opt::auth::Root,
 };
 use ultimate_character::{Character, CharacterPages};
 use ultimate_history::History;
 
 pub static DB: LazyLock<Database> = LazyLock::new(Database::init);
-
-const DEFAULT_USER_NAME: &str = "Användaren";
 
 const MOST_SIMILAR_TO: &str = "
 LET $names = SELECT
@@ -79,31 +84,37 @@ ORDER BY
     conversations_had DESC;
 ";
 
+#[cfg(debug_assertions)]
 pub struct Database(Surreal<Client>);
 
-#[derive(Serialize, Deserialize, Builder)]
-pub struct Name {
-    #[builder(with = |id: impl Into<UserId>| RecordId::from(("name", id.into().to_string())))]
-    id: RecordId,
-    #[builder(into)]
-    name: String,
-}
+#[cfg(not(debug_assertions))]
+pub struct Database(Surreal<Db>);
 
 impl Database {
     pub fn init() -> Self {
         Self(Surreal::init())
     }
 
+    /// Connects to a local database in debug mode, or creates a local
+    /// ``SurrealKV`` one in release mode.
     pub async fn connect(&self) -> Result<(), Error> {
+        #[cfg(debug_assertions)]
+        {
+            self.0
+                .connect::<Ws>("localhost:8000")
+                .await
+                .context(ConnectSnafu)?;
+            self.0
+                .signin(Root {
+                    username: "root",
+                    password: "root",
+                })
+                .await
+                .context(ConnectSnafu)?;
+        }
+        #[cfg(not(debug_assertions))]
         self.0
-            .connect::<Ws>("localhost:8000")
-            .await
-            .context(ConnectSnafu)?;
-        self.0
-            .signin(Root {
-                username: "root",
-                password: "root",
-            })
+            .connect::<SurrealKv>("harry_database")
             .await
             .context(ConnectSnafu)?;
         self.0
@@ -163,7 +174,7 @@ impl Database {
     ) -> Result<Option<Character>, Error> {
         self.0
             .update(id)
-            .content(DeletedBy::from(deleted_by.into()))
+            .merge(DeletedBy::from(deleted_by.into()))
             .await
             .context(DeleteSnafu)
     }
@@ -175,7 +186,7 @@ impl Database {
     ) -> Result<Option<Character>, Error> {
         self.0
             .update(old_id)
-            .content(NextVersion::from(new_id))
+            .merge(NextVersion::from(new_id))
             .await
             .context(UpdateSnafu)?
             .context(NoCharacterSnafu)
@@ -215,38 +226,35 @@ impl Database {
             .context(UpdateSnafu)
     }
 
-    /// Returns `Användaren` if no matching name was found.
-    pub async fn name(&self, id: impl Into<UserId>) -> Result<String, Error> {
-        self.0
-            .select(("name", id.into().to_string()))
-            .await
-            .context(GetSnafu)
-            .map(|name| name.unwrap_or_else(|| DEFAULT_USER_NAME.to_owned()))
-    }
-
-    pub async fn insert_name(
+    pub async fn upsert_user_emoji(
         &self,
         id: impl Into<UserId>,
-        name: impl Into<String>,
-    ) -> Result<Option<Name>, Error> {
-        let name = Name::builder().id(id).name(name).build();
+        emoji: ReactionType,
+    ) -> Result<Option<UserEmoji>, Error> {
+        let user_id = id.into();
+        let user_emoji = UserEmoji { user_id, emoji };
         self.0
-            .insert(name.id())
-            .content(name)
+            .upsert(("user_emoji", user_id.to_string()))
+            .content(user_emoji)
             .await
             .context(InsertSnafu)
     }
+
+    pub async fn user_emoji(&self) -> Result<Vec<UserEmoji>, Error> {
+        self.0.select("user_emoji").await.context(GetSnafu)
+    }
 }
 
-impl Name {
-    fn id(&self) -> RecordId {
-        self.id.clone()
-    }
+#[derive(Serialize, Deserialize)]
+pub struct UserEmoji {
+    pub user_id: UserId,
+    pub emoji: ReactionType,
 }
 
 #[derive(Serialize)]
 struct DeletedBy {
     deleted_by: UserId,
+    deleted_at: Zoned,
 }
 
 #[derive(Serialize)]
@@ -256,7 +264,11 @@ struct NextVersion {
 
 impl From<UserId> for DeletedBy {
     fn from(deleted_by: UserId) -> Self {
-        Self { deleted_by }
+        let deleted_at = Zoned::now();
+        Self {
+            deleted_by,
+            deleted_at,
+        }
     }
 }
 

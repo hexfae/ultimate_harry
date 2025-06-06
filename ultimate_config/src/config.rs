@@ -2,10 +2,11 @@ use miette::Diagnostic;
 use notify::{RecursiveMode, Watcher, recommended_watcher};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use serenity::all::UserId;
+use serenity::all::{ChannelId, GuildId, UserId};
 use snafu::{ResultExt, Snafu};
 use std::{
     collections::HashMap,
+    env::var,
     fs::{read_to_string, write},
     path::{Path, PathBuf},
     sync::LazyLock,
@@ -16,7 +17,8 @@ use tracing::{error, info, warn};
 
 type Result<T, E = Error> = std::result::Result<T, E>;
 
-const CONFIG_PATH: &str = "config.toml";
+pub static CONFIG_PATH: LazyLock<String> =
+    LazyLock::new(|| var("CONFIG_FILE").unwrap_or_else(|_| "config.toml".to_owned()));
 
 pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
     std::thread::spawn(watch_config);
@@ -27,6 +29,9 @@ pub static CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| {
 pub struct Config {
     model_settings: ModelSettings,
     name_substitutions: HashMap<UserId, String>,
+    bot_token: String,
+    guild_ids: Vec<GuildId>,
+    pins_channel_id: ChannelId,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,8 +67,8 @@ enum Error {
 
 impl Config {
     fn load() -> Result<Self> {
-        if Path::new(CONFIG_PATH).exists() {
-            read_to_string(CONFIG_PATH)
+        if Path::new(&CONFIG_PATH.clone()).exists() {
+            read_to_string(CONFIG_PATH.clone())
                 .context(ReadSnafu)
                 .and_then(|contents| toml::from_str(&contents).context(DeserializeSnafu))
         } else {
@@ -74,10 +79,22 @@ impl Config {
     fn save(&self) {
         if let Err(why) = toml::to_string_pretty(self)
             .context(SerializeSnafu)
-            .and_then(|contents| write(CONFIG_PATH, contents).context(WriteSnafu))
+            .and_then(|contents| write(CONFIG_PATH.clone(), contents).context(WriteSnafu))
         {
             warn!("Error while saving config: {why}");
         }
+    }
+
+    pub fn bot_token(&self) -> String {
+        self.bot_token.clone()
+    }
+
+    pub fn guild_ids(&self) -> Vec<GuildId> {
+        self.guild_ids.clone()
+    }
+
+    pub const fn pins_channel_id(&self) -> ChannelId {
+        self.pins_channel_id
     }
 
     pub fn model_settings(&self) -> ModelSettings {
@@ -132,6 +149,10 @@ impl ModelSettings {
 impl Default for Config {
     fn default() -> Self {
         let config = Self {
+            pins_channel_id: ChannelId::new(1),
+            guild_ids: vec![GuildId::new(1)],
+            bot_token: String::new(),
+            name_substitutions: HashMap::new(),
             model_settings: ModelSettings {
                 model: String::new(),
                 api_key: String::new(),
@@ -142,9 +163,8 @@ impl Default for Config {
                 temperature: 0.0,
                 top_p: 0.0,
             },
-            name_substitutions: HashMap::new(),
         };
-        if !Path::new(CONFIG_PATH).exists() {
+        if !Path::new(&CONFIG_PATH.clone()).exists() {
             config.save();
         }
         config
@@ -156,7 +176,7 @@ impl Default for Config {
 fn watch_config() -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = recommended_watcher(tx).context(CreateWatcherSnafu)?;
-    let config_path = PathBuf::from(CONFIG_PATH);
+    let config_path = PathBuf::from(CONFIG_PATH.clone());
     let mut last_reload = Instant::now();
     let debounce_duration = Duration::from_millis(400);
     let post_event_delay = Duration::from_millis(1);

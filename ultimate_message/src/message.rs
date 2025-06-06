@@ -79,7 +79,7 @@ pub struct Revision {
     #[builder(into)]
     parts: Parts,
     #[builder(into)]
-    editor: UserId,
+    editor: Option<UserId>,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -149,12 +149,12 @@ impl Message {
         &mut self,
         author: impl Into<String>,
         content: impl Into<String>,
-        editor: impl Into<UserId>,
+        editor: Option<impl Into<UserId>>,
     ) {
         self.revisions.push(
             Revision::builder()
                 .parts((author.into(), content.into(), Role::Assistant))
-                .editor(editor)
+                .maybe_editor(editor)
                 .build(),
         );
         self.revision = self.revisions.len();
@@ -183,7 +183,7 @@ impl Message {
     pub fn editor_of_version(&self, version: impl Into<usize> + Copy) -> Option<UserId> {
         match version.into() {
             0 => None,
-            _ => Some(self.revisions[version.into() - 1].editor),
+            _ => self.revisions[version.into() - 1].editor,
         }
     }
 

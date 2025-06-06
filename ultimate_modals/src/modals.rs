@@ -80,7 +80,7 @@ pub struct EditCharacterModal {
 pub struct SecondEditCharacterModal {
     #[paragraph]
     #[name = "Profilbild"]
-    #[placeholder = "En länk till rätt bild. Använd inte en länk till en bild som du har lagt upp på Discord!"]
+    #[placeholder = "En länk till rätt bild."]
     pub avatar: Option<String>,
     #[name = "Emoji"]
     #[placeholder = "Till exempel 🤩, :robot:, eller :chosad:, syns oftast bredvid gubbens namn."]

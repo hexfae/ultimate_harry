@@ -58,6 +58,10 @@ pub enum Error {
     ShowModal {
         source: poise::serenity_prelude::Error,
     },
+    #[snafu(display("Kunde inte reagera med en emoji: {source}"))]
+    React {
+        source: poise::serenity_prelude::Error,
+    },
     #[snafu(display("Okänd interaction: {}", found))]
     UnknownInteraction { found: String },
 }

@@ -19,7 +19,7 @@ pub async fn edit(
         return Ok(());
     };
 
-    history.edit_content(character.name(), modal.content, interaction.user.id);
+    history.edit_content(character.name(), modal.content, Some(interaction.user.id));
 
     DB.update_history(history.clone()).await?;
 

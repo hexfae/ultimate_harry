@@ -1,6 +1,6 @@
 [package]
 name = "ultimate_database"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 
 [dependencies]
@@ -13,6 +13,8 @@ ultimate_character = { path = "../ultimate_character" }
 ultimate_message = { path = "../ultimate_message" }
 ultimate_history = { path = "../ultimate_history" }
 bon = "3.6.3"
+tokio = "1.45.1"
+jiff = "0.2.14"
 
 [lints.rust]
 unsafe_code = "forbid"

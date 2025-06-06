@@ -44,5 +44,48 @@
             ];
           };
       }
-    );
+    )
+    // {
+      nixosModules.default = {
+        config,
+        lib,
+        pkgs,
+        ...
+      }: let
+        cfg = config.services.harry;
+      in {
+        options.services.harry = {
+          enable = lib.mkEnableOption "Ultimate Harry";
+          configFile = lib.mkOption {
+            type = lib.types.path;
+            description = "Path to the config file";
+          };
+        };
+
+        config = lib.mkIf cfg.enable (lib.mkMerge [
+          {
+            systemd.services.harry = {
+              wantedBy = ["multi-user.target"];
+              serviceConfig = {
+                ExecStart = "${self.defaultPackage."${pkgs.system}"}/bin/harry";
+                User = "harry";
+                Group = "harry";
+                WorkingDirectory = /var/lib/harry;
+                StateDirectory = "harry";
+                LogsDirectory = "harry";
+                Restart = "on-failure";
+                Environment = ["CONFIG_FILE=${toString cfg.configFile}"];
+              };
+            };
+
+            users.users.harry = {
+              isSystemUser = true;
+              group = "harry";
+            };
+
+            users.groups.harry = {};
+          }
+        ]);
+      };
+    };
 }

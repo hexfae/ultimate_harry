@@ -3,14 +3,12 @@ use crate::{
     traits::{DeleteSelfAndInvokingMessageIfPrefix, SayWith},
 };
 use miette::Report;
-use poise::serenity_prelude::{ChannelId, Message};
+use poise::serenity_prelude::Message;
 use snafu::ResultExt;
 use tokio::time::sleep;
+use ultimate_config::CONFIG;
 use ultimate_database::DB;
 use ultimate_phrases::{NO_CHARACTER_PHRASES, NO_HISTORY_PHRASES, sample};
-
-#[allow(clippy::unreadable_literal)] // doesn't make sense for a guild id
-const PIN_CHANNEL: ChannelId = ChannelId::new(1373963823974715412);
 
 #[poise::command(context_menu_command = "Pinna meddelandet")]
 pub async fn pin(ctx: Context<'_>, message: Message) -> Result<(), Report> {
@@ -32,17 +30,10 @@ pub async fn pin(ctx: Context<'_>, message: Message) -> Result<(), Report> {
         return Ok(());
     };
 
-    let reply = character.to_bare_response(
-        message.link(),
-        history
-            .chosen_choice_message()
-            .chosen_revision()
-            .head()
-            .content(),
-        history.chosen_choice_message().current_editor(),
-    );
+    let reply = history.to_bare_response(&character, message.link());
 
-    let pin = PIN_CHANNEL
+    let channel_id = CONFIG.read().pins_channel_id();
+    let pin = channel_id
         .send_message(ctx, reply.to_prefix((&message).into()))
         .await
         .context(SendMessageSnafu)?;

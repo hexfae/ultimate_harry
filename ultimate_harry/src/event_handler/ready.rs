@@ -1,11 +1,10 @@
+use crate::ONE_MINUTE;
 use miette::Report;
 use nanorand::{Rng, WyRand};
 use poise::serenity_prelude::{ActivityData, ActivityType, Context};
 use std::time::Instant;
 use tokio::time::sleep;
 use tracing::info;
-
-use crate::ONE_MINUTE;
 
 // event_handler has to return a future
 #[allow(clippy::unused_async)]
@@ -21,7 +20,7 @@ pub async fn ready(ctx: &Context) -> Result<(), Report> {
         loop {
             let elapsed = start.elapsed();
             let hours = elapsed.as_secs() / 3600;
-            let minutes = elapsed.as_secs() / 60;
+            let minutes = (elapsed.as_secs() % 3600) / 60;
 
             ctx.set_activity(Some(ActivityData {
                 name: "Heroes of the Storm".to_owned(),
