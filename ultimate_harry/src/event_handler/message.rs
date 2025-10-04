@@ -14,20 +14,30 @@ use crate::{EditMessageSnafu, ReactSnafu, SendMessageSnafu};
 pub async fn message(ctx: &Context, new_message: &Message) -> Result<(), Report> {
     {
         let emojis = DB.user_emoji().await?;
-        if let Some(replied_to) = &new_message.referenced_message {
-            if let Some(user_emoji) = emojis.iter().find(|e| e.user_id == replied_to.author.id) {
+        if new_message.mention_everyone {
+            for user_emoji in &emojis {
                 new_message
                     .react(ctx, user_emoji.emoji.clone())
                     .await
                     .context(ReactSnafu)?;
             }
-        }
-        for mention in &new_message.mentions {
-            if let Some(user_emoji) = emojis.iter().find(|e| e.user_id == mention.id) {
-                new_message
-                    .react(ctx, user_emoji.emoji.clone())
-                    .await
-                    .context(ReactSnafu)?;
+        } else {
+            if let Some(replied_to) = &new_message.referenced_message {
+                if let Some(user_emoji) = emojis.iter().find(|e| e.user_id == replied_to.author.id)
+                {
+                    new_message
+                        .react(ctx, user_emoji.emoji.clone())
+                        .await
+                        .context(ReactSnafu)?;
+                }
+            }
+            for mention in &new_message.mentions {
+                if let Some(user_emoji) = emojis.iter().find(|e| e.user_id == mention.id) {
+                    new_message
+                        .react(ctx, user_emoji.emoji.clone())
+                        .await
+                        .context(ReactSnafu)?;
+                }
             }
         }
     }
