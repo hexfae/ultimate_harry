@@ -6,6 +6,7 @@ use async_openai::types::{
     ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContentPart,
     CreateChatCompletionResponse, ImageUrl,
 };
+use base64::{Engine, prelude::BASE64_STANDARD};
 use bon::Builder;
 use jiff::Zoned;
 use miette::Diagnostic;
@@ -299,10 +300,15 @@ impl From<Message> for NonEmpty<ChatCompletionRequestMessage> {
                     .images
                     .iter()
                     .map(|image| {
+                        let image = ureq::get(image)
+                            .call()
+                            .and_then(|response| response.into_body().read_to_vec())
+                            .unwrap_or_default();
+                        let base64 = BASE64_STANDARD.encode(&image);
                         ChatCompletionRequestUserMessageContentPart::ImageUrl(
                             ChatCompletionRequestMessageContentPartImage {
                                 image_url: ImageUrl {
-                                    url: image.to_owned(),
+                                    url: format!("data:image/png;base64,{base64}"),
                                     detail: None,
                                 },
                             },
