@@ -4,12 +4,13 @@ use serde::{Deserialize, Serialize};
 use serenity::all::{MessageId, ReactionType, UserId};
 use snafu::{OptionExt, ResultExt, Snafu};
 use std::sync::LazyLock;
+use surrealdb::RecordId;
 #[expect(
     unused_imports,
     reason = "Db and SurrealKv are used in release mode, Client and Ws are used in debug mode"
 )]
 use surrealdb::{
-    RecordId, Surreal,
+    Surreal,
     engine::{
         local::{Db, SurrealKv},
         remote::ws::{Client, Ws},
@@ -118,8 +119,8 @@ impl Database {
             .await
             .context(ConnectSnafu)?;
         self.0
-            .use_ns("harry")
-            .use_db("harry")
+            .use_ns("harry".to_owned())
+            .use_db("harry".to_owned())
             .await
             .context(ConnectSnafu)
     }

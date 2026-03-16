@@ -4,7 +4,7 @@ version = "0.0.4"
 edition = "2024"
 
 [dependencies]
-nanorand = "0.7.0"
+nanorand = "0.8.0"
 
 [lints.rust]
 unsafe_code = "forbid"

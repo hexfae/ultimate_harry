@@ -12,7 +12,7 @@ use ultimate_database::DB;
 
 use crate::Context;
 
-pub async fn autocomplete(_: Context<'_>, partial: &str) -> CreateAutocompleteResponse {
+pub async fn autocomplete<'a>(_: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {
     let characters = DB
         .characters_by_similarity(partial)
         .await
@@ -31,7 +31,9 @@ pub async fn autocomplete(_: Context<'_>, partial: &str) -> CreateAutocompleteRe
         // .take(25)
         // TODO: having written e.g. ":microphone" displays that text, not the emoji
         // TODO: does this work correctly? i think so
-        .map(|character| AutocompleteChoice::new(character.to_string(), character.name()))
+        .map(|character| {
+            AutocompleteChoice::new(character.to_string(), character.name().to_owned())
+        })
         .collect::<Vec<AutocompleteChoice>>();
     CreateAutocompleteResponse::new().set_choices(character_names)
 }

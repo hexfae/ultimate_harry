@@ -22,7 +22,7 @@ pub async fn next(
 
     if history.current_choice() + 1 < history.choices_len() {
         interaction
-            .create_response(ctx, CreateInteractionResponse::Acknowledge)
+            .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
             .await
             .context(SendResponseSnafu)?;
 
@@ -35,7 +35,7 @@ pub async fn next(
         );
 
         interaction
-            .create_response(ctx, placeholder)
+            .create_response(&ctx.http, placeholder)
             .await
             .context(SendResponseSnafu)?;
 
@@ -63,7 +63,7 @@ pub async fn next(
         .to_slash_initial_response_edit(EditInteractionResponse::new());
 
     interaction
-        .edit_response(ctx, response)
+        .edit_response(&ctx.http, response)
         .await
         .context(SendResponseSnafu)?;
 

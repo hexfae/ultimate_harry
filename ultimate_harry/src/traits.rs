@@ -47,7 +47,10 @@ pub trait DeleteInvokingMessageIfPrefix {
 impl DeleteInvokingMessageIfPrefix for Context<'_> {
     async fn delete_invoking_message_if_prefix(&self) -> Result {
         if let Context::Prefix(ctx) = self {
-            ctx.msg.delete(ctx).await.context(DeleteMessageSnafu)?;
+            ctx.msg
+                .delete(ctx.http(), None)
+                .await
+                .context(DeleteMessageSnafu)?;
         }
         Ok(())
     }
@@ -60,7 +63,7 @@ pub trait DeleteResponse {
 impl DeleteResponse for Context<'_> {
     async fn delete_response(&self, interaction: ComponentInteraction) -> Result {
         interaction
-            .delete_response(self)
+            .delete_response(self.http())
             .await
             .context(DeleteResponseSnafu)
     }
@@ -76,7 +79,10 @@ impl DeleteSelfAndInvokingMessageIfPrefix for ReplyHandle<'_> {
     async fn delete_self_and_invoking_message_if_prefix(&self, ctx: Context<'_>) -> Result {
         self.delete(ctx).await.context(DeleteMessageSnafu)?;
         if let Context::Prefix(ctx) = ctx {
-            ctx.msg.delete(ctx).await.context(DeleteMessageSnafu)?;
+            ctx.msg
+                .delete(ctx.http(), None)
+                .await
+                .context(DeleteMessageSnafu)?;
         }
         Ok(())
     }
@@ -117,7 +123,7 @@ impl RespondToWith for Context<'_> {
     ) -> Result {
         interaction
             .create_response(
-                self,
+                self.http(),
                 CreateInteractionResponse::UpdateMessage(
                     CreateInteractionResponseMessage::new()
                         .content(message.as_ref())

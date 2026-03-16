@@ -7,14 +7,14 @@ edition = "2024"
 ultimate_message = { path = "../ultimate_message" }
 ultimate_character = { path = "../ultimate_character" }
 ultimate_config = { path = "../ultimate_config" }
-serenity = "0.12.4"
-snafu = "0.8.5"
-serde = { version = "1.0.219", features = ["derive"] }
-async-openai = "0.28.1"
-surrealdb = "2.3.3"
-nonempty = { version = "0.11.0", features = ["serialize"] }
-bon = "3.6.3"
-poise = { git = "https://github.com/serenity-rs/poise.git", branch = "next" }
+serenity = { git = "https://github.com/serenity-rs/serenity.git", branch = "next" }
+snafu = "0.9.0"
+serde = { version = "1.0.228", features = ["derive"] }
+async-openai = "0.33.1"
+surrealdb = "2.6.3"
+nonempty = { version = "0.12.0", features = ["serialize"] }
+bon = "3.9.1"
+poise = { git = "https://github.com/serenity-rs/poise.git", branch = "serenity-next" }
 
 [lints.rust]
 unsafe_code = "forbid"

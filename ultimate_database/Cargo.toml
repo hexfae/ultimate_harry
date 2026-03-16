@@ -5,16 +5,16 @@ edition = "2024"
 
 [dependencies]
 miette = "7.6.0"
-serde = { version = "1.0.219", features = ["derive"] }
-serenity = "0.12.4"
-snafu = "0.8.5"
-surrealdb = { version = "2.3.3", features = ["kv-surrealkv"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serenity = { git = "https://github.com/serenity-rs/serenity.git", branch = "next" }
+snafu = "0.9.0"
+surrealdb = { version = "2.6.3", features = ["kv-surrealkv"] }
 ultimate_character = { path = "../ultimate_character" }
 ultimate_message = { path = "../ultimate_message" }
 ultimate_history = { path = "../ultimate_history" }
-bon = "3.6.3"
-tokio = "1.45.1"
-jiff = "0.2.14"
+bon = "3.9.1"
+tokio = "1.50.0"
+jiff = "0.2.23"
 
 [lints.rust]
 unsafe_code = "forbid"

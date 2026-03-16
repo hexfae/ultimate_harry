@@ -1,17 +1,23 @@
 [workspace]
 resolver = "2"
 members = [
-    "ultimate_character",
-    "ultimate_config",
-    "ultimate_database",
-    "ultimate_harry",
-    "ultimate_history",
-    "ultimate_message",
-    "ultimate_modals",
-    "ultimate_phrases",
-    "ultimate_requester",
-    "ultimate_statistics",
+  "ultimate_character",
+  "ultimate_config",
+  "ultimate_database",
+  "ultimate_harry",
+  "ultimate_history",
+  "ultimate_message",
+  "ultimate_modals",
+  "ultimate_phrases",
+  "ultimate_requester",
+  "ultimate_statistics",
 ]
+
+[workspace.package]
+version = "0.0.8"
+
+[workspace.metadata.crane]
+name = "ultimate_harry"
 
 [profile.release]
 opt-level = "z"

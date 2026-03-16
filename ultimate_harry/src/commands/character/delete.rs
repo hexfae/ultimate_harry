@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     Context, DeferEphemeralOrBroadcast, DeleteInvokingMessageIfPrefix, Error, FIVE_SECONDS,
     ONE_MINUTE, RespondToWith, Result, SendMessageSnafu, SendResponseSnafu, TEN_MINUTES,
@@ -8,7 +10,8 @@ use poise::{
     CreateReply, ReplyHandle,
     serenity_prelude::{
         ButtonStyle, ComponentInteraction, ComponentInteractionCollector, CreateActionRow,
-        CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage,
+        CreateButton, CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage,
+        small_fixed_array::{FixedArray, FixedString},
     },
 };
 use snafu::ResultExt;
@@ -71,9 +74,11 @@ async fn display_pagination(
     characters_and_footer_text: Vec<(Character, String)>,
 ) -> Result<(), Report> {
     let id = ctx.id();
-    let custom_ids = ["confirm", "cancel", "prev", "next"]
-        .map(|s| format!("{id}{s}"))
-        .to_vec();
+    let custom_ids = FixedArray::from_vec_trunc(
+        ["confirm", "cancel", "prev", "next"]
+            .map(|s| FixedString::from_string_trunc(format!("{id}{s}")))
+            .to_vec(),
+    );
 
     let mut current_page: usize = 0;
     let pages = characters_and_footer_text.len();
@@ -117,11 +122,11 @@ async fn display_pagination(
         }
 
         let (character, footer_text) = characters_and_footer_text[current_page].clone();
-        let embed = character.to_embed_with_footer_text(footer_text);
+        let embed = character.into_embed_with_footer_text(footer_text);
 
         interaction
             .create_response(
-                ctx,
+                ctx.http(),
                 CreateInteractionResponse::UpdateMessage(
                     CreateInteractionResponseMessage::new().embed(embed),
                 ),
@@ -137,9 +142,9 @@ async fn display_pagination(
 #[must_use]
 async fn create_collector(
     ctx: Context<'_>,
-    custom_ids: Vec<String>,
+    custom_ids: FixedArray<FixedString>,
 ) -> Option<ComponentInteraction> {
-    ComponentInteractionCollector::new(ctx)
+    ComponentInteractionCollector::new(ctx.serenity_context())
         .custom_ids(custom_ids)
         .timeout(TEN_MINUTES)
         .await
@@ -150,7 +155,7 @@ async fn send_initial_embed(
     (character, footer_text): (Character, String),
 ) -> Result<ReplyHandle<'_>> {
     let id = ctx.id();
-    let embed = character.to_embed_with_footer_text(footer_text);
+    let embed = character.into_embed_with_footer_text(footer_text);
     let buttons = create_buttons(id);
     ctx.send(CreateReply::default().embed(embed).components(buttons))
         .await
@@ -158,26 +163,27 @@ async fn send_initial_embed(
 }
 
 #[must_use]
-pub fn create_buttons(id: u64) -> Vec<CreateActionRow> {
+pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
     let confirm = format!("{id}confirm");
     let cancel = format!("{id}cancel");
     let prev = format!("{id}prev");
     let next = format!("{id}next");
-    let components = CreateActionRow::Buttons(vec![
-        CreateButton::new(&confirm)
-            .emoji('🗑')
-            .style(ButtonStyle::Secondary),
-        CreateButton::new(&cancel)
-            .emoji('❌')
-            .style(ButtonStyle::Secondary),
-        CreateButton::new(&prev)
-            .emoji('◀')
-            .style(ButtonStyle::Secondary),
-        CreateButton::new(&next)
-            .emoji('▶')
-            .style(ButtonStyle::Secondary),
-    ]);
-    vec![components]
+    Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
+        Cow::Owned(vec![
+            CreateButton::new(confirm)
+                .emoji('🗑')
+                .style(ButtonStyle::Secondary),
+            CreateButton::new(cancel)
+                .emoji('❌')
+                .style(ButtonStyle::Secondary),
+            CreateButton::new(prev)
+                .emoji('◀')
+                .style(ButtonStyle::Secondary),
+            CreateButton::new(next)
+                .emoji('▶')
+                .style(ButtonStyle::Secondary),
+        ]),
+    ))])
 }
 
 async fn delete_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> Result<()> {
@@ -197,7 +203,7 @@ async fn ask_for_confirmation(
     let response = sample(ASK_DELETE_PHRASES);
     let reply = character.to_confirm_interaction_response(ctx.id(), response);
     interaction
-        .create_response(ctx, reply)
+        .create_response(ctx.http(), reply)
         .await
         .context(SendResponseSnafu)?;
 
@@ -205,9 +211,12 @@ async fn ask_for_confirmation(
     let confirm_id = format!("{id}confirm");
     let cancel_id = format!("{id}cancel");
 
-    Ok(ComponentInteractionCollector::new(ctx)
+    Ok(ComponentInteractionCollector::new(ctx.serenity_context())
         .author_id(ctx.author().id)
-        .custom_ids(vec![confirm_id.clone(), cancel_id.clone()])
+        .custom_ids(FixedArray::from_vec_trunc(vec![
+            FixedString::from_string_trunc(confirm_id.clone()),
+            FixedString::from_string_trunc(cancel_id.clone()),
+        ]))
         .timeout(ONE_MINUTE)
         .await)
 }

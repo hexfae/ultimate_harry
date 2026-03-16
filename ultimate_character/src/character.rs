@@ -1,7 +1,7 @@
 use bon::Builder;
 use jiff::Zoned;
 use poise::serenity_prelude::{
-    CreateInteractionResponse, CreateInteractionResponseMessage, MessageId,
+    CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage, MessageId,
     all::{
         ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, UserId,
     },
@@ -290,30 +290,33 @@ impl Character {
         }
     }
 
-    pub fn to_embed_with_footer_text(&self, footer_text: impl Into<String>) -> CreateEmbed {
+    pub fn into_embed_with_footer_text(
+        self,
+        footer_text: impl Into<String>,
+    ) -> CreateEmbed<'static> {
         let mut embed = CreateEmbed::new()
             .title(self.to_string())
-            .field("Hälsning", &self.greeting, true)
+            .field("Hälsning", self.greeting.clone(), true)
             .field("Konversationer", self.formatted_conversations_had(), true)
             .field("Version", (self.version + 1).to_string(), true);
 
-        if let Some(nickname) = &self.nickname {
+        if let Some(nickname) = self.nickname.clone() {
             embed = embed.field("Smeknamn", nickname, true);
         }
 
-        if let Some(personality) = &self.personality {
+        if let Some(personality) = self.personality.clone() {
             embed = embed.field("Personlighet", personality, true);
         }
 
-        if let Some(prompt) = &self.prompt {
+        if let Some(prompt) = self.prompt.clone() {
             embed = embed.field("Prompt", prompt, true);
         }
 
-        if let Some(system_prompt) = &self.system_prompt {
+        if let Some(system_prompt) = self.system_prompt.clone() {
             embed = embed.field("System Prompt", system_prompt, true);
         }
 
-        if let Some(scenario) = &self.scenario {
+        if let Some(scenario) = self.scenario.clone() {
             embed = embed.field("Scenario", scenario, true);
         }
 
@@ -337,13 +340,13 @@ impl Character {
             .field("ID", self.id.key().to_string(), false)
             .footer(CreateEmbedFooter::new(footer_text.into()));
 
-        if let Some(avatar) = &self.avatar {
+        if let Some(avatar) = self.avatar.clone() {
             embed = embed.thumbnail(avatar);
         }
         if let Some(color) = &self.color {
             embed = embed.color(*color);
         }
-        if let Some(description) = &self.description {
+        if let Some(description) = self.description {
             embed = embed.description(description);
         }
         // TODO: previous/next buttons
@@ -355,7 +358,7 @@ impl Character {
         &self,
         id: impl Into<u64>,
         content: impl Into<String>,
-    ) -> CreateInteractionResponse {
+    ) -> CreateInteractionResponse<'static> {
         let buttons = create_confirm_buttons(id);
         CreateInteractionResponse::UpdateMessage(
             CreateInteractionResponseMessage::new()
@@ -409,16 +412,19 @@ fn validate_url(url: Option<String>) -> Option<String> {
         .map(|url| url.to_string())
 }
 
-fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateActionRow> {
+fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
     let id = id.into();
     let confirm_id = format!("{id}confirm");
     let cancel_id = format!("{id}cancel");
-    vec![CreateActionRow::Buttons(vec![
-        CreateButton::new(confirm_id)
-            .style(ButtonStyle::Secondary)
-            .label(sample(YES_PHRASES)),
-        CreateButton::new(cancel_id)
-            .style(ButtonStyle::Secondary)
-            .label(sample(NO_PHRASES)),
-    ])]
+    vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
+        vec![
+            CreateButton::new(confirm_id)
+                .style(ButtonStyle::Secondary)
+                .label(sample(YES_PHRASES)),
+            CreateButton::new(cancel_id)
+                .style(ButtonStyle::Secondary)
+                .label(sample(NO_PHRASES)),
+        ]
+        .into(),
+    ))]
 }

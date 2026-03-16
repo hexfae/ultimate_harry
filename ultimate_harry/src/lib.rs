@@ -2,7 +2,7 @@ pub mod commands;
 mod event_handler;
 mod traits;
 
-pub use event_handler::event_handler;
+pub use event_handler::EventHandler;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub type Context<'a> = poise::Context<'a, (), miette::Report>;
@@ -16,9 +16,9 @@ pub use traits::RespondToWith;
 
 use std::time::Duration;
 pub const FIVE_SECONDS: Duration = Duration::from_secs(5);
-pub const ONE_MINUTE: Duration = Duration::from_secs(60);
-pub const TEN_MINUTES: Duration = Duration::from_secs(60 * 10);
-pub const ONE_HOUR: Duration = Duration::from_secs(60 * 60);
+pub const ONE_MINUTE: Duration = Duration::from_mins(1);
+pub const TEN_MINUTES: Duration = Duration::from_mins(10);
+pub const ONE_HOUR: Duration = Duration::from_hours(1);
 
 #[derive(Debug, snafu::Snafu, miette::Diagnostic)]
 pub enum Error {

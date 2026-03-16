@@ -1,7 +1,7 @@
 use async_openai::{
     Client,
     config::OpenAIConfig,
-    types::{CreateChatCompletionRequestArgs, CreateChatCompletionResponse},
+    types::chat::{CreateChatCompletionRequestArgs, CreateChatCompletionResponse},
 };
 use miette::Diagnostic;
 use snafu::{ResultExt, Snafu};

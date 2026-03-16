@@ -1,11 +1,16 @@
-use async_openai::types::ChatCompletionRequestMessage;
+use std::borrow::Cow;
+
+use async_openai::types::chat::ChatCompletionRequestMessage;
 use bon::Builder;
 use nonempty::NonEmpty;
 use poise::CreateReply;
 use serde::{Deserialize, Serialize};
-use serenity::all::{
-    ButtonStyle, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, MessageId,
-    ReactionType, UserId,
+use serenity::{
+    all::{
+        ButtonStyle, CreateActionRow, CreateButton, CreateComponent, CreateEmbed,
+        CreateEmbedFooter, MessageId, ReactionType, UserId,
+    },
+    small_fixed_array::FixedString,
 };
 use surrealdb::RecordId;
 use ultimate_character::Character;
@@ -131,7 +136,7 @@ impl History {
     }
 
     #[must_use]
-    pub fn to_placeholder(&self, character: &Character) -> CreateReply {
+    pub fn to_placeholder(&self, character: &Character) -> CreateReply<'static> {
         let (has_finished, has_previous, has_edit) = (false, false, false);
 
         let footer = {
@@ -144,12 +149,12 @@ impl History {
         };
 
         let mut embed = CreateEmbed::new()
-            .title(character.name())
+            .title(character.name().to_owned())
             .description("…")
             .footer(footer);
 
         if let Some(avatar) = character.avatar() {
-            embed = embed.thumbnail(avatar);
+            embed = embed.thumbnail(avatar.to_owned());
         }
         if let Some(color) = character.color() {
             embed = embed.color(color);
@@ -161,12 +166,13 @@ impl History {
     }
 
     #[must_use]
-    pub fn to_bare_response(&self, character: &Character, link: String) -> CreateReply {
+    pub fn into_bare_response(self, character: &Character, link: String) -> CreateReply<'static> {
         let content = self
             .chosen_choice_message()
             .chosen_revision()
             .head()
-            .content();
+            .content()
+            .to_owned();
         let footer = {
             let editor = self
                 .chosen_choice_message()
@@ -180,12 +186,12 @@ impl History {
             CreateEmbedFooter::new(footer)
         };
         let mut embed = CreateEmbed::new()
-            .title(character.name())
+            .title(character.name().to_owned())
             .description(content)
             .footer(footer);
 
         if let Some(avatar) = character.avatar() {
-            embed = embed.thumbnail(avatar);
+            embed = embed.thumbnail(avatar.to_owned());
         }
         if let Some(color) = character.color() {
             embed = embed.color(color);
@@ -194,14 +200,14 @@ impl History {
     }
 
     #[must_use]
-    pub fn to_response(&self, character: &Character, id: MessageId) -> CreateReply {
+    pub fn to_response(&self, character: &Character, id: MessageId) -> CreateReply<'_> {
         let chosen = self.chosen_choice_message();
 
         let has_previous = self.choices.len() > 1;
         let has_edit = chosen.revisions_len() > 0;
         let content = chosen.chosen_revision().head().content();
         let has_finished = true;
-        let footer = {
+        let footer: CreateEmbedFooter<'_> = {
             let pages = if self.choices.is_empty() {
                 String::new()
             } else {
@@ -240,12 +246,12 @@ impl History {
         };
 
         let mut embed = CreateEmbed::new()
-            .title(character.name())
-            .description(content)
+            .title(character.name().to_owned())
+            .description(content.to_owned())
             .footer(footer);
 
         if let Some(avatar) = character.avatar() {
-            embed = embed.thumbnail(avatar);
+            embed = embed.thumbnail(avatar.to_owned());
         }
         if let Some(color) = character.color() {
             embed = embed.color(color);
@@ -258,27 +264,34 @@ impl History {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn create_buttons(id: u64, finished: bool, previous: bool, edit: bool) -> Vec<CreateActionRow> {
+fn create_buttons<'a>(
+    id: u64,
+    finished: bool,
+    previous: bool,
+    edit: bool,
+) -> Cow<'a, [CreateComponent<'a>]> {
     let prev_msg_id = format!("{id}prev");
     let next_msg_id = format!("{id}next");
     let edit_msg_id = format!("{id}edit");
     let undo_id = format!("{id}undo");
     let redo_id = format!("{id}redo");
 
-    vec![CreateActionRow::Buttons(vec![
-        create_button(prev_msg_id, PREVIOUS, !finished || !previous),
-        create_button(next_msg_id, NEXT, !finished),
-        create_button(edit_msg_id, EDIT, !finished),
-        create_button(undo_id, UNDO, !edit),
-        create_button(redo_id, REDO, !edit),
-    ])]
+    Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
+        Cow::Owned(vec![
+            create_button(prev_msg_id, PREVIOUS, !finished || !previous),
+            create_button(next_msg_id, NEXT, !finished),
+            create_button(edit_msg_id, EDIT, !finished),
+            create_button(undo_id, UNDO, !edit),
+            create_button(redo_id, REDO, !edit),
+        ]),
+    ))])
 }
 
-fn create_button(custom_id: String, emoji: &'static str, disabled: bool) -> CreateButton {
+fn create_button(custom_id: String, emoji: &str, disabled: bool) -> CreateButton<'_> {
     CreateButton::new(custom_id)
         .disabled(disabled)
         .style(ButtonStyle::Secondary)
-        .emoji(ReactionType::Unicode(emoji.to_owned()))
+        .emoji(ReactionType::Unicode(FixedString::from_str_trunc(emoji)))
 }
 
 impl From<(&Character, MessageId, UserId)> for History {

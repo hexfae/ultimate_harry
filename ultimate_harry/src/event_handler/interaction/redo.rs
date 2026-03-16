@@ -27,7 +27,7 @@ pub async fn redo(
     );
 
     interaction
-        .create_response(ctx, response)
+        .create_response(&ctx.http, response)
         .await
         .context(SendResponseSnafu)?;
 

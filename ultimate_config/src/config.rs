@@ -172,7 +172,7 @@ impl Default for Config {
 }
 
 // TODO: remove
-#[allow(clippy::cognitive_complexity)]
+#[expect(clippy::cognitive_complexity)]
 fn watch_config() -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel();
     let mut watcher = recommended_watcher(tx).context(CreateWatcherSnafu)?;
@@ -194,10 +194,11 @@ fn watch_config() -> Result<()> {
                 let event_is_remove = event.kind.is_remove();
                 let debounced = Instant::now().duration_since(last_reload) >= debounce_duration;
 
-                if event_is_remove && config_file_exists {
-                    if let Err(e) = watcher.watch(watch_path, RecursiveMode::NonRecursive) {
-                        error!("Failed to re-establish watch: {e:?}");
-                    }
+                if event_is_remove
+                    && config_file_exists
+                    && let Err(e) = watcher.watch(watch_path, RecursiveMode::NonRecursive)
+                {
+                    error!("Failed to re-establish watch: {e:?}");
                 }
 
                 if debounced && config_file_exists {

@@ -28,7 +28,7 @@ pub async fn edit(
         .to_slash_initial_response_edit(EditInteractionResponse::new());
 
     interaction
-        .edit_response(ctx, response)
+        .edit_response(&ctx.http, response)
         .await
         .context(SendResponseSnafu)?;
     Ok(())

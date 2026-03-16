@@ -14,27 +14,26 @@ use crate::{EditMessageSnafu, ReactSnafu, SendMessageSnafu};
 pub async fn message(ctx: &Context, new_message: &Message) -> Result<(), Report> {
     {
         let emojis = DB.user_emoji().await?;
-        if new_message.mention_everyone {
+        if new_message.mention_everyone() {
             for user_emoji in &emojis {
                 new_message
-                    .react(ctx, user_emoji.emoji.clone())
+                    .react(&ctx.http, user_emoji.emoji.clone())
                     .await
                     .context(ReactSnafu)?;
             }
         } else {
-            if let Some(replied_to) = &new_message.referenced_message {
-                if let Some(user_emoji) = emojis.iter().find(|e| e.user_id == replied_to.author.id)
-                {
-                    new_message
-                        .react(ctx, user_emoji.emoji.clone())
-                        .await
-                        .context(ReactSnafu)?;
-                }
+            if let Some(replied_to) = &new_message.referenced_message
+                && let Some(user_emoji) = emojis.iter().find(|e| e.user_id == replied_to.author.id)
+            {
+                new_message
+                    .react(&ctx.http, user_emoji.emoji.clone())
+                    .await
+                    .context(ReactSnafu)?;
             }
             for mention in &new_message.mentions {
                 if let Some(user_emoji) = emojis.iter().find(|e| e.user_id == mention.id) {
                     new_message
-                        .react(ctx, user_emoji.emoji.clone())
+                        .react(&ctx.http, user_emoji.emoji.clone())
                         .await
                         .context(ReactSnafu)?;
                 }
@@ -58,7 +57,7 @@ pub async fn message(ctx: &Context, new_message: &Message) -> Result<(), Report>
 
     let mut response_message = new_message
         .channel_id
-        .send_message(ctx, placeholder)
+        .send_message(&ctx.http, placeholder)
         .await
         .context(SendMessageSnafu)?;
 

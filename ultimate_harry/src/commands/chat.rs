@@ -13,7 +13,7 @@ use ultimate_history::History;
 use ultimate_phrases::{NO_CHARACTER_PHRASES, sample};
 use ultimate_statistics::STATISTICS;
 
-#[poise::command(slash_command, prefix_command, rename = "prata")]
+#[poise::command(slash_command, rename = "prata")]
 pub async fn chat(
     ctx: Context<'_>,
     #[rest]

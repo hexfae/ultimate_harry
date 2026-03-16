@@ -4,14 +4,14 @@ version = "0.0.4"
 edition = "2024"
 
 [dependencies]
-parking_lot = "0.12.3"
-notify = "8.0.0"
-serde = { version = "1.0.219", features = ["derive"] }
-toml = "0.8.22"
+parking_lot = "0.12.5"
+notify = "9.0.0-rc.2"
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.0.6"
 miette = "7.6.0"
-snafu = "0.8.5"
-tracing = "0.1.41"
-serenity = "0.12.4"
+snafu = "0.9.0"
+tracing = "0.1.44"
+serenity = { git = "https://github.com/serenity-rs/serenity.git", branch = "next" }
 
 [lints.rust]
 unsafe_code = "forbid"

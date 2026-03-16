@@ -73,7 +73,7 @@ impl TryFrom<&ComponentInteraction> for UltimateInteraction {
     fn try_from(interaction: &ComponentInteraction) -> Result<Self, Self::Error> {
         let id = &interaction.data.custom_id;
         let (id, kind) = id
-            .split_at_checked(id.len() - 4)
+            .split_at_checked((id.len() - 4) as usize)
             .ok_or(UnknownInteraction)?;
         let id = MessageId::from(id.parse::<u64>().map_err(|_| UnknownInteraction)?);
         let kind = kind.try_into()?;

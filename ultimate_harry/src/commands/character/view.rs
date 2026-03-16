@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     Context, DeferEphemeralOrBroadcast, FIVE_SECONDS, Result, RetrieveMessageSnafu,
     SendMessageSnafu,
@@ -6,7 +8,10 @@ use crate::{
 use miette::Report;
 use poise::{
     CreateReply,
-    serenity_prelude::{ButtonStyle, CreateActionRow, CreateButton, MessageId, ReactionType},
+    serenity_prelude::{
+        ButtonStyle, CreateActionRow, CreateButton, CreateComponent, MessageId, ReactionType,
+        small_fixed_array::FixedString,
+    },
 };
 use snafu::ResultExt;
 use tokio::time::sleep;
@@ -15,10 +20,10 @@ use ultimate_database::DB;
 use ultimate_phrases::{NO_CHARACTER_PHRASES, sample};
 use ultimate_statistics::STATISTICS;
 
-const PREVIOUS: &str = "⬅️";
+const PREV: &str = "⬅️";
 const NEXT: &str = "➡️";
 
-#[poise::command(slash_command, prefix_command, rename = "visa")]
+#[poise::command(slash_command, rename = "visa")]
 pub async fn view(
     ctx: Context<'_>,
     #[rest]
@@ -68,7 +73,7 @@ async fn send_message<'a>(
     total_pages: usize,
 ) -> Result<MessageId> {
     let id = ctx.id();
-    let embed = character.to_embed_with_footer_text(footer_text);
+    let embed = character.clone().into_embed_with_footer_text(footer_text);
     let buttons = create_buttons(id, total_pages);
     ctx.send(CreateReply::default().embed(embed).components(buttons))
         .await
@@ -79,21 +84,22 @@ async fn send_message<'a>(
         .map(|m| m.id)
 }
 
-pub fn create_buttons(id: u64, total_pages: usize) -> Vec<CreateActionRow> {
+pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateComponent<'static>]> {
     let prev = format!("{id}prev");
     let next = format!("{id}next");
     let disabled = total_pages < 2;
-    let components = CreateActionRow::Buttons(vec![
-        CreateButton::new(&prev)
-            .disabled(disabled)
-            .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode(PREVIOUS.to_owned())),
-        CreateButton::new(&next)
-            .disabled(disabled)
-            .style(ButtonStyle::Secondary)
-            .emoji(ReactionType::Unicode(NEXT.to_owned())),
-    ]);
-    vec![components]
+    Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
+        Cow::Owned(vec![
+            CreateButton::new(prev)
+                .disabled(disabled)
+                .style(ButtonStyle::Secondary)
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(PREV))),
+            CreateButton::new(next)
+                .disabled(disabled)
+                .style(ButtonStyle::Secondary)
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(NEXT))),
+        ]),
+    ))])
 }
 
 // impl TryFrom<&ComponentInteraction> for InteractionType {

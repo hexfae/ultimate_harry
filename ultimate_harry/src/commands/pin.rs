@@ -30,14 +30,17 @@ pub async fn pin(ctx: Context<'_>, message: Message) -> Result<(), Report> {
         return Ok(());
     };
 
-    let reply = history.to_bare_response(&character, message.link());
+    let reply = history.into_bare_response(&character, message.link().to_string());
 
     let channel_id = CONFIG.read().pins_channel_id();
     let pin = channel_id
-        .send_message(ctx, reply.to_prefix((&message).into()))
+        .widen()
+        .send_message(ctx.http(), reply.to_prefix((&message).into()))
         .await
         .context(SendMessageSnafu)?;
 
-    ctx.say(pin.link()).await.context(SendMessageSnafu)?;
+    ctx.say(pin.link().to_string())
+        .await
+        .context(SendMessageSnafu)?;
     Ok(())
 }

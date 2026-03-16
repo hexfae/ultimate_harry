@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use async_openai::types::{
+use async_openai::types::chat::{
     ChatCompletionRequestAssistantMessage, ChatCompletionRequestMessage,
     ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestSystemMessage,
     ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContentPart,
@@ -36,7 +36,7 @@ pub struct Message {
     ///
     /// This allows the user to "send" multiple messages in one, like:
     ///
-    /// ```
+    /// ```text
     /// hello
     /// system: message
     /// ai: what
@@ -52,7 +52,7 @@ pub struct Message {
     #[builder(default)]
     revisions: Vec<Revision>,
     /// The URLs of all attached images, if any.
-    #[builder(default, with = |attachments: &[Attachment]| attachments.iter().map(|a| a.url.clone()).collect::<Vec<String>>()  )]
+    #[builder(default, with = |attachments: &[Attachment]| attachments.iter().map(|a| a.url.to_string()).collect::<Vec<String>>()  )]
     images: Vec<String>,
     /// The message "revision," 0 is the original (unedited) message, 1 is the
     /// first edit, 2 is the second edit, etc.
@@ -92,7 +92,7 @@ pub enum Role {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-enum Original {
+pub enum Original {
     Discord {
         user_id: UserId,
         // message: Box<DiscordMessage>,
@@ -259,7 +259,7 @@ impl From<(DiscordMessage, String)> for Message {
                 } else {
                     (name.clone(), format!("{name}: {line}"))
                 };
-                let role = if message.author.bot || name.to_lowercase() == "ai" {
+                let role = if message.author.bot() || name.to_lowercase() == "ai" {
                     Role::Assistant
                 } else if name.to_lowercase() == "system" {
                     Role::System

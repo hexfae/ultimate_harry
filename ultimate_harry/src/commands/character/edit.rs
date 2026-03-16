@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{
     Context, DeferEphemeralOrBroadcast, DeleteInvokingMessageIfPrefix, DeleteResponseSnafu,
     EditResponseSnafu, Error, FIVE_SECONDS, ONE_HOUR, RespondToWith, Result, SendMessageSnafu,
@@ -9,8 +11,9 @@ use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal_on_component_interaction,
     serenity_prelude::{
         ButtonStyle, ComponentInteraction, ComponentInteractionCollector, CreateActionRow,
-        CreateButton, CreateInteractionResponse, CreateInteractionResponseMessage,
+        CreateButton, CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage,
         EditInteractionResponse, ReactionType,
+        small_fixed_array::{FixedArray, FixedString},
     },
 };
 use snafu::ResultExt;
@@ -65,7 +68,7 @@ pub async fn edit(
         })
         .collect();
 
-    display_pagination(ctx, characters_and_footer_text).await?;
+    Box::pin(display_pagination(ctx, characters_and_footer_text)).await?;
     Ok(())
 }
 
@@ -74,16 +77,18 @@ async fn display_pagination(
     characters_and_footer_text: Vec<(Character, String)>,
 ) -> Result<(), Report> {
     let id = ctx.id();
-    let custom_ids = ["prev", "next", "confirm", "cancel"]
-        .map(|s| format!("{id}{s}"))
-        .to_vec();
+    let custom_ids = FixedArray::from_vec_trunc(
+        ["prev", "next", "confirm", "cancel"]
+            .map(|s| FixedString::from_string_trunc(format!("{id}{s}")))
+            .to_vec(),
+    );
     let mut current_page: usize = 0;
     let pages = characters_and_footer_text.len();
 
     // index into 0 is safe because we checked `is_empty()` earlier
     let msg = send_initial_embed(ctx, characters_and_footer_text[0].clone()).await?;
 
-    while let Some(interaction) = ComponentInteractionCollector::new(ctx)
+    while let Some(interaction) = ComponentInteractionCollector::new(ctx.serenity_context())
         .custom_ids(custom_ids.clone())
         .timeout(TEN_MINUTES)
         .await
@@ -113,11 +118,11 @@ async fn display_pagination(
         }
 
         let (character, footer_text) = characters_and_footer_text[current_page].clone();
-        let embed = character.to_embed_with_footer_text(footer_text);
+        let embed = character.into_embed_with_footer_text(footer_text);
 
         interaction
             .create_response(
-                ctx,
+                ctx.http(),
                 CreateInteractionResponse::UpdateMessage(
                     CreateInteractionResponseMessage::new().embed(embed),
                 ),
@@ -135,7 +140,7 @@ async fn send_initial_embed(
     (character, footer_text): (Character, String),
 ) -> Result<ReplyHandle<'_>> {
     let id = ctx.id();
-    let embed = character.to_embed_with_footer_text(footer_text);
+    let embed = character.into_embed_with_footer_text(footer_text);
     let buttons = create_buttons(id);
     ctx.send(CreateReply::default().embed(embed).components(buttons))
         .await
@@ -143,26 +148,27 @@ async fn send_initial_embed(
 }
 
 #[must_use]
-pub fn create_buttons(id: u64) -> Vec<CreateActionRow> {
+pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
     let confirm = format!("{id}confirm");
     let cancel = format!("{id}cancel");
     let prev = format!("{id}prev");
     let next = format!("{id}next");
-    let components = CreateActionRow::Buttons(vec![
-        CreateButton::new(&confirm)
-            .emoji("✏️".parse::<ReactionType>().expect("valid emoji"))
-            .style(ButtonStyle::Secondary),
-        CreateButton::new(&cancel)
-            .emoji('❌')
-            .style(ButtonStyle::Secondary),
-        CreateButton::new(&prev)
-            .emoji('◀')
-            .style(ButtonStyle::Secondary),
-        CreateButton::new(&next)
-            .emoji('▶')
-            .style(ButtonStyle::Secondary),
-    ]);
-    vec![components]
+    Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
+        Cow::Owned(vec![
+            CreateButton::new(confirm)
+                .emoji("✏️".parse::<ReactionType>().expect("valid emoji"))
+                .style(ButtonStyle::Secondary),
+            CreateButton::new(cancel)
+                .emoji('❌')
+                .style(ButtonStyle::Secondary),
+            CreateButton::new(prev)
+                .emoji('◀')
+                .style(ButtonStyle::Secondary),
+            CreateButton::new(next)
+                .emoji('▶')
+                .style(ButtonStyle::Secondary),
+        ]),
+    ))])
 }
 
 async fn edit_confirmed(
@@ -193,7 +199,7 @@ async fn edit_confirmed(
 
     interaction
         .edit_response(
-            ctx,
+            ctx.http(),
             EditInteractionResponse::new()
                 .content(sample_name(EDITED_PHRASES, character_name))
                 .components(vec![]),
@@ -202,7 +208,7 @@ async fn edit_confirmed(
         .context(EditResponseSnafu)?;
     sleep(FIVE_SECONDS).await;
     interaction
-        .delete_response(ctx)
+        .delete_response(ctx.http())
         .await
         .context(DeleteResponseSnafu)?;
     ctx.delete_invoking_message_if_prefix().await?;
@@ -214,7 +220,7 @@ async fn edit_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> 
     ctx.respond_to_with(&interaction, response).await?;
     sleep(FIVE_SECONDS).await;
     interaction
-        .delete_response(ctx)
+        .delete_response(ctx.http())
         .await
         .context(DeleteResponseSnafu)?;
     ctx.delete_invoking_message_if_prefix().await?;
@@ -244,7 +250,9 @@ async fn show_second_modal<M: Modal>(
     let author = ctx.author().id;
     let collector = ComponentInteractionCollector::new(ctx.serenity_context())
         .author_id(author)
-        .custom_ids(vec![id.clone()])
+        .custom_ids(FixedArray::from_vec_trunc(vec![
+            FixedString::from_string_trunc(id.clone()),
+        ]))
         .timeout(ONE_HOUR)
         .await;
 
@@ -264,11 +272,13 @@ async fn send_first_tempting_button(
     let id = ctx.id().to_string();
     let click_me = sample(CLICK_ME_PHRASES);
     let click_below = sample(CLICK_BELOW_PHRASES);
-    let button = vec![CreateButton::new(id).label(click_me)];
-    let component = vec![CreateActionRow::Buttons(button)];
+    let button = Cow::Owned(vec![CreateButton::new(id).label(click_me)]);
+    let component = Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
+        button,
+    ))]);
     interaction
         .edit_response(
-            ctx,
+            ctx.http(),
             EditInteractionResponse::new()
                 .content(click_below)
                 .embeds(vec![])
