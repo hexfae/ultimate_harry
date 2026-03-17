@@ -1,23 +1,52 @@
-[workspace]
-resolver = "2"
-members = [
-  "ultimate_character",
-  "ultimate_config",
-  "ultimate_database",
-  "ultimate_harry",
-  "ultimate_history",
-  "ultimate_message",
-  "ultimate_modals",
-  "ultimate_phrases",
-  "ultimate_requester",
-  "ultimate_statistics",
-]
-
-[workspace.package]
-version = "0.0.8"
-
-[workspace.metadata.crane]
+[package]
 name = "ultimate_harry"
+version = "0.1.0"
+edition = "2024"
+default-run = "harry"
+
+[[bin]]
+name = "harry"
+path = "src/main.rs"
+
+[dependencies]
+# Discord
+poise = { git = "https://github.com/serenity-rs/poise.git", branch = "serenity-next" }
+serenity = { git = "https://github.com/serenity-rs/serenity.git", branch = "next" }
+
+# Async / Tokio
+tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros"] }
+
+# Database
+surrealdb = { version = "2.6.3", features = ["kv-surrealkv"] }
+
+# AI / API
+async-openai = { version = "0.33.1", features = [
+  "chat-completion",
+  "_api",
+  "chat-completion-types",
+] }
+ureq = "3.2.0"
+
+# Error Handling
+miette = { version = "7.6.0", features = ["fancy"] }
+snafu = "0.9.0"
+
+# Data Types / Serialization
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.0.6"
+jiff = { version = "0.2.23", features = ["serde"] }
+ulid = { version = "1.2.1", features = ["serde"] }
+nonempty = { version = "0.12.0", features = ["serialize"] }
+dashmap = { version = "7.0.0-rc2", features = ["serde"] }
+
+# Utils
+bon = "3.9.1"
+nanorand = "0.8.0"
+base64 = "0.22.1"
+rustls = { version = "0.23.37", features = ["aws-lc-rs"] }
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+url = "2.5.8"
 
 [profile.release]
 opt-level = "z"
