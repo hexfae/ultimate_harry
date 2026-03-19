@@ -5,7 +5,6 @@ use crate::{
 };
 use std::sync::Arc;
 
-/// The global application state, injected into every command and event handler.
 pub struct AppState {
     pub config: Config,
     pub db: Database,

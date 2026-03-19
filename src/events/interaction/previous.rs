@@ -16,7 +16,6 @@ pub async fn previous(
     let Some((mut history, character)) = id.history_character(db).await? else {
         return Ok(());
     };
-
     history.previous();
 
     db.update_history(history.clone()).await?;

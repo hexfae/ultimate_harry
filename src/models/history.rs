@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 
-use async_openai::types::chat::ChatCompletionRequestMessage;
 use bon::Builder;
 use nonempty::NonEmpty;
 use poise::CreateReply;
@@ -135,6 +134,10 @@ impl History {
     pub fn push_choice(&mut self, choice: impl Into<Message>) {
         self.choices.push(choice.into());
         self.current = self.choices_len() - 1;
+    }
+
+    pub fn previous_messages(&self) -> &NonEmpty<Message> {
+        &self.previous
     }
 
     #[must_use]
@@ -357,15 +360,5 @@ impl From<(&Character, MessageId, UserId)> for History {
             .character(character.id())
             .id(id)
             .build()
-    }
-}
-
-impl From<History> for Vec<ChatCompletionRequestMessage> {
-    fn from(history: History) -> Self {
-        history
-            .previous
-            .into_iter()
-            .flat_map(Into::<NonEmpty<ChatCompletionRequestMessage>>::into)
-            .collect()
     }
 }

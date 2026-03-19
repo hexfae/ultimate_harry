@@ -1,31 +1,19 @@
 use std::time::Duration;
 
-use async_openai::types::chat::{
-    ChatCompletionRequestAssistantMessage, ChatCompletionRequestMessage,
-    ChatCompletionRequestMessageContentPartImage, ChatCompletionRequestSystemMessage,
-    ChatCompletionRequestUserMessage, ChatCompletionRequestUserMessageContentPart,
-    CreateChatCompletionResponse, ImageUrl,
-};
-use base64::{Engine, prelude::BASE64_STANDARD};
 use bon::Builder;
 use jiff::Zoned;
-use miette::Diagnostic;
 use nonempty::NonEmpty;
+use rig::{
+    OneOrMany,
+    agent::Text,
+    message::{AssistantContent, Message as RigMessage, UserContent},
+};
 use serde::{Deserialize, Serialize};
 use serenity::all::{Attachment, Message as DiscordMessage, MessageId, UserId};
-use snafu::{OptionExt, Snafu};
 use surrealdb::RecordId;
 use ulid::Ulid;
 
 use crate::models::character::Character;
-
-#[derive(Debug, Snafu, Diagnostic)]
-pub enum Error {
-    #[snafu(display("The OpenAI response has no choices"))]
-    NoChoices,
-    #[snafu(display("The OpenAI response has no content"))]
-    NoContent,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct Message {
@@ -101,7 +89,10 @@ pub enum Original {
     OpenAi {
         character: RecordId,
         name: String,
-        response: CreateChatCompletionResponse,
+    },
+    Rig {
+        character: RecordId,
+        name: String,
     },
     Character {
         id: RecordId,
@@ -212,6 +203,35 @@ impl Message {
     pub const fn time_taken(&self) -> Option<Duration> {
         self.elapsed
     }
+
+    pub fn to_rig_messages(&self) -> Vec<RigMessage> {
+        let chosen = self.chosen_revision();
+
+        chosen
+            .0
+            .iter()
+            .map(|part| match part.role {
+                Role::System => RigMessage::System {
+                    content: part.content.clone(),
+                },
+                Role::Assistant => RigMessage::Assistant {
+                    id: None,
+                    content: OneOrMany::one(AssistantContent::Text(Text {
+                        text: part.content.clone(),
+                    })),
+                },
+                Role::User => {
+                    let mut content = OneOrMany::one(UserContent::text(&part.content));
+
+                    for img_url in &self.images {
+                        content.push(UserContent::image_url(img_url, None, None));
+                    }
+
+                    RigMessage::User { content }
+                }
+            })
+            .collect()
+    }
 }
 
 impl Parts {
@@ -231,21 +251,16 @@ impl Part {
     }
 }
 
-impl TryFrom<(Character, CreateChatCompletionResponse, Duration)> for Message {
-    type Error = Error;
-
-    fn try_from(
-        (character, response, time_taken): (Character, CreateChatCompletionResponse, Duration),
-    ) -> Result<Self, Self::Error> {
-        Ok(Self::builder()
-            .parts((
-                character.name().to_owned(),
-                response.try_to_string()?,
-                Role::Assistant,
-            ))
-            .original((character, response))
+impl From<(Character, String, Duration)> for Message {
+    fn from((character, response, time_taken): (Character, String, Duration)) -> Self {
+        Self::builder()
+            .parts((character.name().to_owned(), response, Role::Assistant))
+            .original(Original::Rig {
+                character: character.id().to_owned(),
+                name: character.name().to_owned(),
+            })
             .elapsed(time_taken)
-            .build())
+            .build()
     }
 }
 
@@ -283,64 +298,6 @@ impl From<(DiscordMessage, String)> for Message {
     }
 }
 
-impl From<Message> for NonEmpty<ChatCompletionRequestMessage> {
-    fn from(input: Message) -> Self {
-        match input.original {
-            // TODO: refactor this whole thing holy shit
-            Original::Discord { .. } | Original::ExampleMessage { .. } => {
-                // i don't think using chosen_revision is really necessary here,
-                // but still doing it for future-proofing or something
-                let chosen = input.chosen_revision();
-                let mut parts = Self::new(chosen.head().to_owned().into());
-                parts.append(&mut chosen.tail().into_iter().cloned().map(Into::into).collect());
-                // TODO: make this not always be user, sometimes assistant/system
-                let mut content = vec![ChatCompletionRequestUserMessageContentPart::Text(
-                    chosen.0.last().content.clone().into(),
-                )];
-                let mut images = input
-                    .images
-                    .iter()
-                    .map(|image| {
-                        let image = ureq::get(image)
-                            .call()
-                            .and_then(|response| response.into_body().read_to_vec())
-                            .unwrap_or_default();
-                        let base64 = BASE64_STANDARD.encode(&image);
-                        ChatCompletionRequestUserMessageContentPart::ImageUrl(
-                            ChatCompletionRequestMessageContentPartImage {
-                                image_url: ImageUrl {
-                                    url: format!("data:image/png;base64,{base64}"),
-                                    detail: None,
-                                },
-                            },
-                        )
-                    })
-                    .collect();
-                content.append(&mut images);
-                *parts.last_mut() =
-                    ChatCompletionRequestMessage::User(ChatCompletionRequestUserMessage {
-                        content: content.into(),
-                        name: Some(input.chosen_revision().head().name.clone()),
-                    });
-                parts
-            }
-            Original::OpenAi { ref name, .. } | Original::Character { ref name, .. } => Self::new(
-                ChatCompletionRequestMessage::Assistant(ChatCompletionRequestAssistantMessage {
-                    content: Some(input.chosen_revision().head().content.clone().into()),
-                    name: Some(name.to_owned()),
-                    ..Default::default()
-                }),
-            ),
-            Original::System => Self::new(ChatCompletionRequestMessage::System(
-                ChatCompletionRequestSystemMessage {
-                    content: input.chosen_revision().head().content.clone().into(),
-                    name: Some("System".to_owned()),
-                },
-            )),
-        }
-    }
-}
-
 impl From<DiscordMessage> for Original {
     fn from(input: DiscordMessage) -> Self {
         Self::Discord {
@@ -360,17 +317,6 @@ impl From<&DiscordMessage> for Role {
     }
 }
 
-impl From<(Character, CreateChatCompletionResponse)> for Original {
-    fn from(input: (Character, CreateChatCompletionResponse)) -> Self {
-        let (character, response) = input;
-        Self::OpenAi {
-            name: character.name().into(),
-            character: character.id().to_owned(),
-            response,
-        }
-    }
-}
-
 impl From<&Character> for Original {
     fn from(character: &Character) -> Self {
         Self::Character {
@@ -383,42 +329,6 @@ impl From<&Character> for Original {
 impl From<UserId> for Original {
     fn from(user_id: UserId) -> Self {
         Self::ExampleMessage { user_id }
-    }
-}
-
-trait TryToString {
-    fn try_to_string(&self) -> Result<String, Error>;
-}
-
-impl TryToString for CreateChatCompletionResponse {
-    fn try_to_string(&self) -> Result<String, Error> {
-        self.choices
-            .first()
-            .context(NoChoicesSnafu)?
-            .message
-            .content
-            .clone()
-            .context(NoContentSnafu)
-    }
-}
-
-impl From<Part> for ChatCompletionRequestMessage {
-    fn from(part: Part) -> Self {
-        match part.role {
-            Role::User => Self::User(ChatCompletionRequestUserMessage {
-                content: part.content.into(),
-                name: Some(part.name),
-            }),
-            Role::Assistant => Self::Assistant(ChatCompletionRequestAssistantMessage {
-                content: Some(part.content.into()),
-                name: Some(part.name),
-                ..Default::default()
-            }),
-            Role::System => Self::System(ChatCompletionRequestSystemMessage {
-                content: part.content.into(),
-                name: Some(part.name),
-            }),
-        }
     }
 }
 

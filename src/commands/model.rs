@@ -37,7 +37,7 @@ pub async fn model(
     if let Some(top_p) = top_p {
         model_settings.top_p = top_p;
     }
-    ctx.data().db.set_model_settings(model_settings).await?;
+    ctx.data().db.upsert_model_settings(model_settings).await?;
     ctx.say("done").await.context(SendMessageSnafu)?;
     Ok(())
 }

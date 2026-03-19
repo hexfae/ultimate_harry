@@ -4,15 +4,12 @@ pub mod config;
 pub mod constants;
 pub mod db;
 pub mod events;
+pub mod llm;
 pub mod models;
-pub mod requester;
 pub mod traits;
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub type Context<'a> = poise::Context<'a, app_state::AppState, miette::Report>;
-// pub type Result<T, E = Error> = std::result::Result<T, E>;
-// type Error = Box<dyn std::error::Error + Send + Sync + 'static>;
-// pub type Error = miette::Report;
 
 use snafu::Snafu;
 pub use traits::DeferEphemeralOrBroadcast;
@@ -20,6 +17,7 @@ pub use traits::DeleteInvokingMessageIfPrefix;
 pub use traits::RespondToWith;
 
 use std::time::Duration;
+
 pub const FIVE_SECONDS: Duration = Duration::from_secs(5);
 pub const ONE_MINUTE: Duration = Duration::from_mins(1);
 pub const TEN_MINUTES: Duration = Duration::from_mins(10);
@@ -69,4 +67,8 @@ pub enum Error {
     },
     #[snafu(display("Okänd interaction: {}", found))]
     UnknownInteraction { found: String },
+    #[snafu(display("Kunde inte generera AI-svar: {source}"))]
+    LlmGeneration {
+        source: rig::completion::PromptError,
+    },
 }

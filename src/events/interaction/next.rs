@@ -1,6 +1,5 @@
 use crate::{
-    SendResponseSnafu, db::Database, events::interaction::HistoryCharacter,
-    models::message::Message, requester::Requester,
+    SendResponseSnafu, db::Database, events::interaction::HistoryCharacter, llm::LlmManager,
 };
 use miette::Report;
 use poise::serenity_prelude::{
@@ -39,21 +38,17 @@ pub async fn next(
             .await
             .context(SendResponseSnafu)?;
 
-        let requester = Requester::new(
+        let requester = LlmManager::new(
             character
                 .model_settings()
                 .unwrap_or(db.model_settings().await),
         );
 
         let now = Instant::now();
-        let response = requester.request(history.clone()).await?;
+        let response = requester.request(&history.clone()).await?;
 
         // current choice is set in this function
-        history.push_choice(Message::try_from((
-            character.clone(),
-            response,
-            now.elapsed(),
-        ))?);
+        history.push_choice((character.clone(), response, now.elapsed()));
     }
 
     db.update_history(history.clone()).await?;

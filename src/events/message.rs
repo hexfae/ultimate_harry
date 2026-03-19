@@ -6,8 +6,8 @@ use std::time::Instant;
 use crate::{
     EditMessageSnafu, ReactSnafu, SendMessageSnafu,
     db::Database,
-    models::{character::Character, history::History, message::Message as UltimateMessage},
-    requester::Requester,
+    llm::LlmManager,
+    models::{character::Character, history::History},
 };
 
 pub async fn message(ctx: &Context, new_message: &Message, db: &Database) -> Result<(), Report> {
@@ -62,20 +62,16 @@ pub async fn message(ctx: &Context, new_message: &Message, db: &Database) -> Res
         .await
         .context(SendMessageSnafu)?;
 
-    let requester = Requester::new(
+    let requester = LlmManager::new(
         character
             .model_settings()
             .unwrap_or(db.model_settings().await),
     );
 
     let now = Instant::now();
-    let response = requester.request(history.clone()).await?;
+    let response = requester.request(&history).await?;
 
-    history.set_choices(UltimateMessage::try_from((
-        character.clone(),
-        response.clone(),
-        now.elapsed(),
-    ))?);
+    history.set_choices((character.clone(), response, now.elapsed()));
 
     let edit = history
         .to_response(&character, response_message.id, db)

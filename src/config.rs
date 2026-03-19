@@ -16,8 +16,6 @@ pub enum ConfigError {
 pub struct Config {
     pub bot_token: String,
     pub model_settings: ModelSettings,
-    // Note: guild_ids removed (fetch at runtime)
-    // Note: pins_channel_id should be moved to DB eventually, but keeping here for step 1 compatibility
     pub pins_channel_id: ChannelId,
     pub name_substitutions: std::collections::HashMap<u64, String>,
 }

@@ -248,12 +248,12 @@ impl Database {
         self.0.select("user_emoji").await.context(GetSnafu)
     }
 
-    pub async fn set_model_settings(
+    pub async fn upsert_model_settings(
         &self,
         model_settings: ModelSettings,
     ) -> Result<Option<ModelSettings>, DatabaseError> {
         self.0
-            .insert(("model_settings", "model_settings"))
+            .upsert(("model_settings", "model_settings"))
             .content(model_settings)
             .await
             .context(SetModelSettingsSnafu)
