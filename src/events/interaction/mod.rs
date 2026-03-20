@@ -2,6 +2,7 @@ use miette::{Diagnostic, Report};
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use snafu::Snafu;
 
+use character::character;
 use edit::edit;
 use next::next;
 use pin::pin;
@@ -14,6 +15,7 @@ use crate::{
     models::{character::Character, history::History},
 };
 
+mod character;
 mod edit;
 mod next;
 mod pin;
@@ -37,6 +39,7 @@ pub async fn interaction_create(
         InteractionKind::Undo => undo(ctx, interaction, id, db).await?,
         InteractionKind::Redo => redo(ctx, interaction, id, db).await?,
         InteractionKind::Pin => pin(ctx, interaction, id, db).await?,
+        InteractionKind::Char => character(ctx, interaction, id, db).await?,
     }
     Ok(())
 }
@@ -79,6 +82,7 @@ enum InteractionKind {
     Undo,
     Redo,
     Pin,
+    Char,
 }
 
 #[derive(Debug, Snafu, Diagnostic)]
@@ -95,6 +99,7 @@ impl TryFrom<&str> for InteractionKind {
             "undo" => Ok(Self::Undo),
             "redo" => Ok(Self::Redo),
             "pinn" => Ok(Self::Pin),
+            "char" => Ok(Self::Char),
             _ => Err(UnknownInteraction),
         }
     }

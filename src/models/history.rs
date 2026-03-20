@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 use serenity::{
     all::{
         ButtonStyle, CreateActionRow, CreateButton, CreateComponent, CreateEmbed,
-        CreateEmbedFooter, MessageId, ReactionType, UserId,
+        CreateEmbedFooter, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption,
+        MessageId, ReactionType, UserId,
     },
     small_fixed_array::FixedString,
 };
@@ -119,6 +120,80 @@ impl History {
         &self.character
     }
 
+    pub fn set_character(&mut self, character: RecordId) {
+        self.character = character;
+    }
+
+    /// Rebuilds the character setup portion of history.
+    /// This replaces personality, prompt, scenario, example messages, and system prompt
+    /// with the new character's corresponding values.
+    pub fn replace_setup_with(&mut self, character: &Character, user_id: UserId) {
+        // Collect all non-setup messages (everything after BEGIN_MESSAGE)
+        let conversation_start = self
+            .previous
+            .iter()
+            .position(|msg| {
+                msg.chosen_revision()
+                    .head()
+                    .content()
+                    .contains(BEGIN_MESSAGE)
+            })
+            .map(|i| i + 1)
+            .unwrap_or(0);
+
+        // Build new setup for the character
+        let mut new_previous: Vec<Message> = Vec::new();
+        new_previous.push(Message::new_system(SYSTEM_MESSAGE));
+
+        if let Some(personality) = character.personality() {
+            new_previous.push(Message::new_system(BEGIN_PERSONALITY));
+            new_previous.push(Message::new_assistant(personality, character));
+        }
+
+        if let Some(prompt) = character.prompt() {
+            let mut begin_prompt = BEGIN_PROMPT.to_owned();
+            begin_prompt.push_str(prompt);
+            new_previous.push(Message::new_system(begin_prompt));
+        }
+
+        if let Some(scenario) = character.scenario() {
+            let mut begin_scenario = BEGIN_SCENARIO.to_owned();
+            begin_scenario.push_str(scenario);
+            new_previous.push(Message::new_system(begin_scenario));
+        }
+
+        if !character.example_messages().is_empty() {
+            new_previous.push(Message::new_system(BEGIN_EXAMPLE_MESSAGES));
+
+            for (user_message, assistant_message) in character.example_messages() {
+                if let Some(user_message) = user_message {
+                    new_previous.push(Message::new_user("Användaren", user_message, user_id));
+                }
+                new_previous.push(Message::new_assistant(assistant_message, character));
+                new_previous.push(Message::new_system(EXAMPLE_MESSAGE_SEPARATOR));
+            }
+        }
+
+        if let Some(system_prompt) = character.system_prompt() {
+            new_previous.push(Message::new_system(system_prompt));
+        }
+
+        new_previous.push(Message::new_system(BEGIN_MESSAGE));
+
+        // Append the actual conversation messages
+        let conversation: Vec<Message> = self
+            .previous
+            .iter()
+            .skip(conversation_start)
+            .cloned()
+            .collect();
+
+        new_previous.extend(conversation);
+
+        // Replace the previous messages
+        self.previous = NonEmpty::from_vec(new_previous).expect("setup should not be empty");
+    }
+
     pub fn push(&mut self, message: impl Into<Message>) {
         self.previous.push(message.into());
     }
@@ -166,7 +241,7 @@ impl History {
             embed = embed.color(color);
         }
 
-        let components = create_buttons(1, has_finished, has_previous, has_edit);
+        let components = create_buttons(1, has_finished, has_previous, has_edit, Vec::new());
 
         CreateReply::default().embed(embed).components(components)
     }
@@ -272,7 +347,13 @@ impl History {
             embed = embed.color(color);
         }
 
-        let components = create_buttons(id.into(), has_finished, has_previous, has_edit);
+        let components = create_buttons(
+            id.into(),
+            has_finished,
+            has_previous,
+            has_edit,
+            db.characters_by_usage().await.unwrap_or_default(),
+        );
 
         CreateReply::default().embed(embed).components(components)
     }
@@ -284,6 +365,7 @@ fn create_buttons<'a>(
     finished: bool,
     previous: bool,
     edit: bool,
+    characters: Vec<Character>,
 ) -> Cow<'a, [CreateComponent<'a>]> {
     let prev_msg_id = format!("{id}prev");
     let next_msg_id = format!("{id}next");
@@ -291,8 +373,9 @@ fn create_buttons<'a>(
     let undo_id = format!("{id}undo");
     let redo_id = format!("{id}redo");
     let pin_id = format!("{id}pinn");
+    let char_id = format!("{id}char");
 
-    Cow::Owned(vec![
+    let mut components = vec![
         CreateComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![
             create_button(prev_msg_id, PREVIOUS, !finished || !previous),
             create_button(next_msg_id, NEXT, !finished),
@@ -303,7 +386,23 @@ fn create_buttons<'a>(
         CreateComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![create_button(
             pin_id, PIN, !finished,
         )]))),
-    ])
+    ];
+    if !characters.is_empty() {
+        components.push(CreateComponent::ActionRow(CreateActionRow::SelectMenu(
+            CreateSelectMenu::new(
+                char_id,
+                CreateSelectMenuKind::String {
+                    options: Cow::Owned(
+                        characters
+                            .iter()
+                            .map(|c| CreateSelectMenuOption::new(c.to_string(), c.id().to_string()))
+                            .collect(),
+                    ),
+                },
+            ),
+        )));
+    }
+    Cow::Owned(components)
 }
 
 fn create_button(custom_id: String, emoji: &str, disabled: bool) -> CreateButton<'_> {
