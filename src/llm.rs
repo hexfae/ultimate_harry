@@ -16,7 +16,11 @@ impl LlmManager {
         Self { settings }
     }
 
-    pub async fn request(&self, history: &History) -> Result<String, crate::Error> {
+    pub async fn request(
+        &self,
+        history: &History,
+        prompt: Option<String>,
+    ) -> Result<String, crate::Error> {
         let client = Client::new(&self.settings.api_key).unwrap();
         let model = CompletionModel::new(client, &self.settings.model);
 
@@ -30,7 +34,10 @@ impl LlmManager {
             .build();
 
         let response = agent
-            .chat(Message::system("Fortsätt rollspelet."), rig_messages)
+            .chat(
+                Message::system(prompt.unwrap_or_else(|| "Fortsätt rollspelet.".to_owned())),
+                rig_messages,
+            )
             .await
             .context(LlmGenerationSnafu)?;
 

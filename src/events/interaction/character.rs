@@ -72,7 +72,14 @@ pub async fn character(
     );
 
     let now = Instant::now();
-    let response = requester.request(&history).await?;
+    let response = requester
+        .request(
+            &history,
+            Some(format!(
+                "Du hoppar nu in i rollspelet som {new_character}. Fortsätt rollspelet."
+            )),
+        )
+        .await?;
 
     history.set_choices((new_character.clone(), response, now.elapsed()));
 

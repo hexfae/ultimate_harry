@@ -290,13 +290,38 @@ impl Database {
     }
 
     pub async fn substitute_name(&self, user_id: impl AsRef<UserId>) -> String {
-        "User".to_owned() // TODO
+        self.0
+            .select::<Option<UserName>>(("user_name", user_id.as_ref().to_string()))
+            .await
+            .unwrap_or_default()
+            .map(|u| u.name)
+            .unwrap_or_else(|| "User".to_owned())
+    }
+
+    pub async fn upsert_user_name(
+        &self,
+        user_id: impl Into<UserId>,
+        name: String,
+    ) -> Result<Option<UserName>, DatabaseError> {
+        let user_id = user_id.into();
+        let user_name = UserName { user_id, name };
+        self.0
+            .upsert(("user_name", user_id.to_string()))
+            .content(user_name)
+            .await
+            .context(InsertSnafu)
     }
 }
 
 #[derive(Default, Serialize, Deserialize)]
 pub struct PinChannel {
     channel_id: ChannelId,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct UserName {
+    pub user_id: UserId,
+    pub name: String,
 }
 
 #[derive(Serialize, Deserialize)]

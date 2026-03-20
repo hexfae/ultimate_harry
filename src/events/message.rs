@@ -69,7 +69,7 @@ pub async fn message(ctx: &Context, new_message: &Message, db: &Database) -> Res
     );
 
     let now = Instant::now();
-    let response = requester.request(&history).await?;
+    let response = requester.request(&history, None).await?;
 
     history.set_choices((character.clone(), response, now.elapsed()));
 

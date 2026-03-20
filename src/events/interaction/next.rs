@@ -45,7 +45,7 @@ pub async fn next(
         );
 
         let now = Instant::now();
-        let response = requester.request(&history.clone()).await?;
+        let response = requester.request(&history.clone(), None).await?;
 
         // current choice is set in this function
         history.push_choice((character.clone(), response, now.elapsed()));

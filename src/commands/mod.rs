@@ -2,12 +2,14 @@ mod character;
 mod chat;
 mod emoji;
 mod model;
+mod name;
 mod pin_channel;
 
 pub use character::character;
 pub use chat::chat;
 pub use emoji::emoji;
 pub use model::model;
+pub use name::name;
 pub use pin_channel::pin_channel;
 
 use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse};
