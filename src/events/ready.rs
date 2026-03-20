@@ -1,6 +1,6 @@
 use crate::{
     ONE_MINUTE,
-    commands::{character, chat, emoji, model, pin},
+    commands::{character, chat, emoji, model, pin_channel},
 };
 use miette::{Diagnostic, Report};
 use nanorand::{Rng, WyRand};
@@ -23,7 +23,7 @@ pub struct RegisterCommandInGuildError {
 pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<(), Report> {
     info!("ready");
     let ctx = ctx.clone();
-    let commands = vec![character(), chat(), pin(), emoji(), model()];
+    let commands = vec![character(), chat(), emoji(), model(), pin_channel()];
     for guild in data_about_bot.guilds.iter() {
         poise::builtins::register_in_guild(&ctx.http, &commands, guild.id)
             .await

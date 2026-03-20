@@ -8,7 +8,7 @@ use poise::{
 use snafu::{ResultExt, Snafu};
 use ultimate_harry::{
     app_state::AppState,
-    commands::{character, chat, emoji, model, pin},
+    commands::{character, chat, emoji, model, pin_channel},
     config::Config,
     events::EventHandler,
 };
@@ -35,7 +35,7 @@ async fn main() -> Result<(), Report> {
 
     let app_state = AppState::new(config).await.into_diagnostic()?;
 
-    let commands = vec![character(), chat(), pin(), emoji(), model()];
+    let commands = vec![character(), chat(), emoji(), model(), pin_channel()];
 
     let framework = Framework::builder()
         .options(FrameworkOptions {

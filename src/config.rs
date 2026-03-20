@@ -24,7 +24,6 @@ pub struct Config {
 pub struct ModelSettings {
     pub model: String,
     pub api_key: String,
-    pub api_base: String,
     pub frequency_penalty: f32,
     pub presence_penalty: f32,
     pub temperature: f32,
@@ -50,7 +49,6 @@ impl Default for ModelSettings {
         Self {
             model: "deepseek/deepseek-v3.2".to_owned(),
             api_key: String::new(),
-            api_base: "https://openrouter.ai/api/v1".to_owned(),
             frequency_penalty: 0.0,
             presence_penalty: 0.0,
             temperature: 1.0,

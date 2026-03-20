@@ -4,6 +4,7 @@ use snafu::Snafu;
 
 use edit::edit;
 use next::next;
+use pin::pin;
 use previous::previous;
 use redo::redo;
 use undo::undo;
@@ -15,6 +16,7 @@ use crate::{
 
 mod edit;
 mod next;
+mod pin;
 mod previous;
 mod redo;
 mod undo;
@@ -34,6 +36,7 @@ pub async fn interaction_create(
         InteractionKind::Edit => edit(ctx, interaction, id, db).await?,
         InteractionKind::Undo => undo(ctx, interaction, id, db).await?,
         InteractionKind::Redo => redo(ctx, interaction, id, db).await?,
+        InteractionKind::Pin => pin(ctx, interaction, id, db).await?,
     }
     Ok(())
 }
@@ -75,6 +78,7 @@ enum InteractionKind {
     Edit,
     Undo,
     Redo,
+    Pin,
 }
 
 #[derive(Debug, Snafu, Diagnostic)]
@@ -90,6 +94,7 @@ impl TryFrom<&str> for InteractionKind {
             "edit" => Ok(Self::Edit),
             "undo" => Ok(Self::Undo),
             "redo" => Ok(Self::Redo),
+            "pinn" => Ok(Self::Pin),
             _ => Err(UnknownInteraction),
         }
     }

@@ -57,7 +57,6 @@ pub async fn chat(
     history.set_id(actual_id);
     db.insert_history(history).await.into_diagnostic()?;
 
-    // USE INJECTED STATS
     stats.conversation_started_by(ctx.author().id);
 
     Ok(())

@@ -39,6 +39,7 @@ const NEXT: &str = "➡️";
 const EDIT: &str = "✏️";
 const UNDO: &str = "↩️";
 const REDO: &str = "↪️";
+const PIN: &str = "📌";
 
 /// A log of messages between the user and a character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -289,16 +290,20 @@ fn create_buttons<'a>(
     let edit_msg_id = format!("{id}edit");
     let undo_id = format!("{id}undo");
     let redo_id = format!("{id}redo");
+    let pin_id = format!("{id}pinn");
 
-    Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
-        Cow::Owned(vec![
+    Cow::Owned(vec![
+        CreateComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![
             create_button(prev_msg_id, PREVIOUS, !finished || !previous),
             create_button(next_msg_id, NEXT, !finished),
             create_button(edit_msg_id, EDIT, !finished),
             create_button(undo_id, UNDO, !edit),
             create_button(redo_id, REDO, !edit),
-        ]),
-    ))])
+        ]))),
+        CreateComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![create_button(
+            pin_id, PIN, !finished,
+        )]))),
+    ])
 }
 
 fn create_button(custom_id: String, emoji: &str, disabled: bool) -> CreateButton<'_> {

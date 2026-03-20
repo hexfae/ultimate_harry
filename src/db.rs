@@ -1,7 +1,7 @@
 use jiff::Zoned;
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
-use serenity::all::{MessageId, ReactionType, UserId};
+use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
 use snafu::{OptionExt, ResultExt, Snafu};
 use surrealdb::RecordId;
 #[expect(
@@ -267,9 +267,36 @@ impl Database {
             .unwrap_or_default()
     }
 
+    pub async fn pins_channel(&self) -> ChannelId {
+        let pin_channel: PinChannel = self
+            .0
+            .select(("pins_channel_id", "pins_channel_id"))
+            .await
+            .unwrap_or_default()
+            .unwrap_or_default();
+        pin_channel.channel_id
+    }
+
+    pub async fn upsert_pin_channel(
+        &self,
+        channel_id: ChannelId,
+    ) -> Result<Option<ChannelId>, DatabaseError> {
+        self.0
+            .upsert(("pins_channel_id", "pins_channel_id"))
+            .content(PinChannel { channel_id })
+            .await
+            .context(SetPinsChannelSnafu)
+            .map(|c| c.map(|c: PinChannel| c.channel_id))
+    }
+
     pub async fn substitute_name(&self, user_id: impl AsRef<UserId>) -> String {
         "User".to_owned() // TODO
     }
+}
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct PinChannel {
+    channel_id: ChannelId,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -321,4 +348,6 @@ pub enum DatabaseError {
     NoCharacter,
     #[snafu(display("Error setting model settings: {source}"))]
     SetModelSettings { source: surrealdb::Error },
+    #[snafu(display("Error setting model settings: {source}"))]
+    SetPinsChannel { source: surrealdb::Error },
 }

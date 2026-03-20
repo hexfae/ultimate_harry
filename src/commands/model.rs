@@ -3,12 +3,10 @@ use miette::Report;
 use snafu::ResultExt;
 
 #[poise::command(slash_command)]
-#[expect(clippy::too_many_arguments)]
 pub async fn model(
     ctx: Context<'_>,
     model: Option<String>,
     api_key: Option<String>,
-    api_base: Option<String>,
     frequency_penalty: Option<f32>,
     presence_penalty: Option<f32>,
     temperature: Option<f32>,
@@ -21,9 +19,6 @@ pub async fn model(
     }
     if let Some(api_key) = api_key {
         model_settings.api_key = api_key;
-    }
-    if let Some(api_base) = api_base {
-        model_settings.api_base = api_base;
     }
     if let Some(frequency_penalty) = frequency_penalty {
         model_settings.frequency_penalty = frequency_penalty;
