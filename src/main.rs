@@ -1,4 +1,4 @@
-use std::{env::var, sync::Arc};
+use std::{env::var, fs::read_to_string, sync::Arc};
 
 use miette::{Diagnostic, IntoDiagnostic, Report};
 use poise::{
@@ -18,6 +18,7 @@ const INTENTS: GatewayIntents =
 #[derive(Debug, Snafu, Diagnostic)]
 enum TokenError {
     EnvVarNotSet { source: std::env::VarError },
+    TokenPath { source: std::io::Error },
     Invalid { source: serenity::all::TokenError },
 }
 
@@ -28,8 +29,9 @@ async fn main() -> Result<(), Report> {
         .expect("install aws-lc-rs rustls provider");
     tracing_subscriber::fmt::init();
 
-    let token = var("TOKEN_FILE").context(EnvVarNotSetSnafu)?;
-    let token = Token::try_from(token).context(InvalidSnafu)?;
+    let token_path = var("TOKEN_FILE").context(EnvVarNotSetSnafu)?;
+    let token_string = read_to_string(token_path).context(TokenPathSnafu)?;
+    let token = Token::try_from(token_string).context(InvalidSnafu)?;
 
     let app_state = AppState::new().await?;
 
