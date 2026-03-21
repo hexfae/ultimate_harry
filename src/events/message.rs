@@ -1,5 +1,6 @@
 use miette::Report;
 use poise::serenity_prelude::{Context, EditMessage, Message};
+use serenity::all::MessageId;
 use snafu::ResultExt;
 use std::time::Instant;
 
@@ -93,11 +94,11 @@ trait HistoryFromReply {
     async fn reply_history(&self, db: &Database) -> Result<Option<History>, Report>;
 }
 
-trait HistoryCharacter {
-    async fn history_character(
+pub trait HistoryCharacter {
+    fn history_character(
         &self,
         db: &Database,
-    ) -> Result<Option<(History, Character)>, Report>;
+    ) -> impl Future<Output = Result<Option<(History, Character)>, Report>>;
 }
 
 impl HistoryFromReply for Message {
@@ -115,6 +116,20 @@ impl HistoryCharacter for &Message {
         db: &Database,
     ) -> Result<Option<(History, Character)>, Report> {
         let Some(history) = self.reply_history(db).await? else {
+            return Ok(None);
+        };
+        let Some(character) = db.character(history.character()).await? else {
+            return Ok(None);
+        };
+        Ok(Some((history, character)))
+    }
+}
+impl HistoryCharacter for MessageId {
+    async fn history_character(
+        &self,
+        db: &Database,
+    ) -> Result<Option<(History, Character)>, Report> {
+        let Some(history) = db.history(self).await? else {
             return Ok(None);
         };
         let Some(character) = db.character(history.character()).await? else {

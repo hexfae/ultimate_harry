@@ -18,7 +18,6 @@ type Result<T = ()> = std::result::Result<T, crate::Error>;
 /// If this is a prefix command, a typing broadcast is started
 /// until the return value is dropped.
 pub trait DeferEphemeralOrBroadcast {
-    // TODO: remove eventually?
     #[allow(async_fn_in_trait)] // i'm only using this in my code
     async fn defer_ephemeral_or_broadcast(&self) -> Result;
 }
@@ -39,7 +38,6 @@ impl DeferEphemeralOrBroadcast for Context<'_> {
 }
 
 pub trait DeleteInvokingMessageIfPrefix {
-    // TODO: remove eventually?
     #[allow(async_fn_in_trait)] // i'm only using this in my code
     async fn delete_invoking_message_if_prefix(&self) -> Result;
 }
@@ -57,7 +55,6 @@ impl DeleteInvokingMessageIfPrefix for Context<'_> {
 }
 
 pub trait DeleteResponse {
-    // TODO: remove eventually?
     #[expect(async_fn_in_trait)] // i'm only using this in my code
     async fn delete_response(&self, interaction: ComponentInteraction) -> Result;
 }
@@ -72,7 +69,6 @@ impl DeleteResponse for Context<'_> {
 }
 
 pub trait DeleteSelfAndInvokingMessageIfPrefix {
-    // TODO: remove eventually?
     #[allow(async_fn_in_trait)] // i'm only using this in my code
     async fn delete_self_and_invoking_message_if_prefix(&self, ctx: Context<'_>) -> Result;
 }
@@ -91,7 +87,6 @@ impl DeleteSelfAndInvokingMessageIfPrefix for ReplyHandle<'_> {
 }
 
 pub trait EditWith {
-    // TODO: remove eventually?
     #[expect(async_fn_in_trait)] // i'm only using this in my code
     async fn edit_with(&self, ctx: Context<'_>, content: impl AsRef<str>) -> Result;
 }
@@ -110,7 +105,6 @@ impl EditWith for ReplyHandle<'_> {
 }
 
 pub trait RespondToWith {
-    // TODO: remove eventually?
     #[allow(async_fn_in_trait)] // i'm only using this in my code
     async fn respond_to_with(
         &self,
@@ -141,7 +135,6 @@ impl RespondToWith for Context<'_> {
 }
 
 pub trait SayWith {
-    // TODO: remove eventually?
     #[expect(async_fn_in_trait)] // i'm only using this in my code
     async fn say_with(&self, message: impl AsRef<str>) -> Result<ReplyHandle<'_>>;
 }
@@ -153,7 +146,6 @@ impl SayWith for Context<'_> {
 }
 
 pub trait ShowModal<M: Modal> {
-    // TODO: remove eventually?
     #[expect(async_fn_in_trait)] // i'm only using this in my code
     async fn show_modal(&self, interaction: ComponentInteraction) -> Result<Option<M>>;
 }

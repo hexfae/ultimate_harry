@@ -27,7 +27,6 @@ pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocomp
     let character_names = characters
         .into_iter()
         // TODO: having written e.g. ":microphone:" displays that text, not the emoji
-        // TODO: does this work correctly? i think so
         .map(|character| {
             AutocompleteChoice::new(character.to_string(), character.name().to_owned())
         })

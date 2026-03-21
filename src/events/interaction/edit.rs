@@ -1,5 +1,5 @@
 use crate::{
-    SendResponseSnafu, db::Database, events::interaction::HistoryCharacter,
+    SendResponseSnafu, db::Database, events::message::HistoryCharacter,
     models::modals::EditMessageModal, traits::ShowModal,
 };
 use miette::Report;

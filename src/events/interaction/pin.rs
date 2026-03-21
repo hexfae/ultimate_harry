@@ -1,4 +1,4 @@
-use crate::{SendMessageSnafu, db::Database, events::interaction::HistoryCharacter};
+use crate::{SendMessageSnafu, db::Database, events::message::HistoryCharacter};
 use miette::Report;
 use serenity::all::{
     ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,

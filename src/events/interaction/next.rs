@@ -1,6 +1,4 @@
-use crate::{
-    SendResponseSnafu, db::Database, events::interaction::HistoryCharacter, llm::LlmManager,
-};
+use crate::{SendResponseSnafu, db::Database, events::message::HistoryCharacter, llm::LlmManager};
 use miette::Report;
 use poise::serenity_prelude::{
     ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,

@@ -1,6 +1,6 @@
 use crate::{
     EditMessageSnafu, SendMessageSnafu, SendResponseSnafu, db::Database,
-    events::interaction::HistoryCharacter, llm::LlmManager, models::message::Message,
+    events::message::HistoryCharacter, llm::LlmManager, models::message::Message,
 };
 use miette::Report;
 use poise::serenity_prelude::{
@@ -17,7 +17,7 @@ pub async fn character(
 ) -> Result<(), Report> {
     let selected_char_id = match &interaction.data.kind {
         poise::serenity_prelude::ComponentInteractionDataKind::StringSelect { values } => {
-            values.first().cloned()
+            values.into_iter().next()
         }
         _ => None,
     };

@@ -5,7 +5,7 @@ use poise::serenity_prelude::{
 };
 use snafu::ResultExt;
 
-use crate::{SendResponseSnafu, db::Database, events::interaction::HistoryCharacter};
+use crate::{SendResponseSnafu, db::Database, events::message::HistoryCharacter};
 
 pub async fn redo(
     ctx: &Context,

@@ -10,10 +10,7 @@ use previous::previous;
 use redo::redo;
 use undo::undo;
 
-use crate::{
-    db::Database,
-    models::{character::Character, history::History},
-};
+use crate::db::Database;
 
 mod character;
 mod edit;
@@ -42,30 +39,6 @@ pub async fn interaction_create(
         InteractionKind::Char => character(ctx, interaction, id, db).await?,
     }
     Ok(())
-}
-
-pub trait HistoryCharacter {
-    // TODO: remove eventually?
-    #[expect(async_fn_in_trait)] // i'm only using this in my code
-    async fn history_character(
-        &self,
-        db: &Database,
-    ) -> Result<Option<(History, Character)>, Report>;
-}
-
-impl HistoryCharacter for MessageId {
-    async fn history_character(
-        &self,
-        db: &Database,
-    ) -> Result<Option<(History, Character)>, Report> {
-        let Some(history) = db.history(self).await? else {
-            return Ok(None);
-        };
-        let Some(character) = db.character(history.character()).await? else {
-            return Ok(None);
-        };
-        Ok(Some((history, character)))
-    }
 }
 
 #[derive(Debug)]
