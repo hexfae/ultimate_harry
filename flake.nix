@@ -80,7 +80,7 @@
             systemd.services.harry = {
               wantedBy = ["multi-user.target"];
               serviceConfig = {
-                ExecStart = "${self.defaultPackage."${pkgs.system}"}/bin/harry";
+                ExecStart = "${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/harry";
                 User = "harry";
                 Group = "harry";
                 WorkingDirectory = /var/lib/harry;
