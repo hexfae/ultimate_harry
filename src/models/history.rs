@@ -413,7 +413,7 @@ fn create_buttons<'a>(
     let edit_msg_id = format!("{id}edit");
     let undo_id = format!("{id}undo");
     let redo_id = format!("{id}redo");
-    let pin_id = format!("{id}pinn");
+    let pin_id = format!("{id}pin");
     let char_id = format!("{id}char");
 
     let mut components = vec![

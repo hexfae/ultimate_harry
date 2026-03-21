@@ -33,7 +33,6 @@
         };
 
         rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
-          # targets = ["aarch64-unknown-linux-gnu"];
           extensions = ["rust-src" "rust-analyzer" "rustc-codegen-cranelift-preview"];
         };
 
@@ -64,9 +63,9 @@
         in {
           options.services.harry = {
             enable = lib.mkEnableOption "Ultimate Harry";
-            configFile = lib.mkOption {
+            token-file = lib.mkOption {
               type = lib.types.path;
-              description = "Path to the config file";
+              description = "Path to the token file";
             };
           };
 
@@ -88,7 +87,7 @@
                 StateDirectory = "harry";
                 LogsDirectory = "harry";
                 Restart = "on-failure";
-                Environment = ["CONFIG_FILE=${toString cfg.configFile}"];
+                Environment = ["TOKEN_FILE=${toString cfg.token-file}"];
               };
             };
           };

@@ -3,26 +3,13 @@ use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
 use snafu::{OptionExt, ResultExt, Snafu};
-use surrealdb::RecordId;
-#[expect(
-    unused_imports,
-    reason = "Db and SurrealKv are used in release mode, Client and Ws are used in debug mode"
-)]
-use surrealdb::{
-    Surreal,
-    engine::{
-        local::{Db, SurrealKv},
-        remote::ws::{Client, Ws},
-    },
-    opt::auth::Root,
-};
+use surrealdb::{RecordId, engine::any::Any};
+use surrealdb::{Surreal, opt::auth::Root};
 
-use crate::{
-    config::ModelSettings,
-    models::{
-        character::{Character, CharacterPages},
-        history::History,
-    },
+use crate::ModelSettings;
+use crate::models::{
+    character::{Character, CharacterPages},
+    history::History,
 };
 
 const MOST_SIMILAR_TO: &str = "
@@ -88,20 +75,16 @@ ORDER BY
     conversations_had DESC;
 ";
 
-#[cfg(debug_assertions)]
-pub struct Database(Surreal<Client>);
-
-#[cfg(not(debug_assertions))]
-pub struct Database(Surreal<Db>);
+pub struct Database(Surreal<Any>);
 
 impl Database {
     /// Connects to a local database in debug mode, or creates a local
     /// ``SurrealKV`` one in release mode.
     pub async fn new() -> Result<Self, DatabaseError> {
-        let db: Surreal<Client> = Surreal::init();
+        let db: Surreal<Any> = Surreal::init();
         #[cfg(debug_assertions)]
         {
-            db.connect::<Ws>("localhost:8000")
+            db.connect("ws://localhost:8000")
                 .await
                 .context(ConnectSnafu)?;
             db.signin(Root {
@@ -112,7 +95,7 @@ impl Database {
             .context(ConnectSnafu)?;
         }
         #[cfg(not(debug_assertions))]
-        db.connect::<SurrealKv>("harry_database")
+        db.connect("surrealkv://harry_database")
             .await
             .context(ConnectSnafu)?;
         db.use_ns("harry".to_owned())

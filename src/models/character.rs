@@ -16,7 +16,7 @@ use ulid::Ulid;
 use url::Url;
 
 use crate::{
-    config::ModelSettings,
+    ModelSettings,
     constants::{NO_PHRASES, YES_PHRASES, sample},
     db::Database,
     models::modals::{

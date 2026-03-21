@@ -1,4 +1,4 @@
-use crate::{LlmGenerationSnafu, config::ModelSettings, models::history::History};
+use crate::{LlmGenerationSnafu, ModelSettings, models::history::History};
 use rig::{
     agent::AgentBuilder,
     completion::Chat,

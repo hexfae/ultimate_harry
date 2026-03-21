@@ -1,6 +1,5 @@
 pub mod app_state;
 pub mod commands;
-pub mod config;
 pub mod constants;
 pub mod db;
 pub mod events;
@@ -11,17 +10,38 @@ pub mod traits;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub type Context<'a> = poise::Context<'a, app_state::AppState, miette::Report>;
 
+use serde::{Deserialize, Serialize};
 use snafu::Snafu;
-pub use traits::DeferEphemeralOrBroadcast;
-pub use traits::DeleteInvokingMessageIfPrefix;
-pub use traits::RespondToWith;
-
 use std::time::Duration;
+pub use traits::{DeferEphemeralOrBroadcast, DeleteInvokingMessageIfPrefix, RespondToWith};
 
 pub const FIVE_SECONDS: Duration = Duration::from_secs(5);
 pub const ONE_MINUTE: Duration = Duration::from_mins(1);
 pub const TEN_MINUTES: Duration = Duration::from_mins(10);
 pub const ONE_HOUR: Duration = Duration::from_hours(1);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSettings {
+    pub model: String,
+    pub api_key: String,
+    pub frequency_penalty: f32,
+    pub presence_penalty: f32,
+    pub temperature: f32,
+    pub top_p: f32,
+}
+
+impl Default for ModelSettings {
+    fn default() -> Self {
+        Self {
+            model: "deepseek/deepseek-v3.2".to_owned(),
+            api_key: String::new(),
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
+            temperature: 1.0,
+            top_p: 0.95,
+        }
+    }
+}
 
 #[derive(Debug, Snafu, miette::Diagnostic)]
 pub enum Error {
