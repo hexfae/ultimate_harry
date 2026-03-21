@@ -6,9 +6,11 @@ use poise::CreateReply;
 use serde::{Deserialize, Serialize};
 use serenity::{
     all::{
-        ButtonStyle, CreateActionRow, CreateButton, CreateComponent, CreateEmbed,
-        CreateEmbedFooter, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption,
-        MessageId, ReactionType, UserId,
+        ButtonStyle, CreateActionRow, CreateButton, CreateComponent, CreateContainer,
+        CreateContainerComponent, CreateEmbed, CreateEmbedFooter, CreateSection,
+        CreateSectionAccessory, CreateSectionComponent, CreateSelectMenu, CreateSelectMenuKind,
+        CreateSelectMenuOption, CreateTextDisplay, CreateThumbnail, CreateUnfurledMediaItem,
+        MessageFlags, MessageId, ReactionType, UserId,
     },
     small_fixed_array::FixedString,
 };
@@ -217,33 +219,43 @@ impl History {
     }
 
     #[must_use]
-    pub fn to_placeholder(&self, character: &Character) -> CreateReply<'static> {
+    pub fn to_placeholder<'a>(&self, character: &'a Character) -> CreateReply<'a> {
         let (has_finished, has_previous, has_edit) = (false, false, false);
 
         let footer = {
             let pages = if self.choices.is_empty() {
                 String::new()
             } else {
-                format!("{}/{}", self.current + 2, self.choices.len() + 1)
+                format!("-# {}/{}", self.current + 2, self.choices.len() + 1)
             };
-            CreateEmbedFooter::new(pages)
+            Cow::Owned(vec![CreateContainerComponent::TextDisplay(
+                CreateTextDisplay::new(pages),
+            )])
         };
 
-        let mut embed = CreateEmbed::new()
-            .title(character.name().to_owned())
-            .description("…")
-            .footer(footer);
-
-        if let Some(avatar) = character.avatar() {
-            embed = embed.thumbnail(avatar.to_owned());
-        }
-        if let Some(color) = character.color() {
-            embed = embed.color(color);
-        }
+        let title = Cow::Owned(vec![CreateContainerComponent::Section(CreateSection::new(
+            Cow::Owned(vec![
+                CreateSectionComponent::TextDisplay(CreateTextDisplay::new(format!(
+                    "## {character}"
+                ))),
+                CreateSectionComponent::TextDisplay(CreateTextDisplay::new("…")),
+            ]),
+            CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
+                character
+                    .avatar()
+                    .unwrap_or("https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png"),
+            ))),
+        ))]);
 
         let components = create_buttons(1, has_finished, has_previous, has_edit, Vec::new());
 
-        CreateReply::default().embed(embed).components(components)
+        let container = Cow::Owned(vec![CreateComponent::Container(CreateContainer::new(
+            [title, components, footer].concat(),
+        ))]);
+
+        CreateReply::default()
+            .flags(MessageFlags::IS_COMPONENTS_V2)
+            .components(container)
     }
 
     #[must_use]
@@ -284,19 +296,19 @@ impl History {
     }
 
     #[must_use]
-    pub async fn to_response(
-        &self,
-        character: &Character,
+    pub async fn to_response<'a>(
+        &'a self,
+        character: &'a Character,
         id: MessageId,
         db: &Database,
-    ) -> CreateReply<'_> {
+    ) -> CreateReply<'a> {
         let chosen = self.chosen_choice_message();
 
         let has_previous = self.choices.len() > 1;
         let has_edit = chosen.revisions_len() > 0;
         let content = chosen.chosen_revision().head().content();
         let has_finished = true;
-        let footer: CreateEmbedFooter<'_> = {
+        let footer = {
             let pages = if self.choices.is_empty() {
                 String::new()
             } else {
@@ -331,21 +343,32 @@ impl History {
 
             let len = format!(" | {}/{CHARACTER_LIMIT}", content.len());
 
-            let footer = format!("{pages}{similarity}{elapsed}{len}{edit_pages}");
-            CreateEmbedFooter::new(footer)
+            let footer = format!("-# {pages}{similarity}{elapsed}{len}{edit_pages}");
+            Cow::Owned(vec![CreateContainerComponent::TextDisplay(
+                CreateTextDisplay::new(footer),
+            )])
         };
 
-        let mut embed = CreateEmbed::new()
-            .title(character.name().to_owned())
-            .description(content.to_owned())
-            .footer(footer);
+        // content must contain at least 1 character, but we want it to remain visually empty
+        let content = if content.is_empty() { " " } else { content };
+        let (first, second) = match content.split_once('\n') {
+            Some((first, second)) => (first, Some(second)),
+            None => (content, None),
+        };
 
-        if let Some(avatar) = character.avatar() {
-            embed = embed.thumbnail(avatar.to_owned());
-        }
-        if let Some(color) = character.color() {
-            embed = embed.color(color);
-        }
+        let title = Cow::Owned(vec![CreateContainerComponent::Section(CreateSection::new(
+            Cow::Owned(vec![
+                CreateSectionComponent::TextDisplay(CreateTextDisplay::new(format!(
+                    "## {character}"
+                ))),
+                CreateSectionComponent::TextDisplay(CreateTextDisplay::new(first)),
+            ]),
+            CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
+                character
+                    .avatar()
+                    .unwrap_or("https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png"),
+            ))),
+        ))]);
 
         let components = create_buttons(
             id.into(),
@@ -355,7 +378,25 @@ impl History {
             db.characters_by_usage().await.unwrap_or_default(),
         );
 
-        CreateReply::default().embed(embed).components(components)
+        let container = Cow::Owned(vec![CreateComponent::Container(CreateContainer::new(
+            [
+                title,
+                Cow::Owned(second.map_or_else(Vec::new, |text| {
+                    text.split('\n')
+                        .map(|part| {
+                            CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part))
+                        })
+                        .collect()
+                })),
+                components,
+                footer,
+            ]
+            .concat(),
+        ))]);
+
+        CreateReply::default()
+            .flags(MessageFlags::IS_COMPONENTS_V2)
+            .components(container)
     }
 }
 
@@ -366,7 +407,7 @@ fn create_buttons<'a>(
     previous: bool,
     edit: bool,
     characters: Vec<Character>,
-) -> Cow<'a, [CreateComponent<'a>]> {
+) -> Cow<'a, [CreateContainerComponent<'a>]> {
     let prev_msg_id = format!("{id}prev");
     let next_msg_id = format!("{id}next");
     let edit_msg_id = format!("{id}edit");
@@ -376,20 +417,20 @@ fn create_buttons<'a>(
     let char_id = format!("{id}char");
 
     let mut components = vec![
-        CreateComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![
+        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![
             create_button(prev_msg_id, PREVIOUS, !finished || !previous),
             create_button(next_msg_id, NEXT, !finished),
             create_button(edit_msg_id, EDIT, !finished),
             create_button(undo_id, UNDO, !edit),
             create_button(redo_id, REDO, !edit),
         ]))),
-        CreateComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![create_button(
-            pin_id, PIN, !finished,
-        )]))),
+        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![
+            create_button(pin_id, PIN, !finished),
+        ]))),
     ];
     if !characters.is_empty() {
-        components.push(CreateComponent::ActionRow(CreateActionRow::SelectMenu(
-            CreateSelectMenu::new(
+        components.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::SelectMenu(CreateSelectMenu::new(
                 char_id,
                 CreateSelectMenuKind::String {
                     options: Cow::Owned(
@@ -399,8 +440,8 @@ fn create_buttons<'a>(
                             .collect(),
                     ),
                 },
-            ),
-        )));
+            )),
+        ));
     }
     Cow::Owned(components)
 }
