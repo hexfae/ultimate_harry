@@ -383,6 +383,7 @@ impl History {
                 title,
                 Cow::Owned(second.map_or_else(Vec::new, |text| {
                     text.split('\n')
+                        .filter(|l| !l.is_empty())
                         .map(|part| {
                             CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part))
                         })

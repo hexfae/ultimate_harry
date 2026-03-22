@@ -6,6 +6,7 @@ use rig::{
     providers::openrouter::{Client, CompletionModel},
 };
 use snafu::ResultExt;
+use unicode_segmentation::UnicodeSegmentation;
 
 pub struct LlmManager {
     settings: ModelSettings,
@@ -16,6 +17,11 @@ impl LlmManager {
         Self { settings }
     }
 
+    /// Returns the response of the given character of the given history.
+    ///
+    /// The answer is trimmed to 3900 characters, in order to easily fit within Discord's
+    /// 4000-character limit for components (which includes other text like the footer or
+    /// the character's name).
     pub async fn request(
         &self,
         history: &History,
@@ -41,6 +47,6 @@ impl LlmManager {
             .await
             .context(LlmGenerationSnafu)?;
 
-        Ok(response)
+        Ok(response.graphemes(true).take(3900).chain([" "]).collect())
     }
 }
