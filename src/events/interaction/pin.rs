@@ -1,4 +1,4 @@
-use crate::{SendMessageSnafu, db::Database, events::message::HistoryCharacter};
+use crate::{SendMessageSnafu, db::Database, events::message::history_and_character_of};
 use miette::Report;
 use serenity::all::{
     ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
@@ -12,7 +12,7 @@ pub async fn pin(
     id: MessageId,
     db: &Database,
 ) -> Result<(), Report> {
-    let Some((history, character)) = id.history_character(db).await? else {
+    let Some((history, character)) = history_and_character_of(id, db).await? else {
         return Ok(());
     };
 
@@ -27,13 +27,12 @@ pub async fn pin(
         .await
         .context(SendMessageSnafu)?;
 
+    let response = CreateInteractionResponse::Message(
+        CreateInteractionResponseMessage::new().content(pin.link().to_string()),
+    );
+
     interaction
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Message(
-                CreateInteractionResponseMessage::new().content(pin.link().to_string()),
-            ),
-        )
+        .create_response(&ctx.http, response)
         .await
         .context(SendMessageSnafu)?;
     Ok(())

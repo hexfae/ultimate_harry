@@ -1,8 +1,9 @@
-use crate::{SendResponseSnafu, db::Database, events::message::HistoryCharacter, llm::LlmManager};
+use crate::{
+    SendResponseSnafu, db::Database, events::message::history_and_character_of, llm::LlmManager,
+};
 use miette::Report;
 use poise::serenity_prelude::{
-    ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
-    EditInteractionResponse, MessageId,
+    ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
 use snafu::ResultExt;
 use std::time::Instant;
@@ -13,22 +14,22 @@ pub async fn next(
     id: MessageId,
     db: &Database,
 ) -> Result<(), Report> {
-    let Some((mut history, character)) = id.history_character(db).await? else {
+    let Some((mut history, character)) = history_and_character_of(id, db).await? else {
         return Ok(());
     };
 
-    if history.current_choice() + 1 < history.choices_len() {
+    if !history.is_on_last_choice() {
+        history.next();
+
+        let response = history.to_interaction(&character, id, db).await;
+
         interaction
-            .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
+            .create_response(&ctx.http, response)
             .await
             .context(SendResponseSnafu)?;
-
-        history.next();
     } else {
         let placeholder = CreateInteractionResponse::UpdateMessage(
-            history
-                .to_placeholder(&character)
-                .to_slash_initial_response(CreateInteractionResponseMessage::new()),
+            history.to_placeholder_interaction(&character),
         );
 
         interaction
@@ -47,19 +48,16 @@ pub async fn next(
 
         // current choice is set in this function
         history.push_choice((character.clone(), response, now.elapsed()));
+
+        let response = history.to_edit_interaction(&character, id, db).await;
+
+        interaction
+            .edit_response(&ctx.http, response)
+            .await
+            .context(SendResponseSnafu)?;
     }
 
-    db.update_history(history.clone()).await?;
-
-    let response = history
-        .to_response(&character, id, db, true)
-        .await
-        .to_slash_initial_response_edit(EditInteractionResponse::new());
-
-    interaction
-        .edit_response(&ctx.http, response)
-        .await
-        .context(SendResponseSnafu)?;
+    db.update_history(history).await?;
 
     Ok(())
 }

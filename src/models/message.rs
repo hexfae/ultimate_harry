@@ -264,8 +264,8 @@ impl From<(Character, String, Duration)> for Message {
     }
 }
 
-impl From<(DiscordMessage, String)> for Message {
-    fn from((message, name): (DiscordMessage, String)) -> Self {
+impl From<(&DiscordMessage, String)> for Message {
+    fn from((message, name): (&DiscordMessage, String)) -> Self {
         let parts = message
             .content
             .lines()
@@ -298,11 +298,10 @@ impl From<(DiscordMessage, String)> for Message {
     }
 }
 
-impl From<DiscordMessage> for Original {
-    fn from(input: DiscordMessage) -> Self {
+impl From<&DiscordMessage> for Original {
+    fn from(input: &DiscordMessage) -> Self {
         Self::Discord {
             user_id: input.author.id,
-            // message: Box::new(input),
         }
     }
 }

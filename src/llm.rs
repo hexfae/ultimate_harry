@@ -1,6 +1,6 @@
 use std::pin::Pin;
 
-use crate::{LlmGenerationSnafu, ModelSettings, models::history::History};
+use crate::{CHARACTER_LIMIT, LlmGenerationSnafu, ModelSettings, models::history::History};
 use rig::{
     agent::{AgentBuilder, MultiTurnStreamItem, StreamingError},
     completion::Chat,
@@ -23,7 +23,7 @@ impl LlmManager {
 
     /// Returns the response of the given character of the given history.
     ///
-    /// The answer is trimmed to 3900 characters, in order to easily fit within Discord's
+    /// The answer is trimmed to [`CHARACTER_LIMIT`] characters, in order to easily fit within Discord's
     /// 4000-character limit for components (which includes other text like the footer or
     /// the character's name).
     pub async fn request(
@@ -51,7 +51,11 @@ impl LlmManager {
             .await
             .context(LlmGenerationSnafu)?;
 
-        Ok(response.graphemes(true).take(3900).chain([" "]).collect())
+        Ok(response
+            .graphemes(true)
+            .take(CHARACTER_LIMIT)
+            .chain([" "])
+            .collect())
     }
 
     pub async fn request_stream(

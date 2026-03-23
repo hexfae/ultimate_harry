@@ -15,6 +15,7 @@ use snafu::Snafu;
 use std::time::Duration;
 pub use traits::{DeferEphemeralOrBroadcast, DeleteInvokingMessageIfPrefix, RespondToWith};
 
+pub const CHARACTER_LIMIT: usize = 3900;
 pub const FIVE_SECONDS: Duration = Duration::from_secs(5);
 pub const ONE_MINUTE: Duration = Duration::from_mins(1);
 pub const TEN_MINUTES: Duration = Duration::from_mins(10);

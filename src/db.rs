@@ -272,9 +272,9 @@ impl Database {
             .map(|c| c.map(|c: PinChannel| c.channel_id))
     }
 
-    pub async fn substitute_name(&self, user_id: impl AsRef<UserId>) -> String {
+    pub async fn substitute_name(&self, user_id: impl Into<UserId>) -> String {
         self.0
-            .select::<Option<UserName>>(("user_name", user_id.as_ref().to_string()))
+            .select::<Option<UserName>>(("user_name", user_id.into().to_string()))
             .await
             .unwrap_or_default()
             .map(|u| u.name)
@@ -307,6 +307,7 @@ pub struct UserName {
     pub name: String,
 }
 
+// TODO: this should probably be a HashMap<UserId, ReactionType> instead
 #[derive(Serialize, Deserialize)]
 pub struct UserEmoji {
     pub user_id: UserId,

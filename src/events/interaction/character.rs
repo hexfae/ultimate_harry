@@ -1,11 +1,12 @@
 use crate::{
     EditMessageSnafu, SendMessageSnafu, SendResponseSnafu, db::Database,
-    events::message::HistoryCharacter, llm::LlmManager, models::message::Message,
+    events::message::history_and_character_of, llm::LlmManager, models::message::Message,
 };
 use miette::Report;
 use poise::serenity_prelude::{
-    ComponentInteraction, Context, CreateInteractionResponse, EditMessage, MessageId,
+    ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
+use serenity::all::ComponentInteractionDataKind;
 use snafu::ResultExt;
 use std::time::Instant;
 
@@ -16,9 +17,7 @@ pub async fn character(
     db: &Database,
 ) -> Result<(), Report> {
     let selected_char_id = match &interaction.data.kind {
-        poise::serenity_prelude::ComponentInteractionDataKind::StringSelect { values } => {
-            values.into_iter().next()
-        }
+        ComponentInteractionDataKind::StringSelect { values } => values.into_iter().next(),
         _ => None,
     };
 
@@ -34,7 +33,7 @@ pub async fn character(
         return Ok(());
     };
 
-    let Some((mut history, _old_character)) = id.history_character(db).await? else {
+    let Some((mut history, _old_character)) = history_and_character_of(id, db).await? else {
         return Ok(());
     };
 
@@ -42,7 +41,7 @@ pub async fn character(
 
     let user_name = db.substitute_name(interaction.message.author.id).await;
     let discord_msg = (*interaction.message).clone();
-    history.push(Message::from((discord_msg, user_name)));
+    history.push(Message::from((&discord_msg, user_name)));
 
     history.reset_choices();
 
@@ -54,9 +53,7 @@ pub async fn character(
         .await
         .context(SendResponseSnafu)?;
 
-    let placeholder = history
-        .to_placeholder(&new_character)
-        .to_prefix((&*interaction.message).into());
+    let placeholder = history.to_placeholder_message(&new_character, &interaction.message);
 
     let mut response_message = interaction
         .message
@@ -84,9 +81,8 @@ pub async fn character(
     history.set_choices((new_character.clone(), response, now.elapsed()));
 
     let edit = history
-        .to_response(&new_character, response_message.id, db, true)
-        .await
-        .to_prefix_edit(EditMessage::new());
+        .to_edit_response(&new_character, response_message.id, db)
+        .await;
 
     response_message
         .edit(ctx, edit)

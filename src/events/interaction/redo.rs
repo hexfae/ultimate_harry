@@ -1,11 +1,8 @@
 use miette::Report;
-use poise::serenity_prelude::{
-    ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
-    MessageId,
-};
+use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use snafu::ResultExt;
 
-use crate::{SendResponseSnafu, db::Database, events::message::HistoryCharacter};
+use crate::{SendResponseSnafu, db::Database, events::message::history_and_character_of};
 
 pub async fn redo(
     ctx: &Context,
@@ -13,24 +10,20 @@ pub async fn redo(
     id: MessageId,
     db: &Database,
 ) -> Result<(), Report> {
-    let Some((mut history, character)) = id.history_character(db).await? else {
+    let Some((mut history, character)) = history_and_character_of(id, db).await? else {
         return Ok(());
     };
+
     history.redo();
 
-    db.update_history(history.clone()).await?;
-
-    let response = CreateInteractionResponse::UpdateMessage(
-        history
-            .to_response(&character, id, db, true)
-            .await
-            .to_slash_initial_response(CreateInteractionResponseMessage::new()),
-    );
+    let response = history.to_interaction(&character, id, db).await;
 
     interaction
         .create_response(&ctx.http, response)
         .await
         .context(SendResponseSnafu)?;
+
+    db.update_history(history).await?;
 
     Ok(())
 }

@@ -6,17 +6,20 @@ use poise::CreateReply;
 use serde::{Deserialize, Serialize};
 use serenity::{
     all::{
-        ButtonStyle, CreateActionRow, CreateButton, CreateComponent, CreateContainer,
-        CreateContainerComponent, CreateEmbed, CreateEmbedFooter, CreateSection,
+        ButtonStyle, CreateActionRow, CreateAllowedMentions, CreateButton, CreateComponent,
+        CreateContainer, CreateContainerComponent, CreateEmbed, CreateEmbedFooter,
+        CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage, CreateSection,
         CreateSectionAccessory, CreateSectionComponent, CreateSelectMenu, CreateSelectMenuKind,
         CreateSelectMenuOption, CreateTextDisplay, CreateThumbnail, CreateUnfurledMediaItem,
-        MessageFlags, MessageId, ReactionType, UserId,
+        EditInteractionResponse, EditMessage, Message as DiscordMessage, MessageFlags, MessageId,
+        ReactionType, UserId,
     },
     small_fixed_array::FixedString,
 };
 use surrealdb::RecordId;
 
 use crate::{
+    CHARACTER_LIMIT,
     db::Database,
     models::{character::Character, message::Message},
 };
@@ -35,7 +38,7 @@ const EXAMPLE_MESSAGE_SEPARATOR: &str = "Nytt exempelmeddelande.";
 
 const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du inte längra avbryta rollspelet, gå ur karaktär, eller skriva åt användaren.";
 
-const CHARACTER_LIMIT: u16 = 4096;
+const EMPTY_AVATAR: &str = "https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png";
 
 const PREVIOUS: &str = "⬅️";
 const NEXT: &str = "➡️";
@@ -60,6 +63,13 @@ pub struct History {
     /// The Discord Message ID of this history.
     #[builder(with = |id: MessageId| RecordId::from(("history", id.to_string())))]
     id: RecordId,
+    #[builder(default)]
+    #[serde(skip_serializing, default = "default_true")]
+    has_finished: bool,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 impl History {
@@ -70,6 +80,10 @@ impl History {
         editor: Option<impl Into<UserId>>,
     ) {
         self.choices[self.current].edit(author, content, editor);
+    }
+
+    pub fn has_finished(&mut self, has_finished: bool) {
+        self.has_finished = has_finished;
     }
 
     pub fn previous(&mut self) {
@@ -88,6 +102,10 @@ impl History {
     #[must_use]
     pub fn choices_len(&self) -> usize {
         self.choices.len()
+    }
+
+    pub fn is_on_last_choice(&self) -> bool {
+        self.current_choice() + 1 >= self.choices_len()
     }
 
     pub fn undo(&mut self) {
@@ -218,9 +236,27 @@ impl History {
         &self.previous
     }
 
-    #[must_use]
-    pub fn to_placeholder<'a>(&self, character: &'a Character) -> CreateReply<'a> {
-        let (has_finished, has_previous, has_edit) = (false, false, false);
+    pub fn to_placeholder_interaction<'a>(
+        &self,
+        character: &'a Character,
+    ) -> CreateInteractionResponseMessage<'a> {
+        self.to_placeholder(character)
+            .to_slash_initial_response(CreateInteractionResponseMessage::new())
+    }
+
+    pub fn to_placeholder_message<'a>(
+        &self,
+        character: &'a Character,
+        replying_to: &DiscordMessage,
+    ) -> CreateMessage<'a> {
+        self.to_placeholder(character)
+            .to_prefix(replying_to.into())
+            .reference_message(replying_to)
+            .allowed_mentions(CreateAllowedMentions::new())
+    }
+
+    fn to_placeholder<'a>(&self, character: &'a Character) -> CreateReply<'a> {
+        let (has_previous, has_edit) = (false, false);
 
         let footer = {
             let pages = if self.choices.is_empty() {
@@ -241,13 +277,11 @@ impl History {
                 CreateSectionComponent::TextDisplay(CreateTextDisplay::new("…")),
             ]),
             CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
-                character
-                    .avatar()
-                    .unwrap_or("https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png"),
+                character.avatar().unwrap_or(EMPTY_AVATAR),
             ))),
         ))]);
 
-        let components = create_buttons(1, has_finished, has_previous, has_edit, Vec::new());
+        let components = create_buttons(1, self.has_finished, has_previous, has_edit, Vec::new());
 
         let container = Cow::Owned(vec![CreateComponent::Container(CreateContainer::new(
             [title, components, footer].concat(),
@@ -295,13 +329,46 @@ impl History {
         CreateReply::default().content(link).embed(embed)
     }
 
-    #[must_use]
+    pub async fn to_interaction<'a>(
+        &'a self,
+        character: &'a Character,
+        id: impl Into<MessageId>,
+        db: &Database,
+    ) -> CreateInteractionResponse<'a> {
+        CreateInteractionResponse::UpdateMessage(
+            self.to_response(character, id, db)
+                .await
+                .to_slash_initial_response(CreateInteractionResponseMessage::new()),
+        )
+    }
+
+    pub async fn to_edit_interaction<'a>(
+        &'a self,
+        character: &'a Character,
+        id: impl Into<MessageId>,
+        db: &Database,
+    ) -> EditInteractionResponse<'a> {
+        self.to_response(character, id, db)
+            .await
+            .to_slash_initial_response_edit(EditInteractionResponse::new())
+    }
+
+    pub async fn to_edit_response<'a>(
+        &'a self,
+        character: &'a Character,
+        id: impl Into<MessageId>,
+        db: &Database,
+    ) -> EditMessage<'a> {
+        self.to_response(character, id, db)
+            .await
+            .to_prefix_edit(EditMessage::new())
+    }
+
     pub async fn to_response<'a>(
         &'a self,
         character: &'a Character,
-        id: MessageId,
+        id: impl Into<MessageId>,
         db: &Database,
-        has_finished: bool,
     ) -> CreateReply<'a> {
         let chosen = self.chosen_choice_message();
 
@@ -371,8 +438,8 @@ impl History {
         ))]);
 
         let components = create_buttons(
-            id.into(),
-            has_finished,
+            id.into().into(),
+            self.has_finished,
             has_previous,
             has_edit,
             db.characters_by_usage().await.unwrap_or_default(),
