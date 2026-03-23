@@ -362,6 +362,7 @@ impl History {
         self.to_response(character, id, db)
             .await
             .to_prefix_edit(EditMessage::new())
+            .allowed_mentions(CreateAllowedMentions::new())
     }
 
     pub async fn to_response<'a>(

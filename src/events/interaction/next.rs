@@ -1,12 +1,20 @@
 use crate::{
-    SendResponseSnafu, db::Database, events::message::history_and_character_of, llm::LlmManager,
+    CHARACTER_LIMIT, EditMessageSnafu, SendResponseSnafu, db::Database,
+    events::message::history_and_character_of, llm::LlmManager,
 };
-use miette::Report;
+use miette::{Diagnostic, Report};
 use poise::serenity_prelude::{
     ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
-use snafu::ResultExt;
-use std::time::Instant;
+use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
+use serenity::futures::StreamExt;
+use snafu::{ResultExt, Snafu};
+use std::time::{Duration, Instant};
+
+#[derive(Debug, Snafu, Diagnostic)]
+pub struct StreamingError {
+    source: rig::agent::StreamingError,
+}
 
 pub async fn next(
     ctx: &Context,
@@ -28,6 +36,8 @@ pub async fn next(
             .await
             .context(SendResponseSnafu)?;
     } else {
+        history.has_finished(false);
+
         let placeholder = CreateInteractionResponse::UpdateMessage(
             history.to_placeholder_interaction(&character),
         );
@@ -43,11 +53,35 @@ pub async fn next(
                 .unwrap_or(db.model_settings().await),
         );
 
+        let mut total = String::new();
         let now = Instant::now();
-        let response = requester.request(&history.clone(), None).await?;
+        let mut time_since_last_edit = now;
+        let mut response = requester.request_stream(&history, None).await;
+
+        while let Some(delta) = response.next().await {
+            if let MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta)) =
+                delta.context(StreamingSnafu)?
+            {
+                if total.len() >= CHARACTER_LIMIT {
+                    break;
+                }
+                total += delta.text();
+                if time_since_last_edit.elapsed() >= Duration::from_secs(1) {
+                    time_since_last_edit = Instant::now();
+                    history.set_choices((character.clone(), total.clone(), now.elapsed()));
+                    let edit = history.to_edit_interaction(&character, id, db).await;
+
+                    interaction
+                        .edit_response(&ctx.http, edit)
+                        .await
+                        .context(EditMessageSnafu)?;
+                }
+            }
+        }
 
         // current choice is set in this function
-        history.push_choice((character.clone(), response, now.elapsed()));
+        history.push_choice((character.clone(), total, now.elapsed()));
+        history.has_finished(true);
 
         let response = history.to_edit_interaction(&character, id, db).await;
 
