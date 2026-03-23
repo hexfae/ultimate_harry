@@ -301,13 +301,13 @@ impl History {
         character: &'a Character,
         id: MessageId,
         db: &Database,
+        has_finished: bool,
     ) -> CreateReply<'a> {
         let chosen = self.chosen_choice_message();
 
         let has_previous = self.choices.len() > 1;
         let has_edit = chosen.revisions_len() > 0;
         let content = chosen.chosen_revision().head().content();
-        let has_finished = true;
         let footer = {
             let pages = if self.choices.is_empty() {
                 String::new()

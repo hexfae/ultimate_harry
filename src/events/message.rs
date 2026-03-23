@@ -1,8 +1,9 @@
-use miette::Report;
+use miette::{Diagnostic, Report};
 use poise::serenity_prelude::{Context, EditMessage, Message};
-use serenity::all::MessageId;
-use snafu::ResultExt;
-use std::time::Instant;
+use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
+use serenity::{all::MessageId, futures::StreamExt};
+use snafu::{ResultExt, Snafu};
+use std::time::{Duration, Instant};
 
 use crate::{
     EditMessageSnafu, ReactSnafu, SendMessageSnafu,
@@ -10,6 +11,11 @@ use crate::{
     llm::LlmManager,
     models::{character::Character, history::History},
 };
+
+#[derive(Debug, Snafu, Diagnostic)]
+pub struct StreamingError {
+    source: rig::agent::StreamingError,
+}
 
 pub async fn message(ctx: &Context, new_message: &Message, db: &Database) -> Result<(), Report> {
     {
@@ -70,12 +76,39 @@ pub async fn message(ctx: &Context, new_message: &Message, db: &Database) -> Res
     );
 
     let now = Instant::now();
-    let response = requester.request(&history, None).await?;
+    let mut time_since_last_edit = now;
+    let mut response = requester.request_stream(&history, None).await;
 
-    history.set_choices((character.clone(), response, now.elapsed()));
+    let mut total = String::new();
+
+    while let Some(delta) = response.next().await {
+        if let MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta)) =
+            delta.context(StreamingSnafu)?
+        {
+            if total.len() >= 3900 {
+                break;
+            }
+            total += delta.text();
+            if time_since_last_edit.elapsed() >= Duration::from_secs(1) {
+                time_since_last_edit = Instant::now();
+                history.set_choices((character.clone(), total.clone(), now.elapsed()));
+                let edit = history
+                    .to_response(&character, response_message.id, db, false)
+                    .await
+                    .to_prefix_edit(EditMessage::new());
+
+                response_message
+                    .edit(ctx, edit)
+                    .await
+                    .context(EditMessageSnafu)?;
+            }
+        }
+    }
+
+    history.set_choices((character.clone(), total, now.elapsed()));
 
     let edit = history
-        .to_response(&character, response_message.id, db)
+        .to_response(&character, response_message.id, db, true)
         .await
         .to_prefix_edit(EditMessage::new());
 

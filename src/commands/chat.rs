@@ -44,15 +44,14 @@ pub async fn chat(
     let mut history = History::from((character, id, ctx.author().id));
 
     let msg = ctx
-        .send(history.to_response(character, id, &ctx.data().db).await)
+        .send(
+            history
+                .to_response(character, id, &ctx.data().db, true)
+                .await,
+        )
         .await
         .into_diagnostic()?;
     let actual_id = msg.message().await.into_diagnostic()?.id;
-
-    let edit = history
-        .to_response(character, actual_id, &ctx.data().db)
-        .await;
-    msg.edit(ctx, edit).await.into_diagnostic()?;
 
     history.set_id(actual_id);
     db.insert_history(history).await.into_diagnostic()?;

@@ -84,7 +84,7 @@ pub async fn character(
     history.set_choices((new_character.clone(), response, now.elapsed()));
 
     let edit = history
-        .to_response(&new_character, response_message.id, db)
+        .to_response(&new_character, response_message.id, db, true)
         .await
         .to_prefix_edit(EditMessage::new());
 

@@ -22,7 +22,7 @@ pub async fn undo(
 
     let response = CreateInteractionResponse::UpdateMessage(
         history
-            .to_response(&character, id, db)
+            .to_response(&character, id, db, true)
             .await
             .to_slash_initial_response(CreateInteractionResponseMessage::new()),
     );

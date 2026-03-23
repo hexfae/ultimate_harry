@@ -52,7 +52,7 @@ pub async fn next(
     db.update_history(history.clone()).await?;
 
     let response = history
-        .to_response(&character, id, db)
+        .to_response(&character, id, db, true)
         .await
         .to_slash_initial_response_edit(EditInteractionResponse::new());
 

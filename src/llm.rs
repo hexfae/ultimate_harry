@@ -1,10 +1,14 @@
+use std::pin::Pin;
+
 use crate::{LlmGenerationSnafu, ModelSettings, models::history::History};
 use rig::{
-    agent::AgentBuilder,
+    agent::{AgentBuilder, MultiTurnStreamItem, StreamingError},
     completion::Chat,
     message::Message,
-    providers::openrouter::{Client, CompletionModel},
+    providers::openrouter::{Client, CompletionModel, streaming::StreamingCompletionResponse},
+    streaming::StreamingChat,
 };
+use serenity::futures::Stream;
 use snafu::ResultExt;
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -48,5 +52,36 @@ impl LlmManager {
             .context(LlmGenerationSnafu)?;
 
         Ok(response.graphemes(true).take(3900).chain([" "]).collect())
+    }
+
+    pub async fn request_stream(
+        &self,
+        history: &History,
+        prompt: Option<String>,
+    ) -> Pin<
+        Box<
+            dyn Stream<
+                    Item = Result<MultiTurnStreamItem<StreamingCompletionResponse>, StreamingError>,
+                > + Send,
+        >,
+    > {
+        let client = Client::new(&self.settings.api_key).unwrap();
+        let model = CompletionModel::new(client, &self.settings.model);
+
+        let mut rig_messages: Vec<Message> = Vec::new();
+        for msg in history.previous_messages() {
+            rig_messages.extend(msg.to_rig_messages());
+        }
+
+        let agent = AgentBuilder::new(model)
+            .temperature(self.settings.temperature.into())
+            .build();
+
+        agent
+            .stream_chat(
+                Message::system(prompt.unwrap_or_else(|| "Fortsätt rollspelet.".to_owned())),
+                rig_messages,
+            )
+            .await
     }
 }
