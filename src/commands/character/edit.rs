@@ -1,19 +1,18 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, time::Duration};
 
 use crate::{
-    Context, DeferEphemeralOrBroadcast, DeleteInvokingMessageIfPrefix, DeleteResponseSnafu,
-    EditResponseSnafu, Error, FIVE_SECONDS, ONE_HOUR, RespondToWith, Result, SendMessageSnafu,
-    SendResponseSnafu, ShowModalSnafu, TEN_MINUTES,
+    Context, DeferSnafu, DeleteResponseSnafu, EditResponseSnafu, RespondToWith, Result,
+    SendMessageSnafu, SendResponseSnafu, ShowModalSnafu,
+    commands::character::InteractionType,
     constants::{
-        CANCELLED_PHRASES, CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, EDITED_PHRASES,
-        NO_CHARACTER_PHRASES, sample, sample_name,
+        CANCEL, CANCELLED_PHRASES, CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, EDIT, EDITED_PHRASES,
+        NEXT, NO_CHARACTER_PHRASES, PREVIOUS, sample, sample_name,
     },
     models::{
         character::Character,
         modals::{EditCharacterModal, SecondEditCharacterModal},
-        statistics::STATISTICS,
     },
-    traits::{DeleteSelfAndInvokingMessageIfPrefix, SayWith},
+    traits::SayWith,
 };
 use miette::Report;
 use poise::{
@@ -28,14 +27,7 @@ use poise::{
 use snafu::ResultExt;
 use tokio::time::sleep;
 
-enum InteractionType {
-    Prev,
-    Next,
-    Confirm,
-    Cancel,
-}
-
-#[poise::command(slash_command, prefix_command, rename = "ändra")]
+#[poise::command(slash_command, rename = "ändra")]
 pub async fn edit(
     ctx: Context<'_>,
     #[rest]
@@ -43,15 +35,13 @@ pub async fn edit(
     #[description = "Gubbens namn"]
     name: String,
 ) -> Result<(), Report> {
-    ctx.defer_ephemeral_or_broadcast().await?;
+    ctx.defer_ephemeral().await.context(DeferSnafu)?;
 
     let characters: Vec<Character> = ctx.data().db.characters_by_similarity(name).await?;
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
-        let msg = ctx.say_with(response).await?;
-        sleep(FIVE_SECONDS).await;
-        msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
+        ctx.say_with(response).await?;
         return Ok(());
     }
 
@@ -87,11 +77,10 @@ async fn display_pagination(
     let pages = characters_and_footer_text.len();
 
     // index into 0 is safe because we checked `is_empty()` earlier
-    let msg = send_initial_embed(ctx, characters_and_footer_text[0].clone()).await?;
+    send_initial_embed(ctx, characters_and_footer_text[0].clone()).await?;
 
     while let Some(interaction) = ComponentInteractionCollector::new(ctx.serenity_context())
         .custom_ids(custom_ids.clone())
-        .timeout(TEN_MINUTES)
         .await
     {
         let interaction_type = InteractionType::try_from(&interaction)?;
@@ -102,18 +91,18 @@ async fn display_pagination(
             InteractionType::Next => {
                 current_page = (current_page + 1) % pages;
             }
+            InteractionType::Cancel => {
+                edit_cancelled(ctx, interaction).await?;
+                return Ok(());
+            }
             InteractionType::Confirm => {
-                STATISTICS.character_edited_by(ctx.author());
+                ctx.data().stats.character_edited_by(ctx.author());
                 edit_confirmed(
                     ctx,
                     interaction.clone(),
                     characters_and_footer_text[current_page].0.clone(),
                 )
                 .await?;
-                return Ok(());
-            }
-            InteractionType::Cancel => {
-                edit_cancelled(ctx, interaction).await?;
                 return Ok(());
             }
         }
@@ -134,7 +123,6 @@ async fn display_pagination(
             .context(SendResponseSnafu)?;
     }
 
-    msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
     Ok(())
 }
 
@@ -161,16 +149,16 @@ pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
     Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         Cow::Owned(vec![
             CreateButton::new(confirm)
-                .emoji("✏️".parse::<ReactionType>().expect("valid emoji"))
+                .emoji(EDIT.parse::<ReactionType>().expect("valid emoji"))
                 .style(ButtonStyle::Secondary),
             CreateButton::new(cancel)
-                .emoji('❌')
+                .emoji(CANCEL.parse::<ReactionType>().expect("valid emoji"))
                 .style(ButtonStyle::Secondary),
             CreateButton::new(prev)
-                .emoji('◀')
+                .emoji(PREVIOUS.parse::<ReactionType>().expect("valid emoji"))
                 .style(ButtonStyle::Secondary),
             CreateButton::new(next)
-                .emoji('▶')
+                .emoji(NEXT.parse::<ReactionType>().expect("valid emoji"))
                 .style(ButtonStyle::Secondary),
         ]),
     ))])
@@ -213,24 +201,22 @@ async fn edit_confirmed(
         )
         .await
         .context(EditResponseSnafu)?;
-    sleep(FIVE_SECONDS).await;
+    sleep(Duration::from_secs(5)).await;
     interaction
         .delete_response(ctx.http())
         .await
         .context(DeleteResponseSnafu)?;
-    ctx.delete_invoking_message_if_prefix().await?;
     Ok(())
 }
 
 async fn edit_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> Result<()> {
     let response = sample(CANCELLED_PHRASES);
     ctx.respond_to_with(&interaction, response).await?;
-    sleep(FIVE_SECONDS).await;
+    sleep(Duration::from_secs(5)).await;
     interaction
         .delete_response(ctx.http())
         .await
         .context(DeleteResponseSnafu)?;
-    ctx.delete_invoking_message_if_prefix().await?;
     Ok(())
 }
 
@@ -238,14 +224,9 @@ async fn show_first_modal<M: Modal>(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
 ) -> Result<Option<M>> {
-    execute_modal_on_component_interaction::<M>(
-        ctx.serenity_context(),
-        interaction,
-        None,
-        Some(ONE_HOUR),
-    )
-    .await
-    .context(ShowModalSnafu)
+    execute_modal_on_component_interaction::<M>(ctx.serenity_context(), interaction, None, None)
+        .await
+        .context(ShowModalSnafu)
 }
 
 async fn show_second_modal<M: Modal>(
@@ -260,7 +241,6 @@ async fn show_second_modal<M: Modal>(
         .custom_ids(FixedArray::from_vec_trunc(vec![
             FixedString::from_string_trunc(id.clone()),
         ]))
-        .timeout(ONE_HOUR)
         .await;
 
     if let Some(interaction) = collector {
@@ -294,20 +274,4 @@ async fn send_first_tempting_button(
         .await
         .context(EditResponseSnafu)
         .map(|_| ())
-}
-
-impl TryFrom<&ComponentInteraction> for InteractionType {
-    type Error = Error;
-
-    fn try_from(input: &ComponentInteraction) -> Result<Self, Self::Error> {
-        match input.data.custom_id.as_str() {
-            i if i.ends_with("prev") => Ok(Self::Prev),
-            i if i.ends_with("next") => Ok(Self::Next),
-            i if i.ends_with("confirm") => Ok(Self::Confirm),
-            i if i.ends_with("cancel") => Ok(Self::Cancel),
-            i => Err(Error::UnknownInteraction {
-                found: i.to_string(),
-            }),
-        }
-    }
 }

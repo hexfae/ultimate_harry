@@ -1,8 +1,8 @@
 use std::{env::var, fs::read_to_string, sync::Arc};
 
-use miette::{Diagnostic, IntoDiagnostic, Report};
+use miette::{Diagnostic, Report};
 use poise::{
-    Framework, FrameworkOptions, PrefixFrameworkOptions,
+    Framework, FrameworkOptions,
     serenity_prelude::{ClientBuilder, GatewayIntents, Token},
 };
 use snafu::{ResultExt, Snafu};
@@ -14,12 +14,6 @@ use ultimate_harry::{
 
 const INTENTS: GatewayIntents =
     GatewayIntents::non_privileged().union(GatewayIntents::MESSAGE_CONTENT);
-
-#[derive(Debug, Snafu, Diagnostic)]
-enum TokenError {
-    TokenPath { source: std::io::Error },
-    Invalid { source: serenity::all::TokenError },
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Report> {
@@ -39,21 +33,29 @@ async fn main() -> Result<(), Report> {
     let framework = Framework::builder()
         .options(FrameworkOptions {
             commands,
-            prefix_options: PrefixFrameworkOptions {
-                prefix: Some("+".into()),
-                ..Default::default()
-            },
             ..Default::default()
         })
         .build();
 
-    ClientBuilder::new(token, INTENTS)
+    Ok(ClientBuilder::new(token, INTENTS)
         .framework(Box::new(framework))
         .data(Arc::new(app_state))
         .event_handler(Arc::new(EventHandler))
         .await
-        .into_diagnostic()?
+        .context(BuildSnafu)?
         .start()
         .await
-        .into_diagnostic()
+        .context(StartSnafu)?)
+}
+
+#[derive(Debug, Snafu, Diagnostic)]
+enum TokenError {
+    TokenPath { source: std::io::Error },
+    Invalid { source: serenity::all::TokenError },
+}
+
+#[derive(Debug, Snafu, Diagnostic)]
+enum ClientError {
+    Build { source: serenity::Error },
+    Start { source: serenity::Error },
 }

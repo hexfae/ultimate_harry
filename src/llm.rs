@@ -1,6 +1,7 @@
 use std::pin::Pin;
 
-use crate::{CHARACTER_LIMIT, LlmGenerationSnafu, ModelSettings, models::history::History};
+use crate::{constants::CHARACTER_LIMIT, models::history::History};
+use miette::Diagnostic;
 use rig::{
     agent::{AgentBuilder, MultiTurnStreamItem, StreamingError},
     completion::Chat,
@@ -8,12 +9,33 @@ use rig::{
     providers::openrouter::{Client, CompletionModel, streaming::StreamingCompletionResponse},
     streaming::StreamingChat,
 };
+use serde::{Deserialize, Serialize};
 use serenity::futures::Stream;
-use snafu::ResultExt;
+use snafu::{ResultExt, Snafu};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub struct LlmManager {
     settings: ModelSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelSettings {
+    pub model: String,
+    pub api_key: String,
+    pub frequency_penalty: f32,
+    pub presence_penalty: f32,
+    pub temperature: f32,
+    pub top_p: f32,
+}
+
+#[derive(Debug, Snafu, Diagnostic)]
+pub enum LlmError {
+    BuildClient {
+        source: rig::http_client::Error,
+    },
+    GetResponse {
+        source: rig::completion::PromptError,
+    },
 }
 
 impl LlmManager {
@@ -22,16 +44,12 @@ impl LlmManager {
     }
 
     /// Returns the response of the given character of the given history.
-    ///
-    /// The answer is trimmed to [`CHARACTER_LIMIT`] characters, in order to easily fit within Discord's
-    /// 4000-character limit for components (which includes other text like the footer or
-    /// the character's name).
     pub async fn request(
         &self,
         history: &History,
         prompt: Option<String>,
-    ) -> Result<String, crate::Error> {
-        let client = Client::new(&self.settings.api_key).unwrap();
+    ) -> Result<String, LlmError> {
+        let client = Client::new(&self.settings.api_key).context(BuildClientSnafu)?;
         let model = CompletionModel::new(client, &self.settings.model);
 
         let mut rig_messages: Vec<Message> = Vec::new();
@@ -49,7 +67,7 @@ impl LlmManager {
                 rig_messages,
             )
             .await
-            .context(LlmGenerationSnafu)?;
+            .context(GetResponseSnafu)?;
 
         Ok(response
             .graphemes(true)
@@ -69,7 +87,8 @@ impl LlmManager {
                 > + Send,
         >,
     > {
-        let client = Client::new(&self.settings.api_key).unwrap();
+        // TODO: make this not panic
+        let client = Client::new(&self.settings.api_key).expect("openrouter api key");
         let model = CompletionModel::new(client, &self.settings.model);
 
         let mut rig_messages: Vec<Message> = Vec::new();
@@ -87,5 +106,18 @@ impl LlmManager {
                 rig_messages,
             )
             .await
+    }
+}
+
+impl Default for ModelSettings {
+    fn default() -> Self {
+        Self {
+            model: "deepseek/deepseek-v3.2".to_owned(),
+            api_key: String::new(),
+            frequency_penalty: 0.0,
+            presence_penalty: 0.0,
+            temperature: 1.0,
+            top_p: 0.95,
+        }
     }
 }

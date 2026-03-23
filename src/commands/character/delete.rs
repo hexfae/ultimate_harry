@@ -1,13 +1,14 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, time::Duration};
 
 use crate::{
-    Context, DeferEphemeralOrBroadcast, DeleteInvokingMessageIfPrefix, Error, FIVE_SECONDS,
-    ONE_MINUTE, RespondToWith, Result, SendMessageSnafu, SendResponseSnafu, TEN_MINUTES,
+    Context, DeferSnafu, RespondToWith, Result, SendMessageSnafu, SendResponseSnafu,
+    commands::character::InteractionType,
     constants::{
-        ASK_DELETE_PHRASES, CANCELLED_PHRASES, DELETED_PHRASES, NO_CHARACTER_PHRASES, sample,
+        ASK_DELETE_PHRASES, CANCEL, CANCELLED_PHRASES, DELETE, DELETED_PHRASES, NEXT,
+        NO_CHARACTER_PHRASES, PREVIOUS, sample,
     },
     models::character::Character,
-    traits::{DeleteResponse, DeleteSelfAndInvokingMessageIfPrefix, SayWith},
+    traits::{DeleteResponse, SayWith},
 };
 use miette::Report;
 use poise::{
@@ -18,18 +19,12 @@ use poise::{
         small_fixed_array::{FixedArray, FixedString},
     },
 };
+use serenity::all::ReactionType;
 use snafu::ResultExt;
 use surrealdb::RecordId;
 use tokio::time::sleep;
 
-enum InteractionType {
-    Prev,
-    Next,
-    Confirm,
-    Cancel,
-}
-
-#[poise::command(slash_command, prefix_command, rename = "döda")]
+#[poise::command(slash_command, rename = "döda")]
 pub async fn delete(
     ctx: Context<'_>,
     #[rest]
@@ -37,15 +32,13 @@ pub async fn delete(
     #[description = "Gubbens namn"]
     name: String,
 ) -> Result<(), Report> {
-    ctx.defer_ephemeral_or_broadcast().await?;
+    ctx.defer_ephemeral().await.context(DeferSnafu)?;
 
     let characters: Vec<Character> = ctx.data().db.characters_by_similarity(&name).await?;
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
-        let msg = ctx.say_with(response).await?;
-        sleep(FIVE_SECONDS).await;
-        msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
+        ctx.say_with(response).await?;
         return Ok(());
     }
 
@@ -82,7 +75,7 @@ async fn display_pagination(
     let pages = characters_and_footer_text.len();
 
     // index into 0 is safe because we checked `is_empty()` earlier
-    let msg = send_initial_embed(ctx, characters_and_footer_text[0].clone()).await?;
+    send_initial_embed(ctx, characters_and_footer_text[0].clone()).await?;
 
     while let Some(interaction) = create_collector(ctx, custom_ids.clone()).await {
         let interaction_type = InteractionType::try_from(&interaction)?;
@@ -135,7 +128,6 @@ async fn display_pagination(
             .context(SendResponseSnafu)?;
     }
 
-    msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
     Ok(())
 }
 
@@ -146,7 +138,6 @@ async fn create_collector(
 ) -> Option<ComponentInteraction> {
     ComponentInteractionCollector::new(ctx.serenity_context())
         .custom_ids(custom_ids)
-        .timeout(TEN_MINUTES)
         .await
 }
 
@@ -173,16 +164,16 @@ pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
     Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         Cow::Owned(vec![
             CreateButton::new(confirm)
-                .emoji('🗑')
+                .emoji(DELETE.parse::<ReactionType>().expect("valid emoji"))
                 .style(ButtonStyle::Secondary),
             CreateButton::new(cancel)
-                .emoji('❌')
+                .emoji(CANCEL.parse::<ReactionType>().expect("valid emoji"))
                 .style(ButtonStyle::Secondary),
             CreateButton::new(prev)
-                .emoji('◀')
+                .emoji(PREVIOUS.parse::<ReactionType>().expect("valid emoji"))
                 .style(ButtonStyle::Secondary),
             CreateButton::new(next)
-                .emoji('▶')
+                .emoji(NEXT.parse::<ReactionType>().expect("valid emoji"))
                 .style(ButtonStyle::Secondary),
         ]),
     ))])
@@ -191,9 +182,8 @@ pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
 async fn delete_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> Result<()> {
     let response = sample(CANCELLED_PHRASES);
     ctx.respond_to_with(&interaction, response).await?;
-    sleep(FIVE_SECONDS).await;
+    sleep(Duration::from_secs(5)).await;
     ctx.delete_response(interaction).await?;
-    ctx.delete_invoking_message_if_prefix().await?;
     Ok(())
 }
 
@@ -219,7 +209,6 @@ async fn ask_for_confirmation(
             FixedString::from_string_trunc(confirm_id.clone()),
             FixedString::from_string_trunc(cancel_id.clone()),
         ]))
-        .timeout(ONE_MINUTE)
         .await)
 }
 
@@ -233,24 +222,7 @@ async fn delete_confirmed(
 
     let response = sample(DELETED_PHRASES);
     ctx.respond_to_with(&interaction, response).await?;
-    sleep(FIVE_SECONDS).await;
+    sleep(Duration::from_secs(5)).await;
     ctx.delete_response(interaction).await?;
-    ctx.delete_invoking_message_if_prefix().await?;
     Ok(())
-}
-
-impl TryFrom<&ComponentInteraction> for InteractionType {
-    type Error = Error;
-
-    fn try_from(input: &ComponentInteraction) -> Result<Self, Self::Error> {
-        match input.data.custom_id.as_str() {
-            i if i.ends_with("prev") => Ok(Self::Prev),
-            i if i.ends_with("next") => Ok(Self::Next),
-            i if i.ends_with("confirm") => Ok(Self::Confirm),
-            i if i.ends_with("cancel") => Ok(Self::Cancel),
-            i => Err(Error::UnknownInteraction {
-                found: i.to_string(),
-            }),
-        }
-    }
 }

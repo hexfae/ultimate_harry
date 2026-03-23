@@ -6,7 +6,8 @@ use snafu::{ResultExt, Snafu};
 use std::time::{Duration, Instant};
 
 use crate::{
-    CHARACTER_LIMIT, EditMessageSnafu, ReactSnafu, SendMessageSnafu,
+    EditMessageSnafu, ReactSnafu, SendMessageSnafu,
+    constants::CHARACTER_LIMIT,
     db::Database,
     llm::LlmManager,
     models::{character::Character, history::History},

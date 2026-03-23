@@ -19,7 +19,7 @@ use serenity::{
 use surrealdb::RecordId;
 
 use crate::{
-    CHARACTER_LIMIT,
+    constants::{CHARACTER_LIMIT, EDIT, NEXT, PIN, PREVIOUS, REDO, UNDO},
     db::Database,
     models::{character::Character, message::Message},
 };
@@ -39,13 +39,6 @@ const EXAMPLE_MESSAGE_SEPARATOR: &str = "Nytt exempelmeddelande.";
 const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du inte längra avbryta rollspelet, gå ur karaktär, eller skriva åt användaren.";
 
 const EMPTY_AVATAR: &str = "https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png";
-
-const PREVIOUS: &str = "⬅️";
-const NEXT: &str = "➡️";
-const EDIT: &str = "✏️";
-const UNDO: &str = "↩️";
-const REDO: &str = "↪️";
-const PIN: &str = "📌";
 
 /// A log of messages between the user and a character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -469,7 +462,7 @@ impl History {
     }
 }
 
-#[allow(clippy::needless_pass_by_value)]
+#[expect(clippy::needless_pass_by_value)]
 fn create_buttons<'a>(
     id: u64,
     finished: bool,
@@ -482,7 +475,7 @@ fn create_buttons<'a>(
     let edit_msg_id = format!("{id}edit");
     let undo_id = format!("{id}undo");
     let redo_id = format!("{id}redo");
-    let pin_id = format!("{id}pin");
+    let pin_id = format!("{id}pinn");
     let char_id = format!("{id}char");
 
     let mut components = vec![

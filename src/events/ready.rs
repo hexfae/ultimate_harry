@@ -1,7 +1,4 @@
-use crate::{
-    ONE_MINUTE,
-    commands::{character, chat, emoji, model, name, pin_channel},
-};
+use crate::commands::{character, chat, emoji, model, name, pin_channel};
 use miette::{Diagnostic, Report};
 use nanorand::{Rng, WyRand};
 use poise::serenity_prelude::{
@@ -9,7 +6,7 @@ use poise::serenity_prelude::{
 };
 use serenity::all::Ready;
 use snafu::{ResultExt, Snafu};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::info;
 
@@ -18,8 +15,6 @@ pub struct RegisterCommandInGuildError {
     source: poise::serenity_prelude::Error,
 }
 
-// event_handler has to return a future
-#[allow(clippy::unused_async)]
 pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<(), Report> {
     info!("ready");
     let ctx = ctx.clone();
@@ -48,7 +43,7 @@ pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<(), Report> 
                 ))),
                 url: None,
             }));
-            sleep(ONE_MINUTE).await;
+            sleep(Duration::from_mins(1)).await;
             let new_kills: u32 = rng.generate_range(0..=1010);
             let new_assists: u32 = rng.generate_range(0..=1020);
             let new_deaths: u32 = rng.generate_range(0..=1040);

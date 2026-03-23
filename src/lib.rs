@@ -10,41 +10,9 @@ pub mod traits;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 pub type Context<'a> = poise::Context<'a, app_state::AppState, miette::Report>;
 
-use serde::{Deserialize, Serialize};
-use snafu::Snafu;
-use std::time::Duration;
-pub use traits::{DeferEphemeralOrBroadcast, DeleteInvokingMessageIfPrefix, RespondToWith};
+pub use traits::RespondToWith;
 
-pub const CHARACTER_LIMIT: usize = 3900;
-pub const FIVE_SECONDS: Duration = Duration::from_secs(5);
-pub const ONE_MINUTE: Duration = Duration::from_mins(1);
-pub const TEN_MINUTES: Duration = Duration::from_mins(10);
-pub const ONE_HOUR: Duration = Duration::from_hours(1);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModelSettings {
-    pub model: String,
-    pub api_key: String,
-    pub frequency_penalty: f32,
-    pub presence_penalty: f32,
-    pub temperature: f32,
-    pub top_p: f32,
-}
-
-impl Default for ModelSettings {
-    fn default() -> Self {
-        Self {
-            model: "deepseek/deepseek-v3.2".to_owned(),
-            api_key: String::new(),
-            frequency_penalty: 0.0,
-            presence_penalty: 0.0,
-            temperature: 1.0,
-            top_p: 0.95,
-        }
-    }
-}
-
-#[derive(Debug, Snafu, miette::Diagnostic)]
+#[derive(Debug, snafu::Snafu, miette::Diagnostic)]
 pub enum Error {
     #[snafu(display("Kunde inte skicka ett meddelande: {source}"))]
     SendMessage {

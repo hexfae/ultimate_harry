@@ -1,8 +1,7 @@
 use std::{borrow::Cow, fmt::Display};
 
 use crate::{
-    Context, DeferEphemeralOrBroadcast, EditMessageSnafu, FIVE_SECONDS, ONE_MINUTE, Result,
-    SendMessageSnafu,
+    Context, DeferSnafu, EditMessageSnafu, Result, SendMessageSnafu,
     constants::{
         CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, CREATED_PHRASES, TIMEOUT_PHRASES, sample,
         sample_name,
@@ -11,7 +10,7 @@ use crate::{
         character::Character,
         modals::{CreateCharacterModal, SecondCreateCharacterModal},
     },
-    traits::{DeleteSelfAndInvokingMessageIfPrefix, EditWith, ShowModal},
+    traits::{EditWith, ShowModal},
 };
 use miette::Report;
 use poise::{
@@ -23,9 +22,8 @@ use poise::{
     },
 };
 use snafu::ResultExt;
-use tokio::time::sleep;
 
-#[poise::command(slash_command, prefix_command, rename = "skapa")]
+#[poise::command(slash_command, rename = "skapa")]
 pub async fn create(ctx: Context<'_>) -> Result<(), Report> {
     let msg = send_initial_message(ctx).await?;
     let Some(first_modal): Option<CreateCharacterModal> = show_modal_button(ctx, &msg).await?
@@ -49,13 +47,11 @@ pub async fn create(ctx: Context<'_>) -> Result<(), Report> {
     ctx.data().db.insert_character(character).await?;
     ctx.data().stats.character_created_by(ctx.author());
 
-    sleep(FIVE_SECONDS).await;
-    msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
     Ok(())
 }
 
 async fn send_initial_message(ctx: Context<'_>) -> Result<ReplyHandle<'_>> {
-    ctx.defer_ephemeral_or_broadcast().await?;
+    ctx.defer_ephemeral().await.context(DeferSnafu)?;
     ctx.send(create_reply_with_tempting_button(ctx.id()))
         .await
         .context(SendMessageSnafu)
@@ -68,20 +64,17 @@ async fn await_button_interaction(ctx: Context<'_>) -> Option<ComponentInteracti
         .custom_ids(FixedArray::from_vec_trunc(vec![
             FixedString::from_string_trunc(ctx.id().to_string()),
         ]))
-        .timeout(ONE_MINUTE)
         .await
 }
 
 async fn show_modal_button<M: Modal>(ctx: Context<'_>, msg: &ReplyHandle<'_>) -> Result<Option<M>> {
-    ctx.defer_ephemeral_or_broadcast().await?;
+    ctx.defer_ephemeral().await.context(DeferSnafu)?;
 
     if let Some(interaction) = await_button_interaction(ctx).await {
         ctx.serenity_context().show_modal(interaction).await
     } else {
         let response = sample(TIMEOUT_PHRASES);
         msg.edit_with(ctx, response).await?;
-        sleep(FIVE_SECONDS).await;
-        msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
         Ok(None)
     }
 }

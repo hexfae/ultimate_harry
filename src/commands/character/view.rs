@@ -1,11 +1,10 @@
 use std::borrow::Cow;
 
 use crate::{
-    Context, DeferEphemeralOrBroadcast, FIVE_SECONDS, Result, RetrieveMessageSnafu,
-    SendMessageSnafu,
-    constants::{NO_CHARACTER_PHRASES, sample},
+    Context, DeferSnafu, Result, RetrieveMessageSnafu, SendMessageSnafu,
+    constants::{NEXT, NO_CHARACTER_PHRASES, PREVIOUS, sample},
     models::character::{Character, CharacterPages},
-    traits::{DeleteSelfAndInvokingMessageIfPrefix, SayWith},
+    traits::SayWith,
 };
 use miette::Report;
 use poise::{
@@ -16,10 +15,6 @@ use poise::{
     },
 };
 use snafu::ResultExt;
-use tokio::time::sleep;
-
-const PREV: &str = "⬅️";
-const NEXT: &str = "➡️";
 
 #[poise::command(slash_command, rename = "visa")]
 pub async fn view(
@@ -29,7 +24,7 @@ pub async fn view(
     #[description = "Gubbens namn"]
     name: Option<String>,
 ) -> Result<(), Report> {
-    ctx.defer_ephemeral_or_broadcast().await?;
+    ctx.defer_ephemeral().await.context(DeferSnafu)?;
     let characters: Vec<Character> = match name {
         Some(name) => ctx.data().db.characters_by_similarity(name).await,
         None => ctx.data().db.characters_by_usage().await,
@@ -37,9 +32,7 @@ pub async fn view(
 
     let Some(first) = characters.first() else {
         let response = sample(NO_CHARACTER_PHRASES);
-        let msg = ctx.say_with(response).await?;
-        sleep(FIVE_SECONDS).await;
-        msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
+        ctx.say_with(response).await?;
         return Ok(());
     };
 
@@ -97,7 +90,9 @@ pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateCompon
             CreateButton::new(prev)
                 .disabled(disabled)
                 .style(ButtonStyle::Secondary)
-                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(PREV))),
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(
+                    PREVIOUS,
+                ))),
             CreateButton::new(next)
                 .disabled(disabled)
                 .style(ButtonStyle::Secondary)

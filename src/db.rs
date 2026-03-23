@@ -6,10 +6,15 @@ use snafu::{OptionExt, ResultExt, Snafu};
 use surrealdb::{RecordId, engine::any::Any};
 use surrealdb::{Surreal, opt::auth::Root};
 
-use crate::ModelSettings;
+use crate::llm::ModelSettings;
 use crate::models::{
     character::{Character, CharacterPages},
     history::History,
+};
+
+const ROOT: Root = Root {
+    username: "root",
+    password: "root",
 };
 
 const MOST_SIMILAR_TO: &str = "
@@ -87,12 +92,7 @@ impl Database {
             db.connect("ws://localhost:8000")
                 .await
                 .context(ConnectSnafu)?;
-            db.signin(Root {
-                username: "root",
-                password: "root",
-            })
-            .await
-            .context(ConnectSnafu)?;
+            db.signin(ROOT).await.context(ConnectSnafu)?;
         }
         #[cfg(not(debug_assertions))]
         db.connect("surrealkv://harry_database")
@@ -357,6 +357,6 @@ pub enum DatabaseError {
     NoCharacter,
     #[snafu(display("Error setting model settings: {source}"))]
     SetModelSettings { source: surrealdb::Error },
-    #[snafu(display("Error setting model settings: {source}"))]
+    #[snafu(display("Error setting pins channel: {source}"))]
     SetPinsChannel { source: surrealdb::Error },
 }

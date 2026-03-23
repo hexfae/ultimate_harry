@@ -1,6 +1,6 @@
 use crate::{
-    Context, DeferSnafu, DeleteMessageSnafu, DeleteResponseSnafu, EditMessageSnafu,
-    SendMessageSnafu, SendResponseSnafu, ShowModalSnafu, TEN_MINUTES,
+    Context, DeleteResponseSnafu, EditMessageSnafu, SendMessageSnafu, SendResponseSnafu,
+    ShowModalSnafu,
 };
 use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal_on_component_interaction,
@@ -11,48 +11,6 @@ use poise::{
 use snafu::ResultExt;
 
 type Result<T = ()> = std::result::Result<T, crate::Error>;
-
-/// If this is an application command,
-/// `poise::structs::context::ApplicationContext::defer_ephemeral` is called.
-///
-/// If this is a prefix command, a typing broadcast is started
-/// until the return value is dropped.
-pub trait DeferEphemeralOrBroadcast {
-    #[allow(async_fn_in_trait)] // i'm only using this in my code
-    async fn defer_ephemeral_or_broadcast(&self) -> Result;
-}
-
-impl DeferEphemeralOrBroadcast for Context<'_> {
-    /// If this is an application command,
-    /// `poise::structs::context::ApplicationContext::defer_ephemeral` is called.
-    ///
-    /// If this is a prefix command, a typing broadcast is started
-    /// until the return value is dropped.
-    async fn defer_ephemeral_or_broadcast(&self) -> Result {
-        match self {
-            Context::Application(_) => self.defer_ephemeral().await,
-            Context::Prefix(_) => self.defer_or_broadcast().await.map(|_| ()),
-        }
-        .context(DeferSnafu)
-    }
-}
-
-pub trait DeleteInvokingMessageIfPrefix {
-    #[allow(async_fn_in_trait)] // i'm only using this in my code
-    async fn delete_invoking_message_if_prefix(&self) -> Result;
-}
-
-impl DeleteInvokingMessageIfPrefix for Context<'_> {
-    async fn delete_invoking_message_if_prefix(&self) -> Result {
-        if let Context::Prefix(ctx) = self {
-            ctx.msg
-                .delete(ctx.http(), None)
-                .await
-                .context(DeleteMessageSnafu)?;
-        }
-        Ok(())
-    }
-}
 
 pub trait DeleteResponse {
     #[expect(async_fn_in_trait)] // i'm only using this in my code
@@ -65,24 +23,6 @@ impl DeleteResponse for Context<'_> {
             .delete_response(self.http())
             .await
             .context(DeleteResponseSnafu)
-    }
-}
-
-pub trait DeleteSelfAndInvokingMessageIfPrefix {
-    #[allow(async_fn_in_trait)] // i'm only using this in my code
-    async fn delete_self_and_invoking_message_if_prefix(&self, ctx: Context<'_>) -> Result;
-}
-
-impl DeleteSelfAndInvokingMessageIfPrefix for ReplyHandle<'_> {
-    async fn delete_self_and_invoking_message_if_prefix(&self, ctx: Context<'_>) -> Result {
-        self.delete(ctx).await.context(DeleteMessageSnafu)?;
-        if let Context::Prefix(ctx) = ctx {
-            ctx.msg
-                .delete(ctx.http(), None)
-                .await
-                .context(DeleteMessageSnafu)?;
-        }
-        Ok(())
     }
 }
 
@@ -105,7 +45,7 @@ impl EditWith for ReplyHandle<'_> {
 }
 
 pub trait RespondToWith {
-    #[allow(async_fn_in_trait)] // i'm only using this in my code
+    #[expect(async_fn_in_trait)] // i'm only using this in my code
     async fn respond_to_with(
         &self,
         interaction: &ComponentInteraction,
@@ -152,7 +92,7 @@ pub trait ShowModal<M: Modal> {
 
 impl<M: Modal> ShowModal<M> for poise::serenity_prelude::Context {
     async fn show_modal(&self, interaction: ComponentInteraction) -> Result<Option<M>> {
-        execute_modal_on_component_interaction::<M>(self, interaction, None, Some(TEN_MINUTES))
+        execute_modal_on_component_interaction::<M>(self, interaction, None, None)
             .await
             .context(ShowModalSnafu)
     }

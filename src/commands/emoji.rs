@@ -1,22 +1,15 @@
-use crate::{
-    Context, DeferEphemeralOrBroadcast, FIVE_SECONDS, SendMessageSnafu,
-    traits::DeleteSelfAndInvokingMessageIfPrefix,
-};
+use crate::{Context, DeferSnafu, SendMessageSnafu};
 use miette::Report;
 use poise::serenity_prelude::ReactionType;
 use snafu::ResultExt;
-use tokio::time::sleep;
 
-#[poise::command(slash_command, prefix_command)]
+#[poise::command(slash_command)]
 pub async fn emoji(ctx: Context<'_>, emoji: String) -> Result<(), Report> {
-    ctx.defer_ephemeral_or_broadcast().await?;
+    ctx.defer_ephemeral().await.context(DeferSnafu)?;
     let Ok(emoji) = ReactionType::try_from(emoji) else {
-        let msg = ctx
-            .say("Det där var ingen emoji… (eller så gick någonting fel!)")
+        ctx.say("Det där var ingen emoji… (eller så gick någonting fel!)")
             .await
             .context(SendMessageSnafu)?;
-        sleep(FIVE_SECONDS).await;
-        msg.delete_self_and_invoking_message_if_prefix(ctx).await?;
         return Ok(());
     };
     ctx.data()

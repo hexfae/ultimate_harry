@@ -16,9 +16,9 @@ use ulid::Ulid;
 use url::Url;
 
 use crate::{
-    ModelSettings,
     constants::{NO_PHRASES, YES_PHRASES, sample},
     db::Database,
+    llm::ModelSettings,
     models::modals::{
         CreateCharacterModal, EditCharacterModal, SecondCreateCharacterModal,
         SecondEditCharacterModal,
@@ -232,10 +232,8 @@ impl Character {
     }
 
     #[must_use]
-    // .clone() instead of .as_ref() because the only thing
-    // we can do with ModelSettings requires it to be owned
     pub fn model_settings(&self) -> Option<ModelSettings> {
-        self.model_settings.clone()
+        self.model_settings.to_owned()
     }
 
     /// Returns e.g. ` | 75% namnlikhet` if `Some(0.75)`, otherwise returns an empty String.

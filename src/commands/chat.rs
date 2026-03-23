@@ -1,14 +1,13 @@
 use crate::{
-    Context,
+    Context, DeferSnafu, RetrieveMessageSnafu, SendMessageSnafu,
     commands::autocomplete,
     constants::{NO_CHARACTER_PHRASES, sample},
     models::{character::Character, history::History},
-    traits::{DeleteSelfAndInvokingMessageIfPrefix, SayWith},
+    traits::SayWith,
 };
-use miette::{IntoDiagnostic, Report};
+use miette::Report;
 use poise::serenity_prelude::MessageId;
-use std::time::Duration;
-use tokio::time::sleep;
+use snafu::ResultExt;
 
 #[poise::command(slash_command, rename = "prata")]
 pub async fn chat(
@@ -19,7 +18,7 @@ pub async fn chat(
     #[autocomplete = autocomplete]
     name: Option<String>,
 ) -> Result<(), Report> {
-    ctx.defer_or_broadcast().await.into_diagnostic()?;
+    ctx.defer_or_broadcast().await.context(DeferSnafu)?;
 
     let db = &ctx.data().db;
     let stats = &ctx.data().stats;
@@ -32,11 +31,7 @@ pub async fn chat(
 
     let Some(character) = characters.first() else {
         let response = sample(NO_CHARACTER_PHRASES);
-        let msg = ctx.say_with(response).await.into_diagnostic()?;
-        sleep(Duration::from_secs(5)).await;
-        msg.delete_self_and_invoking_message_if_prefix(ctx)
-            .await
-            .into_diagnostic()?;
+        ctx.say_with(response).await?;
         return Ok(());
     };
 
@@ -47,11 +42,11 @@ pub async fn chat(
     let msg = ctx
         .send(history.to_response(character, id, &ctx.data().db).await)
         .await
-        .into_diagnostic()?;
-    let actual_id = msg.message().await.into_diagnostic()?.id;
+        .context(SendMessageSnafu)?;
+    let actual_id = msg.message().await.context(RetrieveMessageSnafu)?.id;
 
     history.set_id(actual_id);
-    db.insert_history(history).await.into_diagnostic()?;
+    db.insert_history(history).await?;
 
     stats.conversation_started_by(ctx.author().id);
 

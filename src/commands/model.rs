@@ -1,4 +1,4 @@
-use crate::{Context, DeferEphemeralOrBroadcast, SendMessageSnafu};
+use crate::{Context, DeferSnafu, SendMessageSnafu};
 use miette::Report;
 use snafu::ResultExt;
 
@@ -12,7 +12,7 @@ pub async fn model(
     temperature: Option<f32>,
     top_p: Option<f32>,
 ) -> Result<(), Report> {
-    ctx.defer_ephemeral_or_broadcast().await?;
+    ctx.defer_ephemeral().await.context(DeferSnafu)?;
     let mut model_settings = ctx.data().db.model_settings().await;
     if let Some(model) = model {
         model_settings.model = model;

@@ -71,7 +71,7 @@ impl TryFrom<&str> for InteractionKind {
             "edit" => Ok(Self::Edit),
             "undo" => Ok(Self::Undo),
             "redo" => Ok(Self::Redo),
-            "pin" => Ok(Self::Pin),
+            "pinn" => Ok(Self::Pin),
             "char" => Ok(Self::Char),
             _ => Err(UnknownInteraction),
         }

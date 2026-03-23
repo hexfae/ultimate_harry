@@ -9,9 +9,6 @@ pub struct AppState {
     pub stats: Arc<Statistics>,
 }
 
-pub type Error = miette::Report;
-pub type Context<'a> = poise::Context<'a, AppState, Error>;
-
 impl AppState {
     pub async fn new() -> Result<Self, DatabaseError> {
         let db = Database::new().await?;

@@ -1,5 +1,5 @@
 use crate::{
-    CHARACTER_LIMIT, EditMessageSnafu, SendResponseSnafu, db::Database,
+    EditMessageSnafu, SendResponseSnafu, constants::CHARACTER_LIMIT, db::Database,
     events::message::history_and_character_of, llm::LlmManager,
 };
 use miette::{Diagnostic, Report};

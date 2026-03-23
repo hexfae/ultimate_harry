@@ -6,16 +6,12 @@ use snafu::{ResultExt, Snafu};
 use std::{
     fs::{read_to_string, write},
     path::Path,
-    sync::LazyLock,
 };
 use tracing::warn;
 
 type Result<T, E = StatisticsError> = std::result::Result<T, E>;
 
 const STATISTICS_PATH: &str = "statistics.toml";
-
-pub static STATISTICS: LazyLock<Statistics> =
-    LazyLock::new(|| Statistics::load().expect("valid statistics"));
 
 #[derive(Serialize, Deserialize)]
 pub struct Statistics(DashMap<UserId, UserStatistic>);
