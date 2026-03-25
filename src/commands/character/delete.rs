@@ -1,16 +1,16 @@
 use std::{borrow::Cow, time::Duration};
 
 use crate::{
-    Context, DeferSnafu, RespondToWith, Result, SendMessageSnafu, SendResponseSnafu,
-    commands::character::InteractionType,
+    Context, Result,
+    commands::character::interaction::InteractionType,
     constants::{
         ASK_DELETE_PHRASES, CANCEL, CANCELLED_PHRASES, DELETE, DELETED_PHRASES, NEXT,
         NO_CHARACTER_PHRASES, PREVIOUS, sample,
     },
     models::character::Character,
-    traits::{DeleteResponse, SayWith},
+    traits::RespondToWith,
 };
-use miette::Report;
+use miette::{Diagnostic, Report};
 use poise::{
     CreateReply, ReplyHandle,
     serenity_prelude::{
@@ -20,9 +20,37 @@ use poise::{
     },
 };
 use serenity::all::ReactionType;
-use snafu::ResultExt;
+use snafu::{ResultExt, Snafu};
 use surrealdb::RecordId;
 use tokio::time::sleep;
+
+#[derive(Debug, Snafu, Diagnostic)]
+pub enum DeleteCharacterError {
+    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
+    #[diagnostic(
+        help("Detta kan bero på nätverksproblem eller Discord-tjänsten är otillgänglig"),
+        code(commands::character::delete::defer)
+    )]
+    Defer { source: serenity::Error },
+    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen om en stund"),
+        code(commands::character::delete::send_message)
+    )]
+    SendMessage { source: serenity::Error },
+    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
+    #[diagnostic(
+        help("Detta kan bero på att interaktionen har gått ut"),
+        code(commands::character::delete::send_response)
+    )]
+    SendResponse { source: serenity::Error },
+    #[snafu(display("Kunde inte ta bort svaret: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller starta om interaktionen"),
+        code(commands::character::delete::delete_response)
+    )]
+    DeleteResponse { source: serenity::Error },
+}
 
 #[poise::command(slash_command, rename = "döda")]
 pub async fn delete(
@@ -38,7 +66,7 @@ pub async fn delete(
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
-        ctx.say_with(response).await?;
+        ctx.say(response).await.context(SendMessageSnafu)?;
         return Ok(());
     }
 
@@ -150,9 +178,10 @@ async fn send_initial_embed(
         .into_embed_with_footer_text(footer_text, &ctx.data().db)
         .await;
     let buttons = create_buttons(id);
-    ctx.send(CreateReply::default().embed(embed).components(buttons))
+    Ok(ctx
+        .send(CreateReply::default().embed(embed).components(buttons))
         .await
-        .context(SendMessageSnafu)
+        .context(SendMessageSnafu)?)
 }
 
 #[must_use]
@@ -181,9 +210,14 @@ pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
 
 async fn delete_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> Result<()> {
     let response = sample(CANCELLED_PHRASES);
-    ctx.respond_to_with(&interaction, response).await?;
+    ctx.respond_to_with(&interaction, response)
+        .await
+        .context(SendMessageSnafu)?;
     sleep(Duration::from_secs(5)).await;
-    ctx.delete_response(interaction).await?;
+    interaction
+        .delete_response(ctx.http())
+        .await
+        .context(DeleteResponseSnafu)?;
     Ok(())
 }
 
@@ -216,13 +250,18 @@ async fn delete_confirmed(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
     id: &RecordId,
-) -> Result<(), Report> {
+) -> Result<()> {
     ctx.data().db.delete_character(id, ctx.author()).await?;
     ctx.data().stats.character_deleted_by(ctx.author());
 
     let response = sample(DELETED_PHRASES);
-    ctx.respond_to_with(&interaction, response).await?;
+    ctx.respond_to_with(&interaction, response)
+        .await
+        .context(SendMessageSnafu)?;
     sleep(Duration::from_secs(5)).await;
-    ctx.delete_response(interaction).await?;
+    interaction
+        .delete_response(ctx.http())
+        .await
+        .context(DeleteResponseSnafu)?;
     Ok(())
 }

@@ -1,7 +1,18 @@
-use crate::{Context, DeferSnafu, SendMessageSnafu};
-use miette::Report;
+use crate::Context;
+use miette::{Diagnostic, Report};
 use poise::serenity_prelude::UserId;
-use snafu::ResultExt;
+use snafu::{ResultExt, Snafu};
+
+#[derive(Debug, Snafu, Diagnostic)]
+#[diagnostic(code(commands::name::change_name))]
+enum ChangeNameError {
+    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
+    #[diagnostic(help("Försök igen om en liten stund"))]
+    Defer { source: serenity::Error },
+    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
+    #[diagnostic(help("Det kan hända att meddelandet är för långt eller att kanalen är full"))]
+    SendMessage { source: serenity::Error },
+}
 
 #[poise::command(slash_command)]
 pub async fn name(

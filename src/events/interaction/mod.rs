@@ -12,13 +12,13 @@ use undo::undo;
 
 use crate::db::Database;
 
-mod character;
-mod edit;
-mod next;
-mod pin;
-mod previous;
-mod redo;
-mod undo;
+pub mod character;
+pub mod edit;
+pub mod next;
+pub mod pin;
+pub mod previous;
+pub mod redo;
+pub mod undo;
 
 pub async fn interaction_create(
     ctx: &Context,
@@ -59,7 +59,11 @@ enum InteractionKind {
 }
 
 #[derive(Debug, Snafu, Diagnostic)]
-struct UnknownInteraction;
+#[snafu(display("Okänd interaktion: {custom_id}"))]
+struct UnknownInteraction {
+    #[source_code]
+    custom_id: String,
+}
 
 impl TryFrom<&str> for InteractionKind {
     type Error = UnknownInteraction;
@@ -73,7 +77,9 @@ impl TryFrom<&str> for InteractionKind {
             "redo" => Ok(Self::Redo),
             "pinn" => Ok(Self::Pin),
             "char" => Ok(Self::Char),
-            _ => Err(UnknownInteraction),
+            _ => Err(UnknownInteraction {
+                custom_id: value.to_owned(),
+            }),
         }
     }
 }
@@ -85,8 +91,12 @@ impl TryFrom<&ComponentInteraction> for UltimateInteraction {
         let id = &interaction.data.custom_id;
         let (id, kind) = id
             .split_at_checked((id.len() - 4) as usize)
-            .ok_or(UnknownInteraction)?;
-        let id = MessageId::from(id.parse::<u64>().map_err(|_| UnknownInteraction)?);
+            .ok_or_else(|| UnknownInteraction {
+                custom_id: id.to_string(),
+            })?;
+        let id = MessageId::from(id.parse::<u64>().map_err(|_| UnknownInteraction {
+            custom_id: id.to_owned(),
+        })?);
         let kind = kind.try_into()?;
         Ok(Self { id, kind })
     }

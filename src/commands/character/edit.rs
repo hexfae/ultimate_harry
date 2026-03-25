@@ -1,9 +1,8 @@
 use std::{borrow::Cow, time::Duration};
 
 use crate::{
-    Context, DeferSnafu, DeleteResponseSnafu, EditResponseSnafu, RespondToWith, Result,
-    SendMessageSnafu, SendResponseSnafu, ShowModalSnafu,
-    commands::character::InteractionType,
+    Context, Result,
+    commands::character::interaction::InteractionType,
     constants::{
         CANCEL, CANCELLED_PHRASES, CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, EDIT, EDITED_PHRASES,
         NEXT, NO_CHARACTER_PHRASES, PREVIOUS, sample, sample_name,
@@ -12,9 +11,9 @@ use crate::{
         character::Character,
         modals::{EditCharacterModal, SecondEditCharacterModal},
     },
-    traits::SayWith,
+    traits::RespondToWith,
 };
-use miette::Report;
+use miette::{Diagnostic, Report};
 use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal_on_component_interaction,
     serenity_prelude::{
@@ -24,8 +23,56 @@ use poise::{
         small_fixed_array::{FixedArray, FixedString},
     },
 };
-use snafu::ResultExt;
+use snafu::{ResultExt, Snafu};
 use tokio::time::sleep;
+
+#[derive(Debug, Snafu, Diagnostic)]
+enum EditCharacterError {
+    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
+    #[diagnostic(
+        help("Detta kan bero på nätverksproblem eller Discord-tjänsten är otillgänglig"),
+        code(commands::character::edit)
+    )]
+    Defer { source: serenity::Error },
+    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
+    #[diagnostic(
+        help("Det kan hända att meddelandet är för långt eller att kanalen är full"),
+        code(commands::character::edit)
+    )]
+    SendMessage { source: serenity::Error },
+    #[snafu(display("Kunde inte visa modal: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller starta om interaktionen"),
+        code(commands::character::edit)
+    )]
+    ShowModal { source: serenity::Error },
+    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
+    #[diagnostic(
+        help("Detta kan bero på att interaktionen har gått ut"),
+        code(commands::character::edit)
+    )]
+    SendResponse { source: serenity::Error },
+    #[snafu(display("Kunde inte redigera svaret: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller starta om interaktionen"),
+        code(commands::character::edit)
+    )]
+    EditResponse { source: serenity::Error },
+    #[snafu(display("Kunde inte ta bort svaret: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller starta om interaktionen"),
+        code(commands::character::edit)
+    )]
+    DeleteResponse { source: serenity::Error },
+    #[snafu(transparent)]
+    #[diagnostic(transparent)]
+    Database { source: crate::db::DatabaseError },
+    #[snafu(transparent)]
+    #[diagnostic(transparent)]
+    Interaction {
+        source: super::interaction::InteractionError,
+    },
+}
 
 #[poise::command(slash_command, rename = "ändra")]
 pub async fn edit(
@@ -41,7 +88,7 @@ pub async fn edit(
 
     if characters.is_empty() {
         let response = sample(NO_CHARACTER_PHRASES);
-        ctx.say_with(response).await?;
+        ctx.say(response).await.context(SendMessageSnafu)?;
         return Ok(());
     }
 
@@ -66,7 +113,7 @@ pub async fn edit(
 async fn display_pagination(
     ctx: Context<'_>,
     characters_and_footer_text: Vec<(Character, String)>,
-) -> Result<(), Report> {
+) -> Result<(), EditCharacterError> {
     let id = ctx.id();
     let custom_ids = FixedArray::from_vec_trunc(
         ["prev", "next", "confirm", "cancel"]
@@ -129,7 +176,7 @@ async fn display_pagination(
 async fn send_initial_embed(
     ctx: Context<'_>,
     (character, footer_text): (Character, String),
-) -> Result<ReplyHandle<'_>> {
+) -> Result<ReplyHandle<'_>, EditCharacterError> {
     let id = ctx.id();
     let embed = character
         .into_embed_with_footer_text(footer_text, &ctx.data().db)
@@ -168,7 +215,7 @@ async fn edit_confirmed(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
     mut character: Character,
-) -> Result<(), Report> {
+) -> Result<(), EditCharacterError> {
     let Some(modal) = show_first_modal::<EditCharacterModal>(ctx, interaction.clone()).await?
     else {
         return Ok(());
@@ -209,9 +256,14 @@ async fn edit_confirmed(
     Ok(())
 }
 
-async fn edit_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> Result<()> {
+async fn edit_cancelled(
+    ctx: Context<'_>,
+    interaction: ComponentInteraction,
+) -> Result<(), EditCharacterError> {
     let response = sample(CANCELLED_PHRASES);
-    ctx.respond_to_with(&interaction, response).await?;
+    ctx.respond_to_with(&interaction, response)
+        .await
+        .context(SendMessageSnafu)?;
     sleep(Duration::from_secs(5)).await;
     interaction
         .delete_response(ctx.http())
@@ -223,7 +275,7 @@ async fn edit_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> 
 async fn show_first_modal<M: Modal>(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
-) -> Result<Option<M>> {
+) -> Result<Option<M>, EditCharacterError> {
     execute_modal_on_component_interaction::<M>(ctx.serenity_context(), interaction, None, None)
         .await
         .context(ShowModalSnafu)
@@ -232,7 +284,7 @@ async fn show_first_modal<M: Modal>(
 async fn show_second_modal<M: Modal>(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
-) -> Result<Option<M>> {
+) -> Result<Option<M>, EditCharacterError> {
     send_first_tempting_button(ctx, interaction).await?;
     let id = ctx.id().to_string();
     let author = ctx.author().id;
@@ -255,7 +307,7 @@ async fn show_second_modal<M: Modal>(
 async fn send_first_tempting_button(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
-) -> Result<()> {
+) -> Result<(), EditCharacterError> {
     let id = ctx.id().to_string();
     let click_me = sample(CLICK_ME_PHRASES);
     let click_below = sample(CLICK_BELOW_PHRASES);

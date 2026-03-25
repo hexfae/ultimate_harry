@@ -1,38 +1,28 @@
-use crate::{
-    Context, DeleteResponseSnafu, EditMessageSnafu, SendMessageSnafu, SendResponseSnafu,
-    ShowModalSnafu,
-};
+use crate::Context;
+use miette::Diagnostic;
 use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal_on_component_interaction,
     serenity_prelude::{
         ComponentInteraction, CreateInteractionResponse, CreateInteractionResponseMessage,
     },
 };
-use snafu::ResultExt;
-
-type Result<T = ()> = std::result::Result<T, crate::Error>;
-
-pub trait DeleteResponse {
-    #[expect(async_fn_in_trait)] // i'm only using this in my code
-    async fn delete_response(&self, interaction: ComponentInteraction) -> Result;
-}
-
-impl DeleteResponse for Context<'_> {
-    async fn delete_response(&self, interaction: ComponentInteraction) -> Result {
-        interaction
-            .delete_response(self.http())
-            .await
-            .context(DeleteResponseSnafu)
-    }
-}
+use snafu::{ResultExt, Snafu};
 
 pub trait EditWith {
     #[expect(async_fn_in_trait)] // i'm only using this in my code
-    async fn edit_with(&self, ctx: Context<'_>, content: impl AsRef<str>) -> Result;
+    async fn edit_with(
+        &self,
+        ctx: Context<'_>,
+        content: impl AsRef<str>,
+    ) -> Result<(), serenity::Error>;
 }
 
 impl EditWith for ReplyHandle<'_> {
-    async fn edit_with(&self, ctx: Context<'_>, content: impl AsRef<str>) -> Result {
+    async fn edit_with(
+        &self,
+        ctx: Context<'_>,
+        content: impl AsRef<str>,
+    ) -> Result<(), serenity::Error> {
         self.edit(
             ctx,
             CreateReply::default()
@@ -40,7 +30,6 @@ impl EditWith for ReplyHandle<'_> {
                 .components(vec![]),
         )
         .await
-        .context(EditMessageSnafu)
     }
 }
 
@@ -50,7 +39,7 @@ pub trait RespondToWith {
         &self,
         interaction: &ComponentInteraction,
         message: impl AsRef<str>,
-    ) -> Result;
+    ) -> Result<(), serenity::Error>;
 }
 
 impl RespondToWith for Context<'_> {
@@ -58,7 +47,7 @@ impl RespondToWith for Context<'_> {
         &self,
         interaction: &ComponentInteraction,
         message: impl AsRef<str>,
-    ) -> Result {
+    ) -> Result<(), serenity::Error> {
         interaction
             .create_response(
                 self.http(),
@@ -70,28 +59,40 @@ impl RespondToWith for Context<'_> {
                 ),
             )
             .await
-            .context(SendResponseSnafu)
     }
 }
 
-pub trait SayWith {
-    #[expect(async_fn_in_trait)] // i'm only using this in my code
-    async fn say_with(&self, message: impl AsRef<str>) -> Result<ReplyHandle<'_>>;
+#[derive(Debug, Snafu, Diagnostic)]
+#[snafu(display("Kunde inte visa modal: {source}"))]
+#[snafu(visibility(pub))]
+#[diagnostic(
+    code(traits::show_modal),
+    help("Försök igen eller starta om interaktionen")
+)]
+pub struct ShowModalError {
+    #[snafu(source)]
+    pub source: serenity::Error,
 }
 
-impl SayWith for Context<'_> {
-    async fn say_with(&self, message: impl AsRef<str>) -> Result<ReplyHandle<'_>> {
-        self.say(message.as_ref()).await.context(SendMessageSnafu)
+impl From<serenity::Error> for ShowModalError {
+    fn from(source: serenity::Error) -> Self {
+        ShowModalError { source }
     }
 }
 
 pub trait ShowModal<M: Modal> {
     #[expect(async_fn_in_trait)] // i'm only using this in my code
-    async fn show_modal(&self, interaction: ComponentInteraction) -> Result<Option<M>>;
+    async fn show_modal(
+        &self,
+        interaction: ComponentInteraction,
+    ) -> Result<Option<M>, ShowModalError>;
 }
 
 impl<M: Modal> ShowModal<M> for poise::serenity_prelude::Context {
-    async fn show_modal(&self, interaction: ComponentInteraction) -> Result<Option<M>> {
+    async fn show_modal(
+        &self,
+        interaction: ComponentInteraction,
+    ) -> Result<Option<M>, ShowModalError> {
         execute_modal_on_component_interaction::<M>(self, interaction, None, None)
             .await
             .context(ShowModalSnafu)

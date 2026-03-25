@@ -1,6 +1,25 @@
-use crate::{Context, DeferSnafu, SendMessageSnafu};
-use miette::Report;
-use snafu::ResultExt;
+use crate::Context;
+use miette::{Diagnostic, Report};
+use snafu::{ResultExt, Snafu};
+
+#[derive(Debug, Snafu, Diagnostic)]
+enum ModelSettingsError {
+    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
+    #[diagnostic(help("Försök igen om en liten stund"), code(commands::model::defer))]
+    Defer { source: serenity::Error },
+    #[snafu(display("Kunde inte spara modellinställningar: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att inställningarna är giltiga"),
+        code(commands::model::save_settings)
+    )]
+    SaveSettings { source: crate::db::DatabaseError },
+    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
+        code(commands::model::send_message)
+    )]
+    SendMessage { source: serenity::Error },
+}
 
 #[poise::command(slash_command)]
 pub async fn model(
@@ -32,7 +51,11 @@ pub async fn model(
     if let Some(top_p) = top_p {
         model_settings.top_p = top_p;
     }
-    ctx.data().db.upsert_model_settings(model_settings).await?;
+    ctx.data()
+        .db
+        .upsert_model_settings(model_settings)
+        .await
+        .context(SaveSettingsSnafu)?;
     ctx.say("done").await.context(SendMessageSnafu)?;
     Ok(())
 }

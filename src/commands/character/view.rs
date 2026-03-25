@@ -1,12 +1,11 @@
 use std::borrow::Cow;
 
 use crate::{
-    Context, DeferSnafu, Result, RetrieveMessageSnafu, SendMessageSnafu,
+    Context, Result,
     constants::{NEXT, NO_CHARACTER_PHRASES, PREVIOUS, sample},
     models::character::{Character, CharacterPages},
-    traits::SayWith,
 };
-use miette::Report;
+use miette::{Diagnostic, Report};
 use poise::{
     CreateReply,
     serenity_prelude::{
@@ -14,7 +13,29 @@ use poise::{
         small_fixed_array::FixedString,
     },
 };
-use snafu::ResultExt;
+use snafu::{ResultExt, Snafu};
+
+#[derive(Debug, Snafu, Diagnostic)]
+enum ViewCharacterError {
+    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
+    #[diagnostic(
+        help("Detta kan bero på att discord inte svarar. Försök igen."),
+        code(commands::character::view::defer)
+    )]
+    Defer { source: serenity::Error },
+    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
+    #[diagnostic(
+        help("Det kan hända att meddelandet är för långt eller att kanalen är full."),
+        code(commands::character::view::send_message)
+    )]
+    SendMessage { source: serenity::Error },
+    #[snafu(display("Kunde inte hämta meddelandet: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att meddelandet fortfarande finns."),
+        code(commands::character::view::retrieve_message)
+    )]
+    RetrieveMessage { source: serenity::Error },
+}
 
 #[poise::command(slash_command, rename = "visa")]
 pub async fn view(
@@ -32,7 +53,7 @@ pub async fn view(
 
     let Some(first) = characters.first() else {
         let response = sample(NO_CHARACTER_PHRASES);
-        ctx.say_with(response).await?;
+        ctx.say(response).await.context(SendMessageSnafu)?;
         return Ok(());
     };
 
@@ -65,20 +86,18 @@ async fn send_message<'a>(
     character: &'a Character,
     footer_text: String,
     total_pages: usize,
-) -> Result<MessageId> {
+) -> Result<MessageId, Report> {
     let id = ctx.id();
     let embed = character
         .clone()
         .into_embed_with_footer_text(footer_text, &ctx.data().db)
         .await;
     let buttons = create_buttons(id, total_pages);
-    ctx.send(CreateReply::default().embed(embed).components(buttons))
+    let msg = ctx
+        .send(CreateReply::default().embed(embed).components(buttons))
         .await
-        .context(SendMessageSnafu)?
-        .message()
-        .await
-        .context(RetrieveMessageSnafu)
-        .map(|m| m.id)
+        .context(SendMessageSnafu)?;
+    Ok(msg.message().await.context(RetrieveMessageSnafu)?.id)
 }
 
 pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateComponent<'static>]> {

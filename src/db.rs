@@ -343,20 +343,52 @@ impl From<RecordId> for NextVersion {
 
 #[derive(Debug, Snafu, Diagnostic)]
 pub enum DatabaseError {
-    #[snafu(display("Error connecting to the database: {source}"))]
+    #[snafu(display("Kunde inte ansluta till databasen: {source}"))]
+    #[diagnostic(
+        help("Kontrollera att databasen körs och är tillgänglig på adressen"),
+        code(database::connect)
+    )]
     Connect { source: surrealdb::Error },
-    #[snafu(display("Error getting from the database: {source}"))]
+    #[snafu(display("Kunde inte hämta från databasen: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att posten finns"),
+        code(database::get)
+    )]
     Get { source: surrealdb::Error },
-    #[snafu(display("Error inserting into the database: {source}"))]
+    #[snafu(display("Kunde inte infoga i databasen: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att datat är korrekt"),
+        code(database::insert)
+    )]
     Insert { source: surrealdb::Error },
-    #[snafu(display("Error deleting from the database: {source}"))]
+    #[snafu(display("Kunde inte ta bort från databasen: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att posten finns"),
+        code(database::delete)
+    )]
     Delete { source: surrealdb::Error },
-    #[snafu(display("Error updating the database: {source}"))]
+    #[snafu(display("Kunde inte uppdatera databasen: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att posten finns"),
+        code(database::update)
+    )]
     Update { source: surrealdb::Error },
-    #[snafu(display("No such character found in the database"))]
+    #[snafu(display("Ingen sådan karaktär hittades i databasen"))]
+    #[diagnostic(
+        help("Kontrollera namnet eller skapa en ny karaktär först"),
+        code(database::no_character)
+    )]
     NoCharacter,
-    #[snafu(display("Error setting model settings: {source}"))]
+    #[snafu(display("Kunde inte spara modellinställningar: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att inställningarna är giltiga"),
+        code(database::set_model_settings)
+    )]
     SetModelSettings { source: surrealdb::Error },
-    #[snafu(display("Error setting pins channel: {source}"))]
+    #[snafu(display("Kunde inte spara kanal för pins: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att kanalen är giltig"),
+        code(database::set_pins_channel)
+    )]
     SetPinsChannel { source: surrealdb::Error },
 }

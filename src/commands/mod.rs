@@ -1,4 +1,4 @@
-mod character;
+pub mod character;
 mod chat;
 mod emoji;
 mod model;

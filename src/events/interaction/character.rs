@@ -1,14 +1,27 @@
 use crate::{
-    EditMessageSnafu, SendMessageSnafu, SendResponseSnafu, db::Database,
-    events::message::history_and_character_of, llm::LlmManager, models::message::Message,
+    db::Database, events::message::history_and_character_of, llm::LlmManager,
+    models::message::Message,
 };
-use miette::Report;
+use miette::{Diagnostic, Report};
 use poise::serenity_prelude::{
     ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
 use serenity::all::ComponentInteractionDataKind;
-use snafu::ResultExt;
+use snafu::{ResultExt, Snafu};
 use std::time::Instant;
+
+#[derive(Debug, Snafu, Diagnostic)]
+enum ViewCharacterError {
+    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
+    #[diagnostic(help("Försök igen eller kontrollera att kanalen är tillgänglig"), code(events::interaction::character::send_message))]
+    SendMessage { source: serenity::Error },
+    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
+    #[diagnostic(help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"), code(events::interaction::character::send_response))]
+    SendResponse { source: serenity::Error },
+    #[snafu(display("Kunde inte redigera meddelandet: {source}"))]
+    #[diagnostic(help("Försök igen eller kontrollera att meddelandet fortfarande finns"), code(events::interaction::character::edit_message))]
+    EditMessage { source: serenity::Error },
+}
 
 pub async fn character(
     ctx: &Context,

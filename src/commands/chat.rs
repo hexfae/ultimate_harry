@@ -1,13 +1,31 @@
 use crate::{
-    Context, DeferSnafu, RetrieveMessageSnafu, SendMessageSnafu,
+    Context,
     commands::autocomplete,
     constants::{NO_CHARACTER_PHRASES, sample},
     models::{character::Character, history::History},
-    traits::SayWith,
 };
-use miette::Report;
+use miette::{Diagnostic, Report};
 use poise::serenity_prelude::MessageId;
-use snafu::ResultExt;
+use snafu::{ResultExt, Snafu};
+
+#[derive(Debug, Snafu, Diagnostic)]
+enum ChatError {
+    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
+    #[diagnostic(help("Försök igen om en liten stund"), code(commands::chat::defer))]
+    Defer { source: serenity::Error },
+    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
+        code(commands::chat::send_message)
+    )]
+    SendMessage { source: serenity::Error },
+    #[snafu(display("Kunde inte hämta meddelandet: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att meddelandet fortfarande finns"),
+        code(commands::chat::retrieve_message)
+    )]
+    RetrieveMessage { source: serenity::Error },
+}
 
 #[poise::command(slash_command, rename = "prata")]
 pub async fn chat(
@@ -31,7 +49,7 @@ pub async fn chat(
 
     let Some(character) = characters.first() else {
         let response = sample(NO_CHARACTER_PHRASES);
-        ctx.say_with(response).await?;
+        ctx.say(response).await.context(SendMessageSnafu)?;
         return Ok(());
     };
 

@@ -4,7 +4,6 @@ use serenity::{
     all::{Context, FullEvent, Interaction},
     async_trait,
 };
-use tracing::warn;
 
 use crate::app_state::AppState;
 
@@ -18,7 +17,7 @@ pub struct EventHandler;
 impl poise::serenity_prelude::EventHandler for EventHandler {
     async fn dispatch(&self, ctx: &Context, event: &FullEvent) {
         let data: Arc<AppState> = ctx.data();
-        if let Err(why) = match event {
+        let _ = match event {
             FullEvent::Ready { data_about_bot, .. } => ready::ready(ctx, data_about_bot).await,
             FullEvent::Message { new_message, .. } => {
                 message::message(ctx, new_message, &data.db).await
@@ -31,8 +30,6 @@ impl poise::serenity_prelude::EventHandler for EventHandler {
                 }
             }
             _ => Ok(()),
-        } {
-            warn!("error in event handler: {why}");
-        }
+        };
     }
 }

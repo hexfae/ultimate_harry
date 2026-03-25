@@ -1,7 +1,7 @@
 use std::{borrow::Cow, fmt::Display};
 
 use crate::{
-    Context, DeferSnafu, EditMessageSnafu, Result, SendMessageSnafu,
+    Context, Result,
     constants::{
         CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, CREATED_PHRASES, TIMEOUT_PHRASES, sample,
         sample_name,
@@ -12,7 +12,7 @@ use crate::{
     },
     traits::{EditWith, ShowModal},
 };
-use miette::Report;
+use miette::{Diagnostic, Report};
 use poise::{
     CreateReply, Modal, ReplyHandle,
     serenity_prelude::{
@@ -21,7 +21,26 @@ use poise::{
         small_fixed_array::{FixedArray, FixedString},
     },
 };
-use snafu::ResultExt;
+use snafu::{ResultExt, Snafu};
+
+#[derive(Debug, Snafu, Diagnostic)]
+#[snafu(visibility(pub))]
+#[diagnostic(code(commands::character::create))]
+enum CreateCharacterError {
+    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
+    Defer { source: serenity::Error },
+    #[snafu(display("Kunde inte redigera meddelandet: {source}"))]
+    #[diagnostic(help("Försök igen eller starta om interaktionen"))]
+    EditMessage { source: serenity::Error },
+    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
+    #[diagnostic(help("Försök igen om en stund"))]
+    SendMessage { source: serenity::Error },
+    #[snafu(transparent)]
+    #[diagnostic(help("Försök igen om en stund"))]
+    ShowModal {
+        source: crate::traits::ShowModalError,
+    },
+}
 
 #[poise::command(slash_command, rename = "skapa")]
 pub async fn create(ctx: Context<'_>) -> Result<(), Report> {
@@ -42,7 +61,9 @@ pub async fn create(ctx: Context<'_>) -> Result<(), Report> {
     let character = Character::from((first_modal, second_modal, ctx.author().id));
 
     let response = sample_name(CREATED_PHRASES, character.name());
-    msg.edit_with(ctx, response).await?;
+    msg.edit_with(ctx, response)
+        .await
+        .context(EditMessageSnafu)?;
 
     ctx.data().db.insert_character(character).await?;
     ctx.data().stats.character_created_by(ctx.author());
@@ -50,7 +71,7 @@ pub async fn create(ctx: Context<'_>) -> Result<(), Report> {
     Ok(())
 }
 
-async fn send_initial_message(ctx: Context<'_>) -> Result<ReplyHandle<'_>> {
+async fn send_initial_message(ctx: Context<'_>) -> Result<ReplyHandle<'_>, CreateCharacterError> {
     ctx.defer_ephemeral().await.context(DeferSnafu)?;
     ctx.send(create_reply_with_tempting_button(ctx.id()))
         .await
@@ -67,14 +88,19 @@ async fn await_button_interaction(ctx: Context<'_>) -> Option<ComponentInteracti
         .await
 }
 
-async fn show_modal_button<M: Modal>(ctx: Context<'_>, msg: &ReplyHandle<'_>) -> Result<Option<M>> {
+async fn show_modal_button<M: Modal>(
+    ctx: Context<'_>,
+    msg: &ReplyHandle<'_>,
+) -> Result<Option<M>, CreateCharacterError> {
     ctx.defer_ephemeral().await.context(DeferSnafu)?;
 
     if let Some(interaction) = await_button_interaction(ctx).await {
-        ctx.serenity_context().show_modal(interaction).await
+        Ok(ctx.serenity_context().show_modal(interaction).await?)
     } else {
         let response = sample(TIMEOUT_PHRASES);
-        msg.edit_with(ctx, response).await?;
+        msg.edit_with(ctx, response)
+            .await
+            .context(EditMessageSnafu)?;
         Ok(None)
     }
 }

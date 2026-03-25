@@ -1,6 +1,6 @@
 use crate::{
-    EditMessageSnafu, SendResponseSnafu, constants::CHARACTER_LIMIT, db::Database,
-    events::message::history_and_character_of, llm::LlmManager,
+    constants::CHARACTER_LIMIT, db::Database, events::message::history_and_character_of,
+    llm::LlmManager,
 };
 use miette::{Diagnostic, Report};
 use poise::serenity_prelude::{
@@ -12,8 +12,25 @@ use snafu::{ResultExt, Snafu};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Snafu, Diagnostic)]
-pub struct StreamingError {
-    source: rig::agent::StreamingError,
+enum NextReplyError {
+    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"),
+        code(events::interaction::next::send_response)
+    )]
+    SendResponse { source: serenity::Error },
+    #[snafu(display("Kunde inte redigera meddelandet: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att meddelandet fortfarande finns"),
+        code(events::interaction::next::edit_message)
+    )]
+    EditMessage { source: serenity::Error },
+    #[snafu(display("Strömning misslyckades: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att modellen är tillgänglig"),
+        code(events::interaction::next::streaming)
+    )]
+    Streaming { source: rig::agent::StreamingError },
 }
 
 pub async fn next(

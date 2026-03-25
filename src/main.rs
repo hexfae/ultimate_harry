@@ -1,11 +1,12 @@
 use std::{env::var, fs::read_to_string, sync::Arc};
 
-use miette::{Diagnostic, Report};
+use miette::{Diagnostic, IntoDiagnostic, Report};
 use poise::{
-    Framework, FrameworkOptions,
+    Framework, FrameworkError, FrameworkOptions,
     serenity_prelude::{ClientBuilder, GatewayIntents, Token},
 };
 use snafu::{ResultExt, Snafu};
+use tracing::error;
 use ultimate_harry::{
     app_state::AppState,
     commands::{character, chat, emoji, model, name, pin_channel},
@@ -14,6 +15,17 @@ use ultimate_harry::{
 
 const INTENTS: GatewayIntents =
     GatewayIntents::non_privileged().union(GatewayIntents::MESSAGE_CONTENT);
+
+async fn on_error(
+    error: FrameworkError<'_, AppState, miette::Report>,
+) -> Result<(), miette::Report> {
+    if let FrameworkError::Command { error, ctx, .. } = error {
+        error!("in command");
+        eprintln!("{error:?}");
+        ctx.say(error.to_string()).await.into_diagnostic()?;
+    }
+    Ok(())
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Report> {
@@ -33,6 +45,11 @@ async fn main() -> Result<(), Report> {
     let framework = Framework::builder()
         .options(FrameworkOptions {
             commands,
+            on_error: |error| {
+                Box::pin(async {
+                    let _ = on_error(error).await;
+                })
+            },
             ..Default::default()
         })
         .build();

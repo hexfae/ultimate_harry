@@ -30,9 +30,19 @@ pub struct ModelSettings {
 
 #[derive(Debug, Snafu, Diagnostic)]
 pub enum LlmError {
-    BuildClient {
-        source: rig::http_client::Error,
-    },
+    #[snafu(display("Misslyckades med att bygga LLM-klienten: {source}"))]
+    #[diagnostic(
+        help("Kontrollera att API-nyckeln är korrekt och att du har tillgång till modellen."),
+        code(llm::build_client)
+    )]
+    BuildClient { source: rig::http_client::Error },
+    #[snafu(display("Misslyckades med att få svar från LLM: {source}"))]
+    #[diagnostic(
+        help(
+            "Promptet kan vara för långt eller innehålla ogiltiga tecken. Försök med ett kortare meddelande."
+        ),
+        code(llm::get_response)
+    )]
     GetResponse {
         source: rig::completion::PromptError,
     },

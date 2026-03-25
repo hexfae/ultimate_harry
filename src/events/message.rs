@@ -6,7 +6,6 @@ use snafu::{ResultExt, Snafu};
 use std::time::{Duration, Instant};
 
 use crate::{
-    EditMessageSnafu, ReactSnafu, SendMessageSnafu,
     constants::CHARACTER_LIMIT,
     db::Database,
     llm::LlmManager,
@@ -14,8 +13,33 @@ use crate::{
 };
 
 #[derive(Debug, Snafu, Diagnostic)]
-pub struct StreamingError {
-    source: rig::agent::StreamingError,
+enum NewMessageError {
+    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
+        code(events::message::send_message)
+    )]
+    SendMessage { source: serenity::Error },
+    #[snafu(display("Kunde inte redigera meddelandet: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att meddelandet fortfarande finns"),
+        code(events::message::edit_message)
+    )]
+    EditMessage { source: serenity::Error },
+    #[snafu(display("Kunde inte reagera på meddelandet: {source}"))]
+    #[diagnostic(help("Försök igen"), code(events::message::react))]
+    React { source: serenity::Error },
+    #[snafu(transparent)]
+    #[diagnostic(transparent)]
+    Database { source: crate::db::DatabaseError },
+    #[snafu(display("Strömning misslyckades: {source}"))]
+    #[diagnostic(
+        help(
+            "Försök igen eller kontrollera att modellen är tillgänglig och att nätverket fungerar"
+        ),
+        code(events::message::streaming)
+    )]
+    Streaming { source: rig::agent::StreamingError },
 }
 
 pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Result<(), Report> {
@@ -93,7 +117,7 @@ async fn react_to_mentions_and_replies(
     ctx: &Context,
     new_message: &Message,
     db: &Database,
-) -> Result<(), Report> {
+) -> Result<(), NewMessageError> {
     let all_emoji = db.user_emoji().await?;
     if new_message.mention_everyone() {
         for user_emoji in &all_emoji {

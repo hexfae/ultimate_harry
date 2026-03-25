@@ -1,10 +1,17 @@
-use crate::{SendMessageSnafu, db::Database, events::message::history_and_character_of};
-use miette::Report;
+use crate::{db::Database, events::message::history_and_character_of};
+use miette::{Diagnostic, Report};
 use serenity::all::{
     ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
     MessageId,
 };
-use snafu::ResultExt;
+use snafu::{ResultExt, Snafu};
+
+#[derive(Debug, Snafu, Diagnostic)]
+enum PinReplyError {
+    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
+    #[diagnostic(help("Försök igen eller kontrollera att kanalen är tillgänglig"), code(events::interaction::pin::send_message))]
+    SendMessage { source: serenity::Error },
+}
 
 pub async fn pin(
     ctx: &Context,
