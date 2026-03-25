@@ -7,19 +7,28 @@ use poise::serenity_prelude::{
     ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
 use serenity::all::ComponentInteractionDataKind;
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 use std::time::Instant;
 
 #[derive(Debug, Snafu, Diagnostic)]
 enum ViewCharacterError {
     #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
-    #[diagnostic(help("Försök igen eller kontrollera att kanalen är tillgänglig"), code(events::interaction::character::send_message))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
+        code(events::interaction::character::send_message)
+    )]
     SendMessage { source: serenity::Error },
     #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
-    #[diagnostic(help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"), code(events::interaction::character::send_response))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"),
+        code(events::interaction::character::send_response)
+    )]
     SendResponse { source: serenity::Error },
     #[snafu(display("Kunde inte redigera meddelandet: {source}"))]
-    #[diagnostic(help("Försök igen eller kontrollera att meddelandet fortfarande finns"), code(events::interaction::character::edit_message))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att meddelandet fortfarande finns"),
+        code(events::interaction::character::edit_message)
+    )]
     EditMessage { source: serenity::Error },
 }
 

@@ -6,7 +6,7 @@ use crate::{
 };
 use miette::{Diagnostic, Report};
 use poise::serenity_prelude::MessageId;
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 #[derive(Debug, Snafu, Diagnostic)]
 enum ChatError {

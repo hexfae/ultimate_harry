@@ -1,11 +1,11 @@
 use std::{env::var, fs::read_to_string, sync::Arc};
 
-use miette::{Diagnostic, IntoDiagnostic, Report};
+use miette::{Diagnostic, IntoDiagnostic as _, Report};
 use poise::{
     Framework, FrameworkError, FrameworkOptions,
     serenity_prelude::{ClientBuilder, GatewayIntents, Token},
 };
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 use tracing::error;
 use ultimate_harry::{
     app_state::AppState,

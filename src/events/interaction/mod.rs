@@ -94,7 +94,7 @@ impl TryFrom<&ComponentInteraction> for UltimateInteraction {
             .ok_or_else(|| UnknownInteraction {
                 custom_id: id.to_string(),
             })?;
-        let id = MessageId::from(id.parse::<u64>().map_err(|_| UnknownInteraction {
+        let id = MessageId::from(id.parse::<u64>().map_err(|_why| UnknownInteraction {
             custom_id: id.to_owned(),
         })?);
         let kind = kind.try_into()?;

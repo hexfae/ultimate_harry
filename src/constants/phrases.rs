@@ -1,4 +1,4 @@
-use nanorand::Rng;
+use nanorand::Rng as _;
 
 pub fn sample<T: Clone>(list: &[T]) -> T {
     let mut rng = nanorand::tls_rng();

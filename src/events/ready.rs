@@ -1,11 +1,11 @@
 use crate::commands::{character, chat, emoji, model, name, pin_channel};
 use miette::{Diagnostic, Report};
-use nanorand::{Rng, WyRand};
+use nanorand::{Rng as _, WyRand};
 use poise::serenity_prelude::{
     ActivityData, ActivityType, Context, small_fixed_array::FixedString,
 };
 use serenity::all::Ready;
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::info;
@@ -19,7 +19,7 @@ pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<(), Report> 
     info!("ready");
     let ctx = ctx.clone();
     let commands = vec![character(), chat(), emoji(), model(), pin_channel(), name()];
-    for guild in data_about_bot.guilds.iter() {
+    for guild in &data_about_bot.guilds {
         poise::builtins::register_in_guild(&ctx.http, &commands, guild.id)
             .await
             .context(RegisterCommandInGuildSnafu)?;

@@ -10,7 +10,7 @@ use crate::{
         character::Character,
         modals::{CreateCharacterModal, SecondCreateCharacterModal},
     },
-    traits::{EditWith, ShowModal},
+    traits::{EditWith as _, ShowModal as _},
 };
 use miette::{Diagnostic, Report};
 use poise::{
@@ -21,7 +21,7 @@ use poise::{
         small_fixed_array::{FixedArray, FixedString},
     },
 };
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 #[derive(Debug, Snafu, Diagnostic)]
 #[snafu(visibility(pub))]

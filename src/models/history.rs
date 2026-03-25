@@ -75,7 +75,7 @@ impl History {
         self.choices[self.current].edit(author, content, editor);
     }
 
-    pub fn has_finished(&mut self, has_finished: bool) {
+    pub const fn has_finished(&mut self, has_finished: bool) {
         self.has_finished = has_finished;
     }
 
@@ -97,6 +97,7 @@ impl History {
         self.choices.len()
     }
 
+    #[must_use]
     pub fn is_on_last_choice(&self) -> bool {
         self.current_choice() + 1 >= self.choices_len()
     }
@@ -151,8 +152,7 @@ impl History {
                     .content()
                     .contains(BEGIN_MESSAGE)
             })
-            .map(|i| i + 1)
-            .unwrap_or(0);
+            .map_or(0, |i| i + 1);
 
         // Build new setup for the character
         let mut new_previous: Vec<Message> = Vec::new();
@@ -225,7 +225,8 @@ impl History {
         self.current = self.choices_len() - 1;
     }
 
-    pub fn previous_messages(&self) -> &NonEmpty<Message> {
+    #[must_use]
+    pub const fn previous_messages(&self) -> &NonEmpty<Message> {
         &self.previous
     }
 

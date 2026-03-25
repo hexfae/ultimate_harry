@@ -1,6 +1,6 @@
 use crate::Context;
 use miette::{Diagnostic, Report};
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 #[derive(Debug, Snafu, Diagnostic)]
 enum ModelSettingsError {

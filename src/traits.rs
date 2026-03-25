@@ -6,7 +6,7 @@ use poise::{
         ComponentInteraction, CreateInteractionResponse, CreateInteractionResponseMessage,
     },
 };
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 pub trait EditWith {
     #[expect(async_fn_in_trait)] // i'm only using this in my code
@@ -76,7 +76,7 @@ pub struct ShowModalError {
 
 impl From<serenity::Error> for ShowModalError {
     fn from(source: serenity::Error) -> Self {
-        ShowModalError { source }
+        Self { source }
     }
 }
 

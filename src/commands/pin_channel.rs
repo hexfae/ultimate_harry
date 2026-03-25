@@ -1,7 +1,7 @@
 use crate::Context;
 use miette::{Diagnostic, Report};
 use serenity::all::GuildChannel;
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 #[derive(Debug, Snafu, Diagnostic)]
 #[diagnostic(code(commands::pin_channel::pin_channel))]

@@ -204,6 +204,7 @@ impl Message {
         self.elapsed
     }
 
+    #[must_use]
     pub fn to_rig_messages(&self) -> Vec<RigMessage> {
         let chosen = self.chosen_revision();
 
@@ -235,10 +236,12 @@ impl Message {
 }
 
 impl Parts {
+    #[must_use]
     pub const fn head(&self) -> &Part {
         &self.0.head
     }
 
+    #[must_use]
     pub fn tail(&self) -> Vec<&Part> {
         self.0.tail.iter().collect()
     }

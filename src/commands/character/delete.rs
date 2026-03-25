@@ -8,7 +8,7 @@ use crate::{
         NO_CHARACTER_PHRASES, PREVIOUS, sample,
     },
     models::character::Character,
-    traits::RespondToWith,
+    traits::RespondToWith as _,
 };
 use miette::{Diagnostic, Report};
 use poise::{
@@ -20,7 +20,7 @@ use poise::{
     },
 };
 use serenity::all::ReactionType;
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 use surrealdb::RecordId;
 use tokio::time::sleep;
 
@@ -120,9 +120,7 @@ async fn display_pagination(
                 let id = ctx.id();
                 let confirm_id = format!("{id}confirm");
 
-                let Some(response) =
-                    ask_for_confirmation(ctx, interaction, character.clone()).await?
-                else {
+                let Some(response) = ask_for_confirmation(ctx, interaction).await? else {
                     continue;
                 };
                 let returned_id = response.data.custom_id.clone();
@@ -224,10 +222,9 @@ async fn delete_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -
 async fn ask_for_confirmation(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
-    character: Character,
 ) -> Result<Option<ComponentInteraction>> {
     let response = sample(ASK_DELETE_PHRASES);
-    let reply = character.to_confirm_interaction_response(ctx.id(), response);
+    let reply = Character::to_confirm_interaction_response(ctx.id(), response);
     interaction
         .create_response(ctx.http(), reply)
         .await

@@ -1,6 +1,6 @@
 use miette::{Diagnostic, Report};
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 use crate::{db::Database, events::message::history_and_character_of};
 

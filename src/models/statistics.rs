@@ -2,7 +2,7 @@ use dashmap::DashMap;
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use serenity::all::UserId;
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 use std::{
     fs::{read_to_string, write},
     path::Path,
@@ -40,9 +40,8 @@ pub enum StatisticsError {
 impl Statistics {
     pub fn load() -> Result<Self> {
         if Path::new(STATISTICS_PATH).exists() {
-            read_to_string(STATISTICS_PATH)
-                .context(ReadSnafu)
-                .and_then(|contents| toml::from_str(&contents).context(DeserializeSnafu))
+            let contents = read_to_string(STATISTICS_PATH).context(ReadSnafu)?;
+            toml::from_str(&contents).context(DeserializeSnafu)
         } else {
             Ok(Self::default())
         }

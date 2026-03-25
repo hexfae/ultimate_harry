@@ -11,7 +11,7 @@ use crate::{
         character::Character,
         modals::{EditCharacterModal, SecondEditCharacterModal},
     },
-    traits::RespondToWith,
+    traits::RespondToWith as _,
 };
 use miette::{Diagnostic, Report};
 use poise::{
@@ -23,7 +23,7 @@ use poise::{
         small_fixed_array::{FixedArray, FixedString},
     },
 };
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 use tokio::time::sleep;
 
 #[derive(Debug, Snafu, Diagnostic)]

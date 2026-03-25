@@ -1,15 +1,18 @@
 use crate::{
     db::Database, events::message::history_and_character_of, models::modals::EditMessageModal,
-    traits::ShowModal,
+    traits::ShowModal as _,
 };
 use miette::{Diagnostic, Report};
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 #[derive(Debug, Snafu, Diagnostic)]
 enum EditReplyError {
     #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
-    #[diagnostic(help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"), code(events::interaction::edit::send_response))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"),
+        code(events::interaction::edit::send_response)
+    )]
     SendResponse { source: serenity::Error },
 }
 

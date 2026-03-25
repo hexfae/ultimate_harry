@@ -2,7 +2,7 @@ use jiff::Zoned;
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
-use snafu::{OptionExt, ResultExt, Snafu};
+use snafu::{OptionExt as _, ResultExt as _, Snafu};
 use surrealdb::{RecordId, engine::any::Any};
 use surrealdb::{Surreal, opt::auth::Root};
 
@@ -12,7 +12,7 @@ use crate::models::{
     history::History,
 };
 
-const ROOT: Root = Root {
+const ROOT: Root<'_> = Root {
     username: "root",
     password: "root",
 };
@@ -277,8 +277,7 @@ impl Database {
             .select::<Option<UserName>>(("user_name", user_id.into().to_string()))
             .await
             .unwrap_or_default()
-            .map(|u| u.name)
-            .unwrap_or_else(|| "User".to_owned())
+            .map_or_else(|| "User".to_owned(), |u| u.name)
     }
 
     pub async fn upsert_user_name(

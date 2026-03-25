@@ -30,6 +30,6 @@ pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocomp
         .map(|character| {
             AutocompleteChoice::new(character.to_string(), character.name().to_owned())
         })
-        .collect::<Vec<AutocompleteChoice>>();
+        .collect::<Vec<AutocompleteChoice<'_>>>();
     CreateAutocompleteResponse::new().set_choices(character_names)
 }

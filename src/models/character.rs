@@ -9,7 +9,7 @@ use poise::serenity_prelude::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    fmt::{Display, Write},
+    fmt::{Display, Write as _},
 };
 use surrealdb::RecordId;
 use ulid::Ulid;
@@ -233,7 +233,7 @@ impl Character {
 
     #[must_use]
     pub fn model_settings(&self) -> Option<ModelSettings> {
-        self.model_settings.to_owned()
+        self.model_settings.clone()
     }
 
     /// Returns e.g. ` | 75% namnlikhet` if `Some(0.75)`, otherwise returns an empty String.
@@ -363,7 +363,6 @@ impl Character {
 
     #[must_use]
     pub fn to_confirm_interaction_response(
-        &self,
         id: impl Into<u64>,
         content: impl Into<String>,
     ) -> CreateInteractionResponse<'static> {

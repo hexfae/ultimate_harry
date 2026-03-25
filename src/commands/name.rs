@@ -1,7 +1,7 @@
 use crate::Context;
 use miette::{Diagnostic, Report};
 use poise::serenity_prelude::UserId;
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 #[derive(Debug, Snafu, Diagnostic)]
 #[diagnostic(code(commands::name::change_name))]

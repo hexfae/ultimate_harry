@@ -13,7 +13,7 @@ use poise::{
         small_fixed_array::FixedString,
     },
 };
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 #[derive(Debug, Snafu, Diagnostic)]
 enum ViewCharacterError {
@@ -100,6 +100,7 @@ async fn send_message<'a>(
     Ok(msg.message().await.context(RetrieveMessageSnafu)?.id)
 }
 
+#[must_use]
 pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateComponent<'static>]> {
     let prev = format!("{id}prev");
     let next = format!("{id}next");

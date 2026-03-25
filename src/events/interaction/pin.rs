@@ -4,12 +4,15 @@ use serenity::all::{
     ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
     MessageId,
 };
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 #[derive(Debug, Snafu, Diagnostic)]
 enum PinReplyError {
     #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
-    #[diagnostic(help("Försök igen eller kontrollera att kanalen är tillgänglig"), code(events::interaction::pin::send_message))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
+        code(events::interaction::pin::send_message)
+    )]
     SendMessage { source: serenity::Error },
 }
 

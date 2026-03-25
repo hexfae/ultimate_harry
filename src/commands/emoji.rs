@@ -1,7 +1,7 @@
 use crate::Context;
 use miette::{Diagnostic, Report};
 use poise::serenity_prelude::ReactionType;
-use snafu::{ResultExt, Snafu};
+use snafu::{ResultExt as _, Snafu};
 
 #[derive(Debug, Snafu, Diagnostic)]
 enum SetEmojiError {

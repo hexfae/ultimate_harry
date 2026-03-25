@@ -4,15 +4,15 @@ use crate::{constants::CHARACTER_LIMIT, models::history::History};
 use miette::Diagnostic;
 use rig::{
     agent::{AgentBuilder, MultiTurnStreamItem, StreamingError},
-    completion::Chat,
+    completion::Chat as _,
     message::Message,
     providers::openrouter::{Client, CompletionModel, streaming::StreamingCompletionResponse},
-    streaming::StreamingChat,
+    streaming::StreamingChat as _,
 };
 use serde::{Deserialize, Serialize};
 use serenity::futures::Stream;
-use snafu::{ResultExt, Snafu};
-use unicode_segmentation::UnicodeSegmentation;
+use snafu::{ResultExt as _, Snafu};
+use unicode_segmentation::UnicodeSegmentation as _;
 
 pub struct LlmManager {
     settings: ModelSettings,
@@ -49,7 +49,8 @@ pub enum LlmError {
 }
 
 impl LlmManager {
-    pub fn new(settings: ModelSettings) -> Self {
+    #[must_use]
+    pub const fn new(settings: ModelSettings) -> Self {
         Self { settings }
     }
 

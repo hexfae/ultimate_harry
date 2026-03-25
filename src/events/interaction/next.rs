@@ -7,8 +7,8 @@ use poise::serenity_prelude::{
     ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
 use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
-use serenity::futures::StreamExt;
-use snafu::{ResultExt, Snafu};
+use serenity::futures::StreamExt as _;
+use snafu::{ResultExt as _, Snafu};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Snafu, Diagnostic)]
@@ -43,16 +43,7 @@ pub async fn next(
         return Ok(());
     };
 
-    if !history.is_on_last_choice() {
-        history.next();
-
-        let response = history.to_interaction(&character, id, db).await;
-
-        interaction
-            .create_response(&ctx.http, response)
-            .await
-            .context(SendResponseSnafu)?;
-    } else {
+    if history.is_on_last_choice() {
         history.has_finished(false);
 
         let placeholder = CreateInteractionResponse::UpdateMessage(
@@ -104,6 +95,15 @@ pub async fn next(
 
         interaction
             .edit_response(&ctx.http, response)
+            .await
+            .context(SendResponseSnafu)?;
+    } else {
+        history.next();
+
+        let response = history.to_interaction(&character, id, db).await;
+
+        interaction
+            .create_response(&ctx.http, response)
             .await
             .context(SendResponseSnafu)?;
     }

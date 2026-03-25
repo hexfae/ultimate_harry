@@ -1,8 +1,8 @@
 use miette::{Diagnostic, Report};
 use poise::serenity_prelude::{Context, Message};
 use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
-use serenity::{all::MessageId, futures::StreamExt};
-use snafu::{ResultExt, Snafu};
+use serenity::{all::MessageId, futures::StreamExt as _};
+use snafu::{ResultExt as _, Snafu};
 use std::time::{Duration, Instant};
 
 use crate::{
