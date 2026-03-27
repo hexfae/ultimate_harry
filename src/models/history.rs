@@ -319,28 +319,30 @@ impl History {
                     self.choices.len()
                 )
             };
-            Cow::Owned(vec![CreateContainerComponent::TextDisplay(
+            vec![CreateContainerComponent::TextDisplay(
                 CreateTextDisplay::new(pages),
-            )])
+            )]
+            .into()
         };
 
-        let title = Cow::Owned(vec![CreateContainerComponent::Section(CreateSection::new(
-            Cow::Owned(vec![
+        let title = vec![CreateContainerComponent::Section(CreateSection::new(
+            vec![
                 CreateSectionComponent::TextDisplay(CreateTextDisplay::new(format!(
                     "## {character}"
                 ))),
                 CreateSectionComponent::TextDisplay(CreateTextDisplay::new("…")),
-            ]),
+            ],
             CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
                 character.avatar().unwrap_or(EMPTY_AVATAR),
             ))),
-        ))]);
+        ))]
+        .into();
 
         let components = create_buttons(1, self.has_finished, has_previous, has_edit, &[]);
 
-        let container = Cow::Owned(vec![CreateComponent::Container(CreateContainer::new(
+        let container = vec![CreateComponent::Container(CreateContainer::new(
             [title, components, footer].concat(),
-        ))]);
+        ))];
 
         CreateReply::default()
             .flags(MessageFlags::IS_COMPONENTS_V2)
@@ -472,9 +474,10 @@ impl History {
             let len = format!(" | {}/{CHARACTER_LIMIT}", content.len());
 
             let footer = format!("-# {pages}{similarity}{elapsed}{len}{edit_pages}");
-            Cow::Owned(vec![CreateContainerComponent::TextDisplay(
+            vec![CreateContainerComponent::TextDisplay(
                 CreateTextDisplay::new(footer),
-            )])
+            )]
+            .into()
         };
 
         // content must contain at least 1 character, but we want it to remain visually empty
@@ -484,19 +487,20 @@ impl History {
             None => (text, None),
         };
 
-        let title = Cow::Owned(vec![CreateContainerComponent::Section(CreateSection::new(
-            Cow::Owned(vec![
+        let title = vec![CreateContainerComponent::Section(CreateSection::new(
+            vec![
                 CreateSectionComponent::TextDisplay(CreateTextDisplay::new(format!(
                     "## {character}"
                 ))),
                 CreateSectionComponent::TextDisplay(CreateTextDisplay::new(first)),
-            ]),
+            ],
             CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
                 character
                     .avatar()
                     .unwrap_or("https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png"),
             ))),
-        ))]);
+        ))]
+        .into();
 
         let components = create_buttons(
             id.into().into(),
@@ -506,22 +510,24 @@ impl History {
             &db.characters_by_usage().await.unwrap_or_default(),
         );
 
-        let container = Cow::Owned(vec![CreateComponent::Container(CreateContainer::new(
+        let container = vec![CreateComponent::Container(CreateContainer::new(
             [
                 title,
-                Cow::Owned(second.map_or_else(Vec::new, |rest| {
-                    rest.split('\n')
-                        .filter(|line| !line.is_empty())
-                        .map(|part| {
-                            CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part))
-                        })
-                        .collect()
-                })),
+                second
+                    .map_or_else(Vec::new, |rest| {
+                        rest.split('\n')
+                            .filter(|line| !line.is_empty())
+                            .map(|part| {
+                                CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part))
+                            })
+                            .collect()
+                    })
+                    .into(),
                 components,
                 footer,
             ]
             .concat(),
-        ))]);
+        ))];
 
         CreateReply::default()
             .flags(MessageFlags::IS_COMPONENTS_V2)
@@ -546,35 +552,36 @@ fn create_buttons<'a>(
     let char_id = format!("{id}char");
 
     let mut components = vec![
-        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![
-            create_button(prev_msg_id, PREVIOUS, !finished || !previous),
-            create_button(next_msg_id, NEXT, !finished),
-            create_button(edit_msg_id, EDIT, !finished),
-            create_button(undo_id, UNDO, !edit),
-            create_button(redo_id, REDO, !edit),
-        ]))),
-        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(Cow::Owned(vec![
-            create_button(pin_id, PIN, !finished),
-        ]))),
+        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
+            vec![
+                create_button(prev_msg_id, PREVIOUS, !finished || !previous),
+                create_button(next_msg_id, NEXT, !finished),
+                create_button(edit_msg_id, EDIT, !finished),
+                create_button(undo_id, UNDO, !edit),
+                create_button(redo_id, REDO, !edit),
+            ]
+            .into(),
+        )),
+        CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
+            vec![create_button(pin_id, PIN, !finished)].into(),
+        )),
     ];
     if !characters.is_empty() {
         components.push(CreateContainerComponent::ActionRow(
             CreateActionRow::SelectMenu(CreateSelectMenu::new(
                 char_id,
                 CreateSelectMenuKind::String {
-                    options: Cow::Owned(
-                        characters
-                            .iter()
-                            .map(|char| {
-                                CreateSelectMenuOption::new(char.to_string(), char.id().to_string())
-                            })
-                            .collect(),
-                    ),
+                    options: characters
+                        .iter()
+                        .map(|char| {
+                            CreateSelectMenuOption::new(char.to_string(), char.id().to_string())
+                        })
+                        .collect(),
                 },
             )),
         ));
     }
-    Cow::Owned(components)
+    components.into()
 }
 
 /// Creates a single button component.

@@ -86,8 +86,8 @@ pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateCompon
     let prev = format!("{id}prev");
     let next = format!("{id}next");
     let disabled = total_pages < 2;
-    Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
-        Cow::Owned(vec![
+    vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
+        vec![
             CreateButton::new(prev)
                 .disabled(disabled)
                 .style(ButtonStyle::Secondary)
@@ -98,8 +98,10 @@ pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateCompon
                 .disabled(disabled)
                 .style(ButtonStyle::Secondary)
                 .emoji(ReactionType::Unicode(FixedString::from_static_trunc(NEXT))),
-        ]),
-    ))])
+        ]
+        .into(),
+    ))]
+    .into()
 }
 
 /// All errors that can happen when viewing characters.

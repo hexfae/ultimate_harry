@@ -164,8 +164,8 @@ pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
     let cancel = format!("{id}cancel");
     let prev = format!("{id}prev");
     let next = format!("{id}next");
-    Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
-        Cow::Owned(vec![
+    vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
+        vec![
             CreateButton::new(confirm)
                 .emoji(ReactionType::Unicode(FixedString::from_static_trunc(EDIT)))
                 .style(ButtonStyle::Secondary),
@@ -182,8 +182,10 @@ pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
             CreateButton::new(next)
                 .emoji(ReactionType::Unicode(FixedString::from_static_trunc(NEXT)))
                 .style(ButtonStyle::Secondary),
-        ]),
-    ))])
+        ]
+        .into(),
+    ))]
+    .into()
 }
 
 /// Sends a message about the cancellation of editing a character, and deletes the message 5 seconds later.
@@ -292,10 +294,8 @@ async fn send_first_tempting_button(
     interaction: ComponentInteraction,
 ) -> Result<(), EditCharacterError> {
     let id = ctx.id().to_string();
-    let button = Cow::Owned(vec![CreateButton::new(id).label(click_me())]);
-    let component = Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
-        button,
-    ))]);
+    let button = vec![CreateButton::new(id).label(click_me())].into();
+    let component = vec![CreateComponent::ActionRow(CreateActionRow::Buttons(button))];
     interaction
         .edit_response(
             ctx.http(),

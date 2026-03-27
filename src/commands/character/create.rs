@@ -85,10 +85,8 @@ async fn show_modal_on_button_press<M: Modal>(
 /// Sends a message that attempts to tempt the user into pressing it.
 #[must_use]
 fn create_reply_with_tempting_button<'a>(id: impl Into<Cow<'a, str>>) -> CreateReply<'a> {
-    let button = Cow::Owned(vec![CreateButton::new(id).label(click_me())]);
-    let component = Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
-        button,
-    ))]);
+    let button = vec![CreateButton::new(id).label(click_me())].into();
+    let component = vec![CreateComponent::ActionRow(CreateActionRow::Buttons(button))];
 
     CreateReply::default()
         .content(click_below())
