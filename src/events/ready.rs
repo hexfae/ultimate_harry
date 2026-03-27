@@ -1,26 +1,36 @@
-use crate::commands::{character, chat, emoji, model, name, pin_channel};
-use miette::{Diagnostic, Report};
+//! The ready event handler for when the bot connects to Discord.
+
+use crate::{
+    Result,
+    commands::{character, chat, emoji, model, name, pin_channel},
+};
+use core::time::Duration;
+use miette::Diagnostic;
 use nanorand::{Rng as _, WyRand};
-use poise::serenity_prelude::{
-    ActivityData, ActivityType, Context, small_fixed_array::FixedString,
+use poise::{
+    samples::register_in_guild,
+    serenity_prelude::{ActivityData, ActivityType, Context, small_fixed_array::FixedString},
 };
 use serenity::all::Ready;
 use snafu::{ResultExt as _, Snafu};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::time::sleep;
 use tracing::info;
 
-#[derive(Debug, Snafu, Diagnostic)]
-pub struct RegisterCommandInGuildError {
-    source: poise::serenity_prelude::Error,
-}
-
-pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<(), Report> {
+/// Handles the ready event when the bot connects to Discord.
+///
+/// This function registers all slash commands in each guild and starts
+/// a background task that updates the bot's activity status.
+#[expect(
+    clippy::integer_division,
+    reason = "the loss of precision is desired, we divide by constant, non-zero numbers"
+)]
+pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<()> {
     info!("ready");
-    let ctx = ctx.clone();
+    let ctx_clone = ctx.clone();
     let commands = vec![character(), chat(), emoji(), model(), pin_channel(), name()];
     for guild in &data_about_bot.guilds {
-        poise::builtins::register_in_guild(&ctx.http, &commands, guild.id)
+        register_in_guild(&ctx_clone.http, &commands, guild.id)
             .await
             .context(RegisterCommandInGuildSnafu)?;
     }
@@ -35,7 +45,7 @@ pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<(), Report> 
             let hours = elapsed.as_secs() / 3600;
             let minutes = (elapsed.as_secs() % 3600) / 60;
 
-            ctx.set_activity(Some(ActivityData {
+            ctx_clone.set_activity(Some(ActivityData {
                 name: FixedString::from_static_trunc("Heroes of the Storm"),
                 kind: ActivityType::Playing,
                 state: Some(FixedString::from_string_trunc(format!(
@@ -47,10 +57,22 @@ pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<(), Report> 
             let new_kills: u32 = rng.generate_range(0..=1010);
             let new_assists: u32 = rng.generate_range(0..=1020);
             let new_deaths: u32 = rng.generate_range(0..=1040);
-            kills += new_kills / 1000;
-            assists += new_assists / 1000;
-            deaths += new_deaths / 1000;
+            kills = kills.saturating_add(new_kills) / 1000;
+            assists = assists.saturating_add(new_assists) / 1000;
+            deaths = deaths.saturating_add(new_deaths) / 1000;
         }
     });
     Ok(())
+}
+
+/// Registering a command in a guild failed.
+#[derive(Debug, Snafu, Diagnostic)]
+#[snafu(display("Kunde inte registrera kommando i servern: {source}"))]
+#[diagnostic(
+    help("Försök igen eller kontrollera att Discord-servern är tillgänglig"),
+    code(events::ready::register_command)
+)]
+pub struct RegisterCommandInGuildError {
+    /// The source of the error.
+    source: serenity::Error,
 }

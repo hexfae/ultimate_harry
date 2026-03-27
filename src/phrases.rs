@@ -1,18 +1,86 @@
+//! Utility functions for generating random Swedish phrases used in bot responses.
+//!
+//! This module contains various phrases used throughout the bot for different
+//! scenarios, such as confirming actions, asking for deletion, showing cancellation
+//! messages, and more. Each set of phrases is randomly sampled to provide variety.
+
+use core::fmt::Display;
 use nanorand::Rng as _;
 
+/// Returns a randomly sampled item from the given list.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "all phrases are known at compile time to be non-empty"
+)]
 pub fn sample<T: Clone>(list: &[T]) -> T {
     let mut rng = nanorand::tls_rng();
     let index = rng.generate_range(0..list.len());
     list[index].clone()
 }
 
-pub fn sample_name(list: &[&str], name: impl AsRef<str>) -> String {
+/// Returns a randomly sampled phrase with `{character}` replaced by the given name.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "all phrases are known at compile time to be non-empty"
+)]
+pub fn sample_name<N: Display>(list: &[&str], name: N) -> String {
     let mut rng = nanorand::tls_rng();
     let index = rng.generate_range(0..list.len());
-    list[index].replace("{character}", name.as_ref())
+    list[index].replace("{character}", &name.to_string())
 }
 
-pub const YES_PHRASES: &[&str] = &[
+/// Returns an affirmative phrase.
+pub fn yes() -> &'static str {
+    sample(YES_PHRASES)
+}
+
+/// Returns a negative phrase.
+pub fn no() -> &'static str {
+    sample(NO_PHRASES)
+}
+
+/// Returns a phrase indicating no character was found.
+pub fn no_character() -> &'static str {
+    sample(NO_CHARACTER_PHRASES)
+}
+
+/// Returns a phrase asking for delete confirmation.
+pub fn ask_delete() -> &'static str {
+    sample(ASK_DELETE_PHRASES)
+}
+
+/// Returns a cancellation phrase.
+pub fn cancelled() -> &'static str {
+    sample(CANCELLED_PHRASES)
+}
+
+/// Returns a character creation phrase with the character name inserted.
+pub fn created<N: Display>(name: N) -> String {
+    sample_name(CREATED_PHRASES, name)
+}
+
+/// Returns a character edit phrase with the character name inserted.
+pub fn edited<N: Display>(name: N) -> String {
+    sample_name(EDITED_PHRASES, name)
+}
+
+/// Returns a deletion phrase.
+pub fn deleted() -> &'static str {
+    sample(DELETED_PHRASES)
+}
+
+/// Returns a phrase instructing to click the button below.
+pub fn click_below() -> &'static str {
+    sample(CLICK_BELOW_PHRASES)
+}
+
+/// Returns a phrase instructing to click.
+pub fn click_me() -> &'static str {
+    sample(CLICK_ME_PHRASES)
+}
+
+/// Phrases for affirmative responses.
+const YES_PHRASES: &[&str] = &[
     "Ja",
     "Japp",
     "Visst",
@@ -26,7 +94,8 @@ pub const YES_PHRASES: &[&str] = &[
     "Bekräfta",
 ];
 
-pub const NO_PHRASES: &[&str] = &[
+/// Phrases for negative responses.
+const NO_PHRASES: &[&str] = &[
     "Nej",
     "Näpp",
     "Absolut inte",
@@ -39,7 +108,8 @@ pub const NO_PHRASES: &[&str] = &[
     "Som om",
 ];
 
-pub const NO_CHARACTER_PHRASES: &[&str] = &[
+/// Phrases for when no character is found.
+const NO_CHARACTER_PHRASES: &[&str] = &[
     "Ursäkta, vad sade du nyss? (ingen gubbe hittades)",
     "Det finns ingen som heter så. (ingen gubbe hittades)",
     "Skojar du med mig eller? (ingen gubbe hittades)",
@@ -50,37 +120,19 @@ pub const NO_CHARACTER_PHRASES: &[&str] = &[
     "Jag har aldrig träffat den här mannen i hela mitt liv. (ingen gubbe hittades)",
 ];
 
-pub const NO_HISTORY_PHRASES: &[&str] = &[
-    "Menade du att göra det där? (ingen historia hittades)",
-    "Jag känner inte igen det där. (ingen historia hittades)",
-    "Skojar du med mig eller? (ingen historia hittades)",
-    "Jag har ingen aning vad du menar. (ingen historia hittades)",
-    "Prata lite tydligare kanske. (ingen historia hittades)",
-    "Jag ber så hemskt mycket om ursäkt, men va? (ingen historia hittades)",
-    "Pröva ge ett riktigt meddelande nästa gång. (ingen historia hittades)",
-];
-
-pub const ASK_EDIT_PHRASES: &[&str] = &[
-    "Vill du verkligen redigera den här gubben?",
-    "Vet du verkligen vad du gör just nu?",
-    "Be en vuxen som du litar på att hjälpa dig innan du fortsätter.",
-    "Åh gud, är du säker på detta?",
-    "Jag har inte tänkt att stoppa dig, men se upp nu.",
-    "Stänger av säkerhetsprotokoller…",
-    "Är detta din gubbe?",
-];
-
-pub const ASK_DELETE_PHRASES: &[&str] = &[
+/// Phrases for asking delete confirmation.
+const ASK_DELETE_PHRASES: &[&str] = &[
     "Vill du verkligen döda den här gubben?",
     "Vet du verkligen vad du gör just nu?",
     "Be en vuxen som du litar på att hjälpa dig innan du fortsätter.",
     "Åh gud, är du säker på detta?",
     "Jag har inte tänkt att stoppa dig, men se upp nu.",
-    "Stänger av säkerhetsprotokoller…",
+    "Stänger av säkerhetsprotokoll…",
     "Är detta din gubbe?",
 ];
 
-pub const CANCELLED_PHRASES: &[&str] = &[
+/// Phrases for cancellation.
+const CANCELLED_PHRASES: &[&str] = &[
     "Trodde väl det.",
     "Ännu ett misslyckande.",
     "Du gjorde rätt sak i dag.",
@@ -91,8 +143,9 @@ pub const CANCELLED_PHRASES: &[&str] = &[
     "Jag skulle ha gjort det om jag var du.",
 ];
 
-pub const CREATED_PHRASES: &[&str] = &[
-    "Fröja! {character} har fötts.",
+/// Phrases for character creation, contains `{character}` placeholder.
+const CREATED_PHRASES: &[&str] = &[
+    "Fröjdas! {character} har fötts.",
     "Du är nu en stolt förälder av {character}.",
     "Skapade du nyss liv ur ingenting…? {character} skrämmer mig…",
     "Toppen, ännu en gubbe, alltså? {character}, vilket perfekt namn, verkligen.",
@@ -101,7 +154,8 @@ pub const CREATED_PHRASES: &[&str] = &[
     "Jag hade inte kunnat skapa en bättre {character} själv.",
 ];
 
-pub const EDITED_PHRASES: &[&str] = &[
+/// Phrases for character edit, contains `{character}` placeholder.
+const EDITED_PHRASES: &[&str] = &[
     "Din perfekta varelse, {character}, är nu ännu mer perfekt.",
     "Wow, {character} är bättre än någonsin.",
     "Haha, den här nya {character} var bättre ändå!",
@@ -109,9 +163,10 @@ pub const EDITED_PHRASES: &[&str] = &[
     "Betyder det här att du gjorde ett misstag med {character} tidigare…?",
 ];
 
-pub const DELETED_PHRASES: &[&str] = &[
+/// Phrases for character deletion.
+const DELETED_PHRASES: &[&str] = &[
     "Du gjorde det du behövde.",
-    "Den hade det kommande.",
+    "Den fick vad den förtjänade.",
     "Ändamålet helgar medlen.",
     "Skyll inte på dig själv.",
     "Du gjorde det för ditt lands skull.",
@@ -121,15 +176,8 @@ pub const DELETED_PHRASES: &[&str] = &[
     "En ängel gråter.",
 ];
 
-pub const EDITING_PHRASES: &[&str] = &["Konst håller på att skapas…"];
-
-pub const TIMEOUT_PHRASES: &[&str] = &[
-    "Tror du att jag har hela dagen på mig att vänta?",
-    "Jag är en upptagen robot. Jag kommer inte att vänta på dig längre.",
-    "Oj då, där tog du lite för lång tid på dig. Synd!",
-];
-
-pub const CLICK_BELOW_PHRASES: &[&str] = &[
+/// Phrases for clicking the button below.
+const CLICK_BELOW_PHRASES: &[&str] = &[
     "Klicka på nedanstående knapp för att fortsätta.",
     "Klicka på nedanstående knapp om du vågar.",
     "Klicka på nedanstående knapp.",
@@ -138,7 +186,8 @@ pub const CLICK_BELOW_PHRASES: &[&str] = &[
     "Är du säker att du vågar?",
 ];
 
-pub const CLICK_ME_PHRASES: &[&str] = &[
+/// Phrases for clicking me.
+const CLICK_ME_PHRASES: &[&str] = &[
     "Klicka på mig.",
     "Klicka på mig!",
     "Snälla klicka på mig!",

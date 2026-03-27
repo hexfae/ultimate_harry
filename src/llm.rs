@@ -1,10 +1,12 @@
-use std::pin::Pin;
+//! The LLM manager for generating responses from AI models.
 
 use crate::{constants::CHARACTER_LIMIT, models::history::History};
+use core::pin::Pin;
 use miette::Diagnostic;
 use rig::{
     agent::{AgentBuilder, MultiTurnStreamItem, StreamingError},
-    completion::Chat as _,
+    completion::{Chat as _, PromptError},
+    http_client::Error as RigError,
     message::Message,
     providers::openrouter::{Client, CompletionModel, streaming::StreamingCompletionResponse},
     streaming::StreamingChat as _,
@@ -14,47 +16,61 @@ use serenity::futures::Stream;
 use snafu::{ResultExt as _, Snafu};
 use unicode_segmentation::UnicodeSegmentation as _;
 
+/// The LLM manager for generating responses from AI models.
+///
+/// This struct manages the settings for the AI model and provides methods
+/// for generating responses from the model.
+#[derive(Debug)]
 pub struct LlmManager {
+    /// The settings used for the AI model.
     settings: ModelSettings,
 }
 
+/// The settings for the AI model.
+///
+/// These settings control various aspects of how the AI model generates responses,
+/// such as temperature, penalties for repeated tokens, and the model to use.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSettings {
+    /// The model to use for generating responses.
+    ///
+    /// This should be a valid model identifier for the `OpenRouter` API.
     pub model: String,
+    /// The API key for the `OpenRouter` service.
     pub api_key: String,
+    /// The frequency penalty to apply to the model.
+    ///
+    /// Positive values penalize new tokens based on their existing frequency,
+    /// reducing the likelihood of repeating the same tokens.
     pub frequency_penalty: f32,
+    /// The presence penalty to apply to the model.
+    ///
+    /// Positive values penalize new tokens based on whether they appear in the
+    /// conversation, encouraging the model to talk about new topics.
     pub presence_penalty: f32,
+    /// The temperature to use for generating responses.
+    ///
+    /// Higher values make the output more random, while lower values make it
+    /// more deterministic and focused.
     pub temperature: f32,
+    /// The `top_p` value to use for nucleus sampling.
+    ///
+    /// This controls the cumulative probability of tokens to consider.
     pub top_p: f32,
 }
 
-#[derive(Debug, Snafu, Diagnostic)]
-pub enum LlmError {
-    #[snafu(display("Misslyckades med att bygga LLM-klienten: {source}"))]
-    #[diagnostic(
-        help("Kontrollera att API-nyckeln är korrekt och att du har tillgång till modellen."),
-        code(llm::build_client)
-    )]
-    BuildClient { source: rig::http_client::Error },
-    #[snafu(display("Misslyckades med att få svar från LLM: {source}"))]
-    #[diagnostic(
-        help(
-            "Promptet kan vara för långt eller innehålla ogiltiga tecken. Försök med ett kortare meddelande."
-        ),
-        code(llm::get_response)
-    )]
-    GetResponse {
-        source: rig::completion::PromptError,
-    },
-}
-
 impl LlmManager {
+    /// Creates a new LLM manager with the given settings.
     #[must_use]
     pub const fn new(settings: ModelSettings) -> Self {
         Self { settings }
     }
 
     /// Returns the response of the given character of the given history.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if building the client fails or if getting the response fails.
     pub async fn request(
         &self,
         history: &History,
@@ -87,19 +103,28 @@ impl LlmManager {
             .collect())
     }
 
+    /// Returns a stream of responses from the AI model.
+    ///
+    /// This method is used for generating responses that are streamed back to the user,
+    /// providing a more interactive experience.
     pub async fn request_stream(
         &self,
         history: &History,
         prompt: Option<String>,
-    ) -> Pin<
-        Box<
-            dyn Stream<
-                    Item = Result<MultiTurnStreamItem<StreamingCompletionResponse>, StreamingError>,
-                > + Send,
+    ) -> Result<
+        Pin<
+            Box<
+                dyn Stream<
+                        Item = Result<
+                            MultiTurnStreamItem<StreamingCompletionResponse>,
+                            StreamingError,
+                        >,
+                    > + Send,
+            >,
         >,
+        LlmError,
     > {
-        // TODO: make this not panic
-        let client = Client::new(&self.settings.api_key).expect("openrouter api key");
+        let client = Client::new(&self.settings.api_key).context(BuildClientSnafu)?;
         let model = CompletionModel::new(client, &self.settings.model);
 
         let mut rig_messages: Vec<Message> = Vec::new();
@@ -111,12 +136,12 @@ impl LlmManager {
             .temperature(self.settings.temperature.into())
             .build();
 
-        agent
+        Ok(agent
             .stream_chat(
                 Message::system(prompt.unwrap_or_else(|| "Fortsätt rollspelet.".to_owned())),
                 rig_messages,
             )
-            .await
+            .await)
     }
 }
 
@@ -131,4 +156,31 @@ impl Default for ModelSettings {
             top_p: 0.95,
         }
     }
+}
+
+/// All errors that can happen when using the AI client.
+#[derive(Debug, Snafu, Diagnostic)]
+pub enum LlmError {
+    /// Failed to build the Rig client.
+    #[snafu(display("Misslyckades med att bygga LLM-klienten: {source}"))]
+    #[diagnostic(
+        help("Kontrollera att API-nyckeln är korrekt och att du har tillgång till modellen."),
+        code(llm::build_client)
+    )]
+    BuildClient {
+        /// The source of the error.
+        source: RigError,
+    },
+    /// Failed to get a response from the AI.
+    #[snafu(display("Misslyckades med att få svar från AI: {source}"))]
+    #[diagnostic(
+        help(
+            "Prompten kan vara för långt eller innehålla ogiltiga tecken. Försök med ett kortare meddelande."
+        ),
+        code(llm::get_response)
+    )]
+    GetResponse {
+        /// The source of the error.
+        source: PromptError,
+    },
 }

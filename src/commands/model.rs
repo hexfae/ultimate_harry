@@ -1,26 +1,10 @@
-use crate::Context;
-use miette::{Diagnostic, Report};
+//! The bot's Discord slash command for setting various AI model settings.
+
+use crate::{Context, database::DatabaseError, traits::SayEphemeral as _};
+use miette::{Diagnostic, Result};
 use snafu::{ResultExt as _, Snafu};
 
-#[derive(Debug, Snafu, Diagnostic)]
-enum ModelSettingsError {
-    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
-    #[diagnostic(help("Försök igen om en liten stund"), code(commands::model::defer))]
-    Defer { source: serenity::Error },
-    #[snafu(display("Kunde inte spara modellinställningar: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att inställningarna är giltiga"),
-        code(commands::model::save_settings)
-    )]
-    SaveSettings { source: crate::db::DatabaseError },
-    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
-        code(commands::model::send_message)
-    )]
-    SendMessage { source: serenity::Error },
-}
-
+/// The bot's Discord slash command for setting various AI model settings.
 #[poise::command(slash_command)]
 pub async fn model(
     ctx: Context<'_>,
@@ -30,32 +14,56 @@ pub async fn model(
     presence_penalty: Option<f32>,
     temperature: Option<f32>,
     top_p: Option<f32>,
-) -> Result<(), Report> {
-    ctx.defer_ephemeral().await.context(DeferSnafu)?;
+) -> Result<()> {
     let mut model_settings = ctx.data().db.model_settings().await;
-    if let Some(model) = model {
-        model_settings.model = model;
+    if let Some(new_model) = model {
+        model_settings.model = new_model;
     }
-    if let Some(api_key) = api_key {
-        model_settings.api_key = api_key;
+    if let Some(new_api_key) = api_key {
+        model_settings.api_key = new_api_key;
     }
-    if let Some(frequency_penalty) = frequency_penalty {
-        model_settings.frequency_penalty = frequency_penalty;
+    if let Some(new_frequency_penalty) = frequency_penalty {
+        model_settings.frequency_penalty = new_frequency_penalty;
     }
-    if let Some(presence_penalty) = presence_penalty {
-        model_settings.presence_penalty = presence_penalty;
+    if let Some(new_presence_penalty) = presence_penalty {
+        model_settings.presence_penalty = new_presence_penalty;
     }
-    if let Some(temperature) = temperature {
-        model_settings.temperature = temperature;
+    if let Some(new_temperature) = temperature {
+        model_settings.temperature = new_temperature;
     }
-    if let Some(top_p) = top_p {
-        model_settings.top_p = top_p;
+    if let Some(new_top_p) = top_p {
+        model_settings.top_p = new_top_p;
     }
     ctx.data()
         .db
         .upsert_model_settings(model_settings)
         .await
         .context(SaveSettingsSnafu)?;
-    ctx.say("done").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral("done").await.context(SendMessageSnafu)?;
     Ok(())
+}
+
+/// All errors that can happen when changing model settings.
+#[derive(Debug, Snafu, Diagnostic)]
+enum ModelSettingsError {
+    /// Sending a message failed.
+    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
+        code(commands::model::send_message)
+    )]
+    SendMessage {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Saving the model settings to the database failed.
+    #[snafu(display("Kunde inte spara modellinställningar: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att inställningarna är giltiga"),
+        code(commands::model::save_settings)
+    )]
+    SaveSettings {
+        /// The source of the error.
+        source: DatabaseError,
+    },
 }

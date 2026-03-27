@@ -1,32 +1,28 @@
+//! The button that edits a character's chat message's contents.
+
 use crate::{
-    db::Database, events::message::history_and_character_of, models::modals::EditMessageModal,
-    traits::ShowModal as _,
+    database::Database, events::message::history_and_character_of,
+    models::modals::EditMessageModal, traits::ShowModal as _,
 };
-use miette::{Diagnostic, Report};
+use miette::{Diagnostic, Result};
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use snafu::{ResultExt as _, Snafu};
 
-#[derive(Debug, Snafu, Diagnostic)]
-enum EditReplyError {
-    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"),
-        code(events::interaction::edit::send_response)
-    )]
-    SendResponse { source: serenity::Error },
-}
-
+/// Edit the contents of a character's chat message.
 pub async fn edit(
     ctx: &Context,
     interaction: &ComponentInteraction,
     id: MessageId,
     db: &Database,
-) -> Result<(), Report> {
+) -> Result<()> {
     let Some((mut history, character)) = history_and_character_of(id, db).await? else {
         return Ok(());
     };
 
-    let Some(modal): Option<EditMessageModal> = ctx.show_modal(interaction.to_owned()).await?
+    let Some(modal): Option<EditMessageModal> = ctx
+        .show_modal(interaction.to_owned())
+        .await
+        .context(ShowModalSnafu)?
     else {
         return Ok(());
     };
@@ -40,7 +36,32 @@ pub async fn edit(
         .await
         .context(SendResponseSnafu)?;
 
-    db.update_history(history).await?;
+    db.upsert_history(history).await?;
 
     Ok(())
+}
+
+/// All errors that can happen when editing an answer.
+#[derive(Debug, Snafu, Diagnostic)]
+enum EditAnswerError {
+    /// Sending a response failed.
+    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"),
+        code(events::interaction::edit::send_response)
+    )]
+    SendResponse {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Showing a modal failed.
+    #[snafu(display("Kunde inte visa modal: {source}"))]
+    #[diagnostic(
+        help("Försök igen om en stund"),
+        code(events::interaction::edit::show_modal)
+    )]
+    ShowModal {
+        /// The source of the error.
+        source: serenity::Error,
+    },
 }

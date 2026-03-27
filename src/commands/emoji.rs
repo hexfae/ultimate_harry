@@ -1,44 +1,51 @@
-use crate::Context;
-use miette::{Diagnostic, Report};
+//! The bot's Discord slash command for setting users' emoji.
+
+use crate::{Context, database::DatabaseError, traits::SayEphemeral as _};
+use miette::{Diagnostic, Result};
 use poise::serenity_prelude::ReactionType;
 use snafu::{ResultExt as _, Snafu};
 
-#[derive(Debug, Snafu, Diagnostic)]
-enum SetEmojiError {
-    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
-    #[diagnostic(
-        help("Detta kan bero på nätverksproblem eller Discord-tjänsten är otillgänglig"),
-        code(commands::emoji::set_emoji::defer)
-    )]
-    Defer { source: serenity::Error },
-    #[snafu(display("Kunde inte spara emojit: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att emojit är giltigt"),
-        code(commands::emoji::set_emoji::save_emoji)
-    )]
-    SaveEmoji { source: crate::db::DatabaseError },
-    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
-        code(commands::emoji::set_emoji::send_message)
-    )]
-    SendMessage { source: serenity::Error },
-}
-
+/// The bot's Discord slash command for setting a user's emoji.
 #[poise::command(slash_command)]
-pub async fn emoji(ctx: Context<'_>, emoji: String) -> Result<(), Report> {
-    ctx.defer_ephemeral().await.context(DeferSnafu)?;
-    let Ok(emoji) = ReactionType::try_from(emoji) else {
-        ctx.say("Det där var ingen emoji… (eller så gick någonting fel!)")
+pub async fn emoji(ctx: Context<'_>, emoji: String) -> Result<()> {
+    let Ok(found_emoji) = ReactionType::try_from(emoji) else {
+        ctx.say_ephemeral("Det där var ingen emoji… (eller så gick någonting fel!)")
             .await
             .context(SendMessageSnafu)?;
         return Ok(());
     };
     ctx.data()
         .db
-        .upsert_user_emoji(ctx.author(), emoji.clone())
+        .upsert_user_emoji(ctx.author(), found_emoji.clone())
         .await
         .context(SaveEmojiSnafu)?;
-    ctx.say(emoji.to_string()).await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(found_emoji.to_string())
+        .await
+        .context(SendMessageSnafu)?;
     Ok(())
+}
+
+/// All errors that can happen when setting a user's emoji.
+#[derive(Debug, Snafu, Diagnostic)]
+enum SetEmojiError {
+    /// Sending a message failed.
+    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
+        code(commands::emoji::send_message)
+    )]
+    SendMessage {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Saving the emoji to the database failed.
+    #[snafu(display("Kunde inte spara emojin: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att emoji:n är giltig"),
+        code(commands::emoji::save_emoji)
+    )]
+    SaveEmoji {
+        /// The source of the error.
+        source: DatabaseError,
+    },
 }

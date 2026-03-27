@@ -1,38 +1,51 @@
-use std::{env::var, fs::read_to_string, sync::Arc};
+//! Ultimate Harry, Discord bot for AI character chats.
 
-use miette::{Diagnostic, IntoDiagnostic as _, Report};
-use poise::{
-    Framework, FrameworkError, FrameworkOptions,
-    serenity_prelude::{ClientBuilder, GatewayIntents, Token},
-};
-use snafu::{ResultExt as _, Snafu};
-use tracing::error;
-use ultimate_harry::{
+extern crate alloc;
+
+mod app_state;
+mod commands;
+mod constants;
+mod database;
+mod events;
+mod llm;
+mod models;
+mod phrases;
+mod traits;
+
+use crate::{
     app_state::AppState,
     commands::{character, chat, emoji, model, name, pin_channel},
-    events::EventHandler,
+    events::{EventHandler, on_error},
 };
+use alloc::sync::Arc;
+use miette::{Diagnostic, Report, Result};
+use poise::{
+    Framework, FrameworkOptions,
+    serenity_prelude::{ClientBuilder, GatewayIntents, Token, TokenError as SerenityTokenError},
+};
+use rustls::crypto::aws_lc_rs;
+use snafu::{ResultExt as _, Snafu};
+use std::{env::var, fs::read_to_string, io};
+use tracing::warn;
+use tracing_subscriber::fmt::init as tracing_init;
 
+/// The default `Context` type used in most slash commands.
+pub type Context<'a> = poise::Context<'a, AppState, Report>;
+/// The default `ApplicationContext` type used in certain slash commands.
+pub type ApplicationContext<'a> = poise::ApplicationContext<'a, AppState, Report>;
+
+/// The Discord intents needed for Ultimate Harry to function.
+///
+/// Non-privileged and message content.
 const INTENTS: GatewayIntents =
     GatewayIntents::non_privileged().union(GatewayIntents::MESSAGE_CONTENT);
 
-async fn on_error(
-    error: FrameworkError<'_, AppState, miette::Report>,
-) -> Result<(), miette::Report> {
-    if let FrameworkError::Command { error, ctx, .. } = error {
-        error!("in command");
-        eprintln!("{error:?}");
-        ctx.say(error.to_string()).await.into_diagnostic()?;
-    }
-    Ok(())
-}
-
 #[tokio::main]
-async fn main() -> Result<(), Report> {
-    rustls::crypto::aws_lc_rs::default_provider()
+async fn main() -> Result<()> {
+    aws_lc_rs::default_provider()
         .install_default()
-        .expect("install aws-lc-rs rustls provider");
-    tracing_subscriber::fmt::init();
+        .map_err(|_why| RustlsError)?;
+    tracing_init();
 
     let token_path = var("TOKEN_FILE").unwrap_or_else(|_| "token".to_owned());
     let token_string = read_to_string(token_path).context(TokenPathSnafu)?;
@@ -47,7 +60,9 @@ async fn main() -> Result<(), Report> {
             commands,
             on_error: |error| {
                 Box::pin(async {
-                    let _ = on_error(error).await;
+                    if let Err(why) = on_error(error).await {
+                        warn!("error in event handler: {why}");
+                    }
                 })
             },
             ..Default::default()
@@ -65,14 +80,41 @@ async fn main() -> Result<(), Report> {
         .context(StartSnafu)?)
 }
 
+/// Installing `aws-lc-rs` as the default `rustls` provider failed.
+#[derive(Debug, Snafu, Diagnostic)]
+#[snafu(display("Failed to install `aws-lc-rs` as the default Rustls provider"))]
+struct RustlsError;
+
+/// All errors that can happen when reading the bot's Discord token.
 #[derive(Debug, Snafu, Diagnostic)]
 enum TokenError {
-    TokenPath { source: std::io::Error },
-    Invalid { source: serenity::all::TokenError },
+    /// The path to the token file was invalid.
+    #[snafu(display("Could not read the token file"))]
+    #[diagnostic(code(main::token_path))]
+    TokenPath {
+        /// The source of the error.
+        source: io::Error,
+    },
+    /// The token itself was invalid.
+    #[snafu(display("Invalid Discord token: {source}"))]
+    #[diagnostic(code(main::invalid_token))]
+    Invalid {
+        /// The source of the error.
+        source: SerenityTokenError,
+    },
 }
 
+/// All errors that can happen when building the serenity client.
 #[derive(Debug, Snafu, Diagnostic)]
 enum ClientError {
-    Build { source: serenity::Error },
-    Start { source: serenity::Error },
+    /// Building the client failed.
+    Build {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Starting the client failed.
+    Start {
+        /// The source of the error.
+        source: serenity::Error,
+    },
 }

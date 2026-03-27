@@ -1,19 +1,21 @@
-use std::{borrow::Cow, time::Duration};
+//! The bot's Discord slash command for editing characters.
 
 use crate::{
     Context, Result,
     commands::character::interaction::InteractionType,
-    constants::{
-        CANCEL, CANCELLED_PHRASES, CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, EDIT, EDITED_PHRASES,
-        NEXT, NO_CHARACTER_PHRASES, PREVIOUS, sample, sample_name,
-    },
+    constants::{CANCEL, EDIT, NEXT, PREVIOUS},
+    database::DatabaseError,
     models::{
         character::Character,
         modals::{EditCharacterModal, SecondEditCharacterModal},
     },
-    traits::RespondToWith as _,
+    phrases::{cancelled, click_below, click_me, edited, no_character},
+    traits::{RespondToWith as _, SayEphemeral as _},
 };
-use miette::{Diagnostic, Report};
+use alloc::borrow::Cow;
+use core::time::Duration;
+use miette::Diagnostic;
+use nonempty::NonEmpty;
 use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal_on_component_interaction,
     serenity_prelude::{
@@ -26,53 +28,8 @@ use poise::{
 use snafu::{ResultExt as _, Snafu};
 use tokio::time::sleep;
 
-#[derive(Debug, Snafu, Diagnostic)]
-enum EditCharacterError {
-    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
-    #[diagnostic(
-        help("Detta kan bero på nätverksproblem eller Discord-tjänsten är otillgänglig"),
-        code(commands::character::edit)
-    )]
-    Defer { source: serenity::Error },
-    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
-    #[diagnostic(
-        help("Det kan hända att meddelandet är för långt eller att kanalen är full"),
-        code(commands::character::edit)
-    )]
-    SendMessage { source: serenity::Error },
-    #[snafu(display("Kunde inte visa modal: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller starta om interaktionen"),
-        code(commands::character::edit)
-    )]
-    ShowModal { source: serenity::Error },
-    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
-    #[diagnostic(
-        help("Detta kan bero på att interaktionen har gått ut"),
-        code(commands::character::edit)
-    )]
-    SendResponse { source: serenity::Error },
-    #[snafu(display("Kunde inte redigera svaret: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller starta om interaktionen"),
-        code(commands::character::edit)
-    )]
-    EditResponse { source: serenity::Error },
-    #[snafu(display("Kunde inte ta bort svaret: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller starta om interaktionen"),
-        code(commands::character::edit)
-    )]
-    DeleteResponse { source: serenity::Error },
-    #[snafu(transparent)]
-    #[diagnostic(transparent)]
-    Database { source: crate::db::DatabaseError },
-    #[snafu(transparent)]
-    #[diagnostic(transparent)]
-    Interaction {
-        source: super::interaction::InteractionError,
-    },
-}
+/// The 4 buttons that are visible on a character deletion embed.
+const BUTTONS: [&str; 4] = ["confirm", "cancel", "prev", "next"];
 
 #[poise::command(slash_command, rename = "ändra")]
 pub async fn edit(
@@ -81,50 +38,53 @@ pub async fn edit(
     #[rename = "namn"]
     #[description = "Gubbens namn"]
     name: String,
-) -> Result<(), Report> {
-    ctx.defer_ephemeral().await.context(DeferSnafu)?;
-
+) -> Result<()> {
     let characters: Vec<Character> = ctx.data().db.characters_by_similarity(name).await?;
 
-    if characters.is_empty() {
-        let response = sample(NO_CHARACTER_PHRASES);
-        ctx.say(response).await.context(SendMessageSnafu)?;
-        return Ok(());
-    }
-
     let pages = characters.len();
-    let characters_and_footer_text = characters
+    let characters_and_footers = characters
         .into_iter()
         .enumerate()
         .map(|(index, character)| {
-            let index = index + 1;
             let similarity = character.similarity();
             let conversations_had = character.conversations_had();
-            let footer_text =
-                format!("{index}/{pages} | {conversations_had} konversationer{similarity}");
+            let footer_text = format!(
+                "{}/{pages} | {conversations_had} konversationer{similarity}",
+                index.saturating_sub(1)
+            );
             (character, footer_text)
         })
         .collect();
 
-    Box::pin(display_pagination(ctx, characters_and_footer_text)).await?;
+    let Some(nonempty_characters_and_footers) = NonEmpty::from_vec(characters_and_footers) else {
+        let msg = ctx
+            .say_ephemeral(no_character())
+            .await
+            .context(SendMessageSnafu)?;
+        sleep(Duration::from_secs(5)).await;
+        msg.delete(ctx).await.context(DeleteMessageSnafu)?;
+        return Ok(());
+    };
+
+    Box::pin(display_pagination(ctx, nonempty_characters_and_footers)).await?;
     Ok(())
 }
 
+/// Sends a message containing an embed with the character(s) and 4 buttons to manipulate them.
 async fn display_pagination(
     ctx: Context<'_>,
-    characters_and_footer_text: Vec<(Character, String)>,
-) -> Result<(), EditCharacterError> {
+    characters_and_footers: NonEmpty<(Character, String)>,
+) -> Result<()> {
     let id = ctx.id();
     let custom_ids = FixedArray::from_vec_trunc(
-        ["prev", "next", "confirm", "cancel"]
-            .map(|s| FixedString::from_string_trunc(format!("{id}{s}")))
+        BUTTONS
+            .map(|suffix| FixedString::from_string_trunc(format!("{id}{suffix}")))
             .to_vec(),
     );
     let mut current_page: usize = 0;
-    let pages = characters_and_footer_text.len();
+    let pages = characters_and_footers.len();
 
-    // index into 0 is safe because we checked `is_empty()` earlier
-    send_initial_embed(ctx, characters_and_footer_text[0].clone()).await?;
+    send_initial_embed(ctx, characters_and_footers.first().to_owned()).await?;
 
     while let Some(interaction) = ComponentInteractionCollector::new(ctx.serenity_context())
         .custom_ids(custom_ids.clone())
@@ -132,29 +92,38 @@ async fn display_pagination(
     {
         let interaction_type = InteractionType::try_from(&interaction)?;
         match interaction_type {
-            InteractionType::Prev => {
-                current_page = (current_page + pages - 1) % pages;
+            InteractionType::Previous => {
+                current_page = current_page
+                    .saturating_add(pages)
+                    .saturating_sub(1)
+                    .strict_rem(pages);
             }
             InteractionType::Next => {
-                current_page = (current_page + 1) % pages;
+                current_page = current_page.saturating_add(1).strict_rem(pages);
             }
             InteractionType::Cancel => {
                 edit_cancelled(ctx, interaction).await?;
                 return Ok(());
             }
             InteractionType::Confirm => {
-                ctx.data().stats.character_edited_by(ctx.author());
                 edit_confirmed(
                     ctx,
                     interaction.clone(),
-                    characters_and_footer_text[current_page].0.clone(),
+                    characters_and_footers
+                        .get(current_page)
+                        .unwrap_or_else(|| characters_and_footers.first())
+                        .0
+                        .clone(),
                 )
                 .await?;
                 return Ok(());
             }
         }
 
-        let (character, footer_text) = characters_and_footer_text[current_page].clone();
+        let (character, footer_text) = characters_and_footers
+            .get(current_page)
+            .unwrap_or_else(|| characters_and_footers.first())
+            .clone();
         let embed = character
             .into_embed_with_footer_text(footer_text, &ctx.data().db)
             .await;
@@ -173,6 +142,7 @@ async fn display_pagination(
     Ok(())
 }
 
+/// Send the first message, containing the embed of a character and buttons for manipulating it.
 async fn send_initial_embed(
     ctx: Context<'_>,
     (character, footer_text): (Character, String),
@@ -187,6 +157,7 @@ async fn send_initial_embed(
         .context(SendMessageSnafu)
 }
 
+/// Returns a component action row containing 4 buttons for manipulating characters.
 #[must_use]
 pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
     let confirm = format!("{id}confirm");
@@ -196,21 +167,43 @@ pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
     Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         Cow::Owned(vec![
             CreateButton::new(confirm)
-                .emoji(EDIT.parse::<ReactionType>().expect("valid emoji"))
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(EDIT)))
                 .style(ButtonStyle::Secondary),
             CreateButton::new(cancel)
-                .emoji(CANCEL.parse::<ReactionType>().expect("valid emoji"))
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(
+                    CANCEL,
+                )))
                 .style(ButtonStyle::Secondary),
             CreateButton::new(prev)
-                .emoji(PREVIOUS.parse::<ReactionType>().expect("valid emoji"))
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(
+                    PREVIOUS,
+                )))
                 .style(ButtonStyle::Secondary),
             CreateButton::new(next)
-                .emoji(NEXT.parse::<ReactionType>().expect("valid emoji"))
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(NEXT)))
                 .style(ButtonStyle::Secondary),
         ]),
     ))])
 }
 
+/// Sends a message about the cancellation of editing a character, and deletes the message 5 seconds later.
+async fn edit_cancelled(
+    ctx: Context<'_>,
+    interaction: ComponentInteraction,
+) -> Result<(), EditCharacterError> {
+    ctx.respond_to_with(&interaction, cancelled())
+        .await
+        .context(SendMessageSnafu)?;
+    sleep(Duration::from_secs(5)).await;
+    interaction
+        .delete_response(ctx.http())
+        .await
+        .context(DeleteResponseSnafu)?;
+    Ok(())
+}
+
+/// Sends 2 buttons back-to-back that show modals, edits the character, sends
+/// a message stating it was edit, and deletes the message 5 seconds later.
 async fn edit_confirmed(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
@@ -229,7 +222,7 @@ async fn edit_confirmed(
     let old_id = character.id().clone();
 
     character.edit_from_modals(ctx.author(), modal, second_modal);
-    let character_name = character.name().to_owned();
+    let character_name = character.to_string();
 
     ctx.data()
         .db
@@ -237,13 +230,11 @@ async fn edit_confirmed(
         .await?;
     ctx.data().db.insert_character(character).await?;
 
-    ctx.data().stats.character_edited_by(ctx.author());
-
     interaction
         .edit_response(
             ctx.http(),
             EditInteractionResponse::new()
-                .content(sample_name(EDITED_PHRASES, character_name))
+                .content(edited(character_name))
                 .components(vec![]),
         )
         .await
@@ -256,22 +247,7 @@ async fn edit_confirmed(
     Ok(())
 }
 
-async fn edit_cancelled(
-    ctx: Context<'_>,
-    interaction: ComponentInteraction,
-) -> Result<(), EditCharacterError> {
-    let response = sample(CANCELLED_PHRASES);
-    ctx.respond_to_with(&interaction, response)
-        .await
-        .context(SendMessageSnafu)?;
-    sleep(Duration::from_secs(5)).await;
-    interaction
-        .delete_response(ctx.http())
-        .await
-        .context(DeleteResponseSnafu)?;
-    Ok(())
-}
-
+/// Immediately shows the first modal to the user.
 async fn show_first_modal<M: Modal>(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
@@ -281,6 +257,7 @@ async fn show_first_modal<M: Modal>(
         .context(ShowModalSnafu)
 }
 
+/// Sends a button that attempts to tempt the user into pressing it, then shows them a modal.
 async fn show_second_modal<M: Modal>(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
@@ -295,23 +272,27 @@ async fn show_second_modal<M: Modal>(
         ]))
         .await;
 
-    if let Some(interaction) = collector {
-        execute_modal_on_component_interaction::<M>(ctx.serenity_context(), interaction, None, None)
-            .await
-            .context(ShowModalSnafu)
+    if let Some(second_interaction) = collector {
+        execute_modal_on_component_interaction::<M>(
+            ctx.serenity_context(),
+            second_interaction,
+            None,
+            None,
+        )
+        .await
+        .context(ShowModalSnafu)
     } else {
         Ok(None)
     }
 }
 
+/// Sends a message that attempts to tempt the user into pressing it.
 async fn send_first_tempting_button(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
 ) -> Result<(), EditCharacterError> {
     let id = ctx.id().to_string();
-    let click_me = sample(CLICK_ME_PHRASES);
-    let click_below = sample(CLICK_BELOW_PHRASES);
-    let button = Cow::Owned(vec![CreateButton::new(id).label(click_me)]);
+    let button = Cow::Owned(vec![CreateButton::new(id).label(click_me())]);
     let component = Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         button,
     ))]);
@@ -319,11 +300,83 @@ async fn send_first_tempting_button(
         .edit_response(
             ctx.http(),
             EditInteractionResponse::new()
-                .content(click_below)
+                .content(click_below())
                 .embeds(vec![])
                 .components(component),
         )
         .await
         .context(EditResponseSnafu)
         .map(|_| ())
+}
+
+/// All errors that can happen when editing a character.
+#[derive(Debug, Snafu, Diagnostic)]
+pub enum EditCharacterError {
+    /// Sending a message failed.
+    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen om en stund"),
+        code(commands::character::edit::send_message)
+    )]
+    SendMessage {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Sending a response failed.
+    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
+    #[diagnostic(
+        help("Detta kan bero på att interaktionen har gått ut"),
+        code(commands::character::edit::send_response)
+    )]
+    SendResponse {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Editing a response failed.
+    #[snafu(display("Kunde inte redigera interaktionssvar: {source}"))]
+    #[diagnostic(
+        help("Detta kan bero på att interaktionen har gått ut"),
+        code(commands::character::edit::edit_response)
+    )]
+    EditResponse {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Deleting a message failed.
+    #[snafu(display("Kunde inte ta bort meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen om en stund"),
+        code(commands::character::edit::delete_message)
+    )]
+    DeleteMessage {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Deleting a response failed.
+    #[snafu(display("Kunde inte ta bort svar: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller starta om interaktionen"),
+        code(commands::character::edit::delete_response)
+    )]
+    DeleteResponse {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Showing a modal failed.
+    #[snafu(display("Kunde inte visa modal: {source}"))]
+    #[diagnostic(
+        help("Försök igen om en stund"),
+        code(commands::character::edit::show_modal)
+    )]
+    ShowModal {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Using the database failed.
+    #[snafu(transparent)]
+    #[diagnostic(transparent)]
+    Database {
+        /// The source of the error.
+        source: DatabaseError,
+    },
 }

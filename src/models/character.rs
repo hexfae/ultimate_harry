@@ -1,4 +1,11 @@
+//! The character model for Discord character chats.
+
+//! This module contains the `Character` struct which represents an AI character
+//! that users can chat with, as well as the `CharacterPages` struct for pagination
+//! of multiple character search results.
+
 use bon::Builder;
+use core::fmt::{Display, Formatter, Result as FmtResult, Write as _};
 use jiff::Zoned;
 use poise::serenity_prelude::{
     CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage, MessageId,
@@ -7,26 +14,25 @@ use poise::serenity_prelude::{
     },
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{HashMap, HashSet},
-    fmt::{Display, Write as _},
-};
+use std::collections::{HashMap, HashSet};
 use surrealdb::RecordId;
+use tracing::warn;
 use ulid::Ulid;
 use url::Url;
 
 use crate::{
-    constants::{NO_PHRASES, YES_PHRASES, sample},
-    db::Database,
+    database::Database,
     llm::ModelSettings,
     models::modals::{
         CreateCharacterModal, EditCharacterModal, SecondCreateCharacterModal,
         SecondEditCharacterModal,
     },
+    phrases::{no, yes},
 };
 
-/// e.g. 16 May, Friday, 2025 | 17:41:14 | 2025-05-16
-/// [jiff::fmt::strtime](https://docs.rs/jiff/latest/jiff/fmt/strtime/index.html)
+/// E.g. `16 May, Friday, 2025 | 17:41:14 | 2025-05-16`.
+///
+/// See [`jiff::fmt::strtime`] for formatting details.
 const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %T | %F";
 
 /// A character.
@@ -60,7 +66,7 @@ pub struct Character {
     previous_version: Option<RecordId>,
     /// The character's nickname.
     ///
-    /// This is intented to be a short version of the name, to
+    /// This is intended to be a short version of the name, to
     /// more easily start conversations with the character.
     nickname: Option<String>,
     /// A short description of the character.
@@ -151,12 +157,19 @@ pub struct Character {
     similarity: Option<f64>,
 }
 
+/// A paginated view of multiple characters.
+///
+/// This is used when viewing characters, allowing the user to navigate
+/// between multiple character results using buttons.
 #[derive(Debug, Serialize, Deserialize, Builder)]
-pub struct CharacterPages {
+pub struct ViewCharacterPages {
+    /// The Discord message ID of the character page message.
     #[builder(with = |id: MessageId| RecordId::from(("character_page", id.to_string())))]
     id: RecordId,
+    /// The character IDs shown on this page.
     #[builder(with = |cs: &[Character]| cs.iter().map(Character::id).cloned().collect())]
     characters: Vec<RecordId>,
+    /// The current page index being displayed.
     #[builder(default)]
     current_page: usize,
     /// `Some` if the user entered a name when running the command.
@@ -166,98 +179,126 @@ pub struct CharacterPages {
 }
 
 impl Character {
+    /// Returns the character's name.
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
 
+    /// Returns the character's greeting message.
     #[must_use]
     pub fn greeting(&self) -> &str {
         &self.greeting
     }
 
+    /// Returns the character's personality description.
     #[must_use]
     pub fn personality(&self) -> Option<&str> {
         self.personality.as_deref()
     }
 
+    /// Returns the character's prompt instructions.
     #[must_use]
     pub fn prompt(&self) -> Option<&str> {
         self.prompt.as_deref()
     }
 
+    /// Returns the character's system prompt.
     #[must_use]
     pub fn system_prompt(&self) -> Option<&str> {
         self.system_prompt.as_deref()
     }
 
+    /// Returns the character's scenario.
     #[must_use]
     pub fn scenario(&self) -> Option<&str> {
         self.scenario.as_deref()
     }
 
+    /// Returns the character's example messages.
     #[must_use]
     pub const fn example_messages(&self) -> &[(Option<String>, String)] {
         self.example_messages.as_slice()
     }
 
+    /// Returns the character's avatar URL.
     #[must_use]
     pub fn avatar(&self) -> Option<&str> {
         self.avatar.as_deref()
     }
 
+    /// Returns the character's embed color.
     #[must_use]
     pub const fn color(&self) -> Option<Color> {
         self.color
     }
 
+    /// Returns the character's unique ID.
     #[must_use]
     pub const fn id(&self) -> &RecordId {
         &self.id
     }
 
+    /// Returns the total number of conversations the character has had.
     #[must_use]
     pub const fn conversations_had(&self) -> u32 {
         self.conversations_had
     }
 
+    /// Returns a formatted string of conversation counts, grouped by user.
     #[must_use]
     pub async fn formatted_conversations_had(&self, db: &Database) -> String {
         let mut string = format!("Totalt: {}", self.conversations_had);
-        for (user, count) in &self.conversations_had_with_user {
-            let user = db.substitute_name(user).await;
-            let _ = write!(string, "\nMed {user}: {count}");
+        let mut user_ids = self.conversations_had_with_user.keys().collect::<Vec<_>>();
+        user_ids.sort_unstable();
+        for id in user_ids {
+            let name = db.substitute_name(id).await;
+            let count = self
+                .conversations_had_with_user
+                .get(id)
+                .copied()
+                .unwrap_or_default();
+            if let Err(why) = write!(string, "\nMed {name}: {count}") {
+                warn!("error while writing to string: {why}");
+            }
         }
         string
     }
 
+    /// Returns the character's model settings override, if any.
     #[must_use]
     pub fn model_settings(&self) -> Option<ModelSettings> {
         self.model_settings.clone()
     }
 
+    /// Returns the similarity indicator for display.
+    ///
     /// Returns e.g. ` | 75% namnlikhet` if `Some(0.75)`, otherwise returns an empty String.
     #[must_use]
     pub fn similarity(&self) -> String {
         self.similarity.map_or_else(String::new, |similarity| {
-            format!(" | {:.0}% namnlikhet", similarity * 100.0)
+            format!(" | {:.0}% namnlikhet", similarity * 100.0_f64)
         })
     }
 
-    pub fn edit_from_modals(
+    /// Edits the character using data from the edit modals.
+    ///
+    /// Updates the character's fields with the new values from the modals,
+    /// increments the version, and sets the previous version ID.
+    pub fn edit_from_modals<E: Into<UserId>>(
         &mut self,
-        editor: impl Into<UserId>,
+        editor: E,
         modal: EditCharacterModal,
         second_modal: SecondEditCharacterModal,
     ) {
-        let editor = editor.into();
-        self.latest_editor = Some(editor);
-        self.all_editors.insert(editor);
+        let editor_id = editor.into();
+        self.latest_editor = Some(editor_id);
+        self.all_editors.insert(editor_id);
         self.edited_at = Some(Zoned::now());
-        self.version += 1;
+        self.version = self.version.saturating_add(1);
         self.previous_version = Some(self.id.clone());
         self.id = RecordId::from(("character", Ulid::new().to_string()));
-        let avatar = validate_url(second_modal.avatar);
+        let avatar_url = validate_url(second_modal.avatar);
         // the reason why these can't just be `self.foo = bar` is because
         // if the user doesn't fill in a field, it will be None, and we
         // don't want to overwrite a potentially existing value
@@ -276,7 +317,7 @@ impl Character {
         if let Some(personality) = modal.personality {
             self.personality = Some(personality);
         }
-        if let Some(avatar) = avatar {
+        if let Some(avatar) = avatar_url {
             self.avatar = Some(avatar);
         }
         if let Some(emoji) = second_modal.emoji {
@@ -293,9 +334,13 @@ impl Character {
         }
     }
 
-    pub async fn into_embed_with_footer_text(
+    /// Converts the character into a Discord embed with the given footer text.
+    ///
+    /// Builds an embed containing all character information such as name,
+    /// greeting, personality, scenario, and metadata.
+    pub async fn into_embed_with_footer_text<F: Into<String>>(
         self,
-        footer_text: impl Into<String>,
+        footer_text: F,
         db: &Database,
     ) -> CreateEmbed<'static> {
         let mut embed = CreateEmbed::new()
@@ -306,7 +351,7 @@ impl Character {
                 self.formatted_conversations_had(db).await,
                 true,
             )
-            .field("Version", (self.version + 1).to_string(), true);
+            .field("Version", self.version.saturating_add(1).to_string(), true);
 
         if let Some(nickname) = self.nickname.clone() {
             embed = embed.field("Smeknamn", nickname, true);
@@ -330,9 +375,9 @@ impl Character {
 
         embed = embed.field("Skapare", db.substitute_name(self.creator).await, true);
 
-        if let Some(editor) = &self.latest_editor {
-            let editor = db.substitute_name(editor).await;
-            embed = embed.field("Redigerare", editor, true);
+        if let Some(editor_id) = &self.latest_editor {
+            let name = db.substitute_name(editor_id).await;
+            embed = embed.field("Redigerare", name, true);
         }
 
         embed = embed.field(
@@ -340,8 +385,8 @@ impl Character {
             self.created_at.strftime(GOOD_DATE_FORMAT).to_string(),
             false,
         );
-        if let Some(edited) = &self.edited_at {
-            let edited = edited.strftime(GOOD_DATE_FORMAT).to_string();
+        if let Some(time) = &self.edited_at {
+            let edited = time.strftime(GOOD_DATE_FORMAT).to_string();
             embed = embed.field("Redigerad", edited, false);
         }
         embed = embed
@@ -361,11 +406,16 @@ impl Character {
         embed
     }
 
+    /// Creates a confirmation interaction response with confirm/cancel buttons.
     #[must_use]
-    pub fn to_confirm_interaction_response(
-        id: impl Into<u64>,
-        content: impl Into<String>,
-    ) -> CreateInteractionResponse<'static> {
+    pub fn to_confirm_interaction_response<I, C>(
+        id: I,
+        content: C,
+    ) -> CreateInteractionResponse<'static>
+    where
+        I: Into<u64>,
+        C: Into<String>,
+    {
         let buttons = create_confirm_buttons(id);
         CreateInteractionResponse::UpdateMessage(
             CreateInteractionResponseMessage::new()
@@ -375,8 +425,9 @@ impl Character {
     }
 }
 
-impl CharacterPages {
+impl ViewCharacterPages {
     #[must_use]
+    /// Returns the Discord message ID of this character page.
     pub fn id(&self) -> RecordId {
         self.id.clone()
     }
@@ -405,7 +456,7 @@ impl From<(CreateCharacterModal, SecondCreateCharacterModal, UserId)> for Charac
 }
 
 impl Display for Character {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         if let Some(emoji) = &self.emoji {
             write!(f, "{emoji} ")?;
         }
@@ -413,24 +464,27 @@ impl Display for Character {
     }
 }
 
-fn validate_url(url: Option<String>) -> Option<String> {
-    url.and_then(|url| Url::parse(&url).ok())
+/// Validates a URL string, returning `Some` if it's a valid HTTP or HTTPS URL, `None` otherwise.
+fn validate_url(maybe_url: Option<String>) -> Option<String> {
+    maybe_url
+        .and_then(|url| Url::parse(&url).ok())
         .filter(|url| matches!(url.scheme(), "https" | "http"))
         .map(|url| url.to_string())
 }
 
-fn create_confirm_buttons(id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
-    let id = id.into();
+/// Creates confirmation buttons with "confirm" and "cancel" actions.
+fn create_confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
+    let id = into_id.into();
     let confirm_id = format!("{id}confirm");
     let cancel_id = format!("{id}cancel");
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         vec![
             CreateButton::new(confirm_id)
                 .style(ButtonStyle::Secondary)
-                .label(sample(YES_PHRASES)),
+                .label(yes()),
             CreateButton::new(cancel_id)
                 .style(ButtonStyle::Secondary)
-                .label(sample(NO_PHRASES)),
+                .label(no()),
         ]
         .into(),
     ))]

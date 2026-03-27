@@ -1,20 +1,18 @@
-use std::{borrow::Cow, fmt::Display};
+//! The bot's Discord slash command for creating characters.
+
+use alloc::borrow::Cow;
+use core::time::Duration;
+use tokio::time::sleep;
 
 use crate::{
-    Context, Result,
-    constants::{
-        CLICK_BELOW_PHRASES, CLICK_ME_PHRASES, CREATED_PHRASES, TIMEOUT_PHRASES, sample,
-        sample_name,
-    },
-    models::{
-        character::Character,
-        modals::{CreateCharacterModal, SecondCreateCharacterModal},
-    },
-    traits::{EditWith as _, ShowModal as _},
+    ApplicationContext, Context,
+    models::character::Character,
+    phrases::{click_below, click_me, created},
+    traits::SayEphemeral as _,
 };
-use miette::{Diagnostic, Report};
+use miette::{Diagnostic, Result};
 use poise::{
-    CreateReply, Modal, ReplyHandle,
+    CreateReply, Modal, ReplyHandle, execute_modal, execute_modal_on_component_interaction,
     serenity_prelude::{
         ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateButton,
         CreateComponent,
@@ -23,99 +21,111 @@ use poise::{
 };
 use snafu::{ResultExt as _, Snafu};
 
-#[derive(Debug, Snafu, Diagnostic)]
-#[snafu(visibility(pub))]
-#[diagnostic(code(commands::character::create))]
-enum CreateCharacterError {
-    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
-    Defer { source: serenity::Error },
-    #[snafu(display("Kunde inte redigera meddelandet: {source}"))]
-    #[diagnostic(help("Försök igen eller starta om interaktionen"))]
-    EditMessage { source: serenity::Error },
-    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
-    #[diagnostic(help("Försök igen om en stund"))]
-    SendMessage { source: serenity::Error },
-    #[snafu(transparent)]
-    #[diagnostic(help("Försök igen om en stund"))]
-    ShowModal {
-        source: crate::traits::ShowModalError,
-    },
-}
-
+/// The bot's Discord slash command for creating characters.
 #[poise::command(slash_command, rename = "skapa")]
-pub async fn create(ctx: Context<'_>) -> Result<(), Report> {
-    let msg = send_initial_message(ctx).await?;
-    let Some(first_modal): Option<CreateCharacterModal> = show_modal_button(ctx, &msg).await?
+pub async fn create(ctx: ApplicationContext<'_>) -> Result<()> {
+    let Some(first_modal) = execute_modal(ctx, None, None)
+        .await
+        .context(ShowModalSnafu)?
     else {
         return Ok(());
     };
-    msg.edit(ctx, create_reply_with_tempting_button(ctx.id()))
+    let tempting_message = ctx
+        .send(create_reply_with_tempting_button(ctx.id().to_string()))
         .await
-        .context(EditMessageSnafu)?;
-    let Some(second_modal): Option<SecondCreateCharacterModal> =
-        show_modal_button(ctx, &msg).await?
-    else {
+        .context(SendMessageSnafu)?;
+    let Some(second_modal) = show_modal_on_button_press(ctx, tempting_message).await? else {
         return Ok(());
     };
 
     let character = Character::from((first_modal, second_modal, ctx.author().id));
 
-    let response = sample_name(CREATED_PHRASES, character.name());
-    msg.edit_with(ctx, response)
+    let success_message = ctx
+        .say_ephemeral(created(&character))
         .await
-        .context(EditMessageSnafu)?;
+        .context(SendMessageSnafu)?;
+    sleep(Duration::from_secs(5)).await;
+    success_message
+        .delete(Context::Application(ctx))
+        .await
+        .context(DeleteMessageSnafu)?;
 
     ctx.data().db.insert_character(character).await?;
-    ctx.data().stats.character_created_by(ctx.author());
 
     Ok(())
 }
 
-async fn send_initial_message(ctx: Context<'_>) -> Result<ReplyHandle<'_>, CreateCharacterError> {
-    ctx.defer_ephemeral().await.context(DeferSnafu)?;
-    ctx.send(create_reply_with_tempting_button(ctx.id()))
-        .await
-        .context(SendMessageSnafu)
-}
-
+/// Create a collector that listens for a button press with the context's id.
 #[must_use]
-async fn await_button_interaction(ctx: Context<'_>) -> Option<ComponentInteraction> {
+async fn create_collector(ctx: ApplicationContext<'_>) -> Option<ComponentInteraction> {
     ComponentInteractionCollector::new(ctx.serenity_context())
-        .author_id(ctx.author().id)
         .custom_ids(FixedArray::from_vec_trunc(vec![
             FixedString::from_string_trunc(ctx.id().to_string()),
         ]))
         .await
 }
 
-async fn show_modal_button<M: Modal>(
-    ctx: Context<'_>,
-    msg: &ReplyHandle<'_>,
+/// Waits for the user to press the tempting button and shows them the modal.
+async fn show_modal_on_button_press<M: Modal>(
+    ctx: ApplicationContext<'_>,
+    msg: ReplyHandle<'_>,
 ) -> Result<Option<M>, CreateCharacterError> {
-    ctx.defer_ephemeral().await.context(DeferSnafu)?;
-
-    if let Some(interaction) = await_button_interaction(ctx).await {
-        Ok(ctx.serenity_context().show_modal(interaction).await?)
-    } else {
-        let response = sample(TIMEOUT_PHRASES);
-        msg.edit_with(ctx, response)
+    if let Some(interaction) = create_collector(ctx).await {
+        msg.delete(Context::Application(ctx))
             .await
-            .context(EditMessageSnafu)?;
+            .context(DeleteMessageSnafu)?;
+        execute_modal_on_component_interaction(ctx.serenity_context(), interaction, None, None)
+            .await
+            .context(ShowModalSnafu)
+    } else {
         Ok(None)
     }
 }
 
+/// Sends a message that attempts to tempt the user into pressing it.
 #[must_use]
-fn create_reply_with_tempting_button<'a>(id: impl Display) -> CreateReply<'a> {
-    let id = id.to_string();
-    let click_me = sample(CLICK_ME_PHRASES);
-    let click_below = sample(CLICK_BELOW_PHRASES);
-    let button = Cow::Owned(vec![CreateButton::new(id).label(click_me)]);
+fn create_reply_with_tempting_button<'a>(id: impl Into<Cow<'a, str>>) -> CreateReply<'a> {
+    let button = Cow::Owned(vec![CreateButton::new(id).label(click_me())]);
     let component = Cow::Owned(vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         button,
     ))]);
 
     CreateReply::default()
-        .content(click_below)
+        .content(click_below())
         .components(component)
+}
+
+/// All errors that can happen when creating a character.
+#[derive(Debug, Snafu, Diagnostic)]
+enum CreateCharacterError {
+    /// Sending a message failed.
+    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen om en stund"),
+        code(commands::character::create::send_message)
+    )]
+    SendMessage {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Deleting a message failed.
+    #[snafu(display("Kunde inte ta bort meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen om en stund"),
+        code(commands::character::create::delete_message)
+    )]
+    DeleteMessage {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Showing a modal failed.
+    #[snafu(display("Kunde inte visa modal: {source}"))]
+    #[diagnostic(
+        help("Försök igen om en stund"),
+        code(commands::character::create::show_modal)
+    )]
+    ShowModal {
+        /// The source of the error.
+        source: serenity::Error,
+    },
 }

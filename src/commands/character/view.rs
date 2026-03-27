@@ -1,11 +1,14 @@
-use std::borrow::Cow;
+//! The bot's Discord slash command for viewing characters.
 
 use crate::{
     Context, Result,
-    constants::{NEXT, NO_CHARACTER_PHRASES, PREVIOUS, sample},
-    models::character::{Character, CharacterPages},
+    constants::{NEXT, PREVIOUS},
+    models::character::{Character, ViewCharacterPages},
+    phrases::no_character,
+    traits::SayEphemeral as _,
 };
-use miette::{Diagnostic, Report};
+use alloc::borrow::Cow;
+use miette::Diagnostic;
 use poise::{
     CreateReply,
     serenity_prelude::{
@@ -15,28 +18,6 @@ use poise::{
 };
 use snafu::{ResultExt as _, Snafu};
 
-#[derive(Debug, Snafu, Diagnostic)]
-enum ViewCharacterError {
-    #[snafu(display("Kunde inte skjuta upp svaret: {source}"))]
-    #[diagnostic(
-        help("Detta kan bero på att discord inte svarar. Försök igen."),
-        code(commands::character::view::defer)
-    )]
-    Defer { source: serenity::Error },
-    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
-    #[diagnostic(
-        help("Det kan hända att meddelandet är för långt eller att kanalen är full."),
-        code(commands::character::view::send_message)
-    )]
-    SendMessage { source: serenity::Error },
-    #[snafu(display("Kunde inte hämta meddelandet: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att meddelandet fortfarande finns."),
-        code(commands::character::view::retrieve_message)
-    )]
-    RetrieveMessage { source: serenity::Error },
-}
-
 #[poise::command(slash_command, rename = "visa")]
 pub async fn view(
     ctx: Context<'_>,
@@ -44,16 +25,16 @@ pub async fn view(
     #[rename = "namn"]
     #[description = "Gubbens namn"]
     name: Option<String>,
-) -> Result<(), Report> {
-    ctx.defer_ephemeral().await.context(DeferSnafu)?;
+) -> Result<()> {
     let characters: Vec<Character> = match name {
-        Some(name) => ctx.data().db.characters_by_similarity(name).await,
+        Some(character_name) => ctx.data().db.characters_by_similarity(character_name).await,
         None => ctx.data().db.characters_by_usage().await,
     }?;
 
     let Some(first) = characters.first() else {
-        let response = sample(NO_CHARACTER_PHRASES);
-        ctx.say(response).await.context(SendMessageSnafu)?;
+        ctx.say_ephemeral(no_character())
+            .await
+            .context(SendMessageSnafu)?;
         return Ok(());
     };
 
@@ -66,9 +47,7 @@ pub async fn view(
 
     let id = send_message(ctx, first, footer_text, characters.len()).await?;
 
-    ctx.data().stats.character_viewed_by(ctx.author());
-
-    let character_pages = CharacterPages::builder()
+    let character_pages = ViewCharacterPages::builder()
         .id(id)
         .characters(&characters)
         .build();
@@ -81,12 +60,13 @@ pub async fn view(
     Ok(())
 }
 
+/// Send the first message, containing the embed of a character and buttons for viewing others.
 async fn send_message<'a>(
     ctx: Context<'a>,
     character: &'a Character,
     footer_text: String,
     total_pages: usize,
-) -> Result<MessageId, Report> {
+) -> Result<MessageId> {
     let id = ctx.id();
     let embed = character
         .clone()
@@ -100,6 +80,7 @@ async fn send_message<'a>(
     Ok(msg.message().await.context(RetrieveMessageSnafu)?.id)
 }
 
+/// Returns a component action row containing 2 buttons for viewing others.
 #[must_use]
 pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateComponent<'static>]> {
     let prev = format!("{id}prev");
@@ -119,4 +100,29 @@ pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateCompon
                 .emoji(ReactionType::Unicode(FixedString::from_static_trunc(NEXT))),
         ]),
     ))])
+}
+
+/// All errors that can happen when viewing characters.
+#[derive(Debug, Snafu, Diagnostic)]
+enum ViewCharacterError {
+    /// Sending a message failed.
+    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen om en stund"),
+        code(commands::character::view::send_message)
+    )]
+    SendMessage {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Retrieving a message failed.
+    #[snafu(display("Kunde inte hämta meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att meddelandet fortfarande finns."),
+        code(commands::character::view::retrieve_message)
+    )]
+    RetrieveMessage {
+        /// The source of the error.
+        source: serenity::Error,
+    },
 }

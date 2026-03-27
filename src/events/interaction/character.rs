@@ -1,8 +1,10 @@
+//! The select menu that makes the bot respond as a different character.
+
 use crate::{
-    db::Database, events::message::history_and_character_of, llm::LlmManager,
+    database::Database, events::message::history_and_character_of, llm::LlmManager,
     models::message::Message,
 };
-use miette::{Diagnostic, Report};
+use miette::{Diagnostic, Result};
 use poise::serenity_prelude::{
     ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
@@ -10,40 +12,19 @@ use serenity::all::ComponentInteractionDataKind;
 use snafu::{ResultExt as _, Snafu};
 use std::time::Instant;
 
-#[derive(Debug, Snafu, Diagnostic)]
-enum ViewCharacterError {
-    #[snafu(display("Kunde inte skicka meddelandet: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
-        code(events::interaction::character::send_message)
-    )]
-    SendMessage { source: serenity::Error },
-    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"),
-        code(events::interaction::character::send_response)
-    )]
-    SendResponse { source: serenity::Error },
-    #[snafu(display("Kunde inte redigera meddelandet: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att meddelandet fortfarande finns"),
-        code(events::interaction::character::edit_message)
-    )]
-    EditMessage { source: serenity::Error },
-}
-
+/// Respond to the history of this message as the given character.
 pub async fn character(
     ctx: &Context,
     interaction: &ComponentInteraction,
     id: MessageId,
     db: &Database,
-) -> Result<(), Report> {
-    let selected_char_id = match &interaction.data.kind {
-        ComponentInteractionDataKind::StringSelect { values } => values.into_iter().next(),
+) -> Result<()> {
+    let maybe_selected_char_id = match interaction.data.kind {
+        ComponentInteractionDataKind::StringSelect { ref values } => values.into_iter().next(),
         _ => None,
     };
 
-    let Some(selected_char_id) = selected_char_id else {
+    let Some(selected_char_id) = maybe_selected_char_id else {
         return Ok(());
     };
 
@@ -113,7 +94,42 @@ pub async fn character(
 
     history.set_id(response_message.id);
 
-    db.insert_history(history.clone()).await?;
+    db.upsert_history(history.clone()).await?;
 
     Ok(())
+}
+
+/// All errors that can happen when responding as a new character.
+#[derive(Debug, Snafu, Diagnostic)]
+enum SendAsCharacterError {
+    /// Sending a message failed.
+    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
+        code(events::interaction::character::send_message)
+    )]
+    SendMessage {
+        /// The source of the error.
+        source: serenity::Error,
+    },
+    /// Sending a response failed.
+    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"),
+        code(events::interaction::character::send_response)
+    )]
+    SendResponse {
+        ///The source of the error.
+        source: serenity::Error,
+    },
+    /// Editing a message failed.
+    #[snafu(display("Kunde inte redigera meddelande: {source}"))]
+    #[diagnostic(
+        help("Försök igen eller kontrollera att meddelandet fortfarande finns"),
+        code(events::interaction::character::edit_message)
+    )]
+    EditMessage {
+        ///The source of the error.
+        source: serenity::Error,
+    },
 }

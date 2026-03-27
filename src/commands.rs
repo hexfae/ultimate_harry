@@ -1,4 +1,6 @@
-pub mod character;
+//! The bot's Discord slash commands.
+
+mod character;
 mod chat;
 mod emoji;
 mod model;
@@ -16,6 +18,7 @@ use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse};
 
 use crate::{Context, models::character::Character};
 
+/// Returns an auto completion response from characters found in the database, sorted by similarity to the input.
 pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {
     let characters: Vec<Character> = ctx
         .data()

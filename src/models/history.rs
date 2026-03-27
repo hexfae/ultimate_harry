@@ -1,5 +1,6 @@
-use std::borrow::Cow;
+//! The history model for storing chat histories between users and characters.
 
+use alloc::borrow::Cow;
 use bon::Builder;
 use nonempty::NonEmpty;
 use poise::CreateReply;
@@ -20,129 +21,180 @@ use surrealdb::RecordId;
 
 use crate::{
     constants::{CHARACTER_LIMIT, EDIT, NEXT, PIN, PREVIOUS, REDO, UNDO},
-    db::Database,
+    database::Database,
     models::{character::Character, message::Message},
 };
 
+/// The system message that precedes every conversation.
 const SYSTEM_MESSAGE: &str = "Du kommer nu att gå in i ett rollspel med en användare. Under inga omständigheter får du bryta rollspelet, gå ur karaktär, eller prata åt användaren.";
 
+/// The system message that precedes the bot's personality.
 const BEGIN_PERSONALITY: &str = "Beskriv nu karaktären du ska rollspela som.";
 
+/// The system message that precedes the prompt.
 const BEGIN_PROMPT: &str = "Detta är dina instruktioner som du ska följa under hela rollspelet: ";
 
+/// The system message that precedes the scenario.
 const BEGIN_SCENARIO: &str = "Detta är scenen du och användaren finner er själva i: ";
 
+/// The system message that precedes the example messages.
 const BEGIN_EXAMPLE_MESSAGES: &str = "Det följande är exempel på hur du ska prata med användaren.";
 
+/// The system message that gets placed between every example message.
 const EXAMPLE_MESSAGE_SEPARATOR: &str = "Nytt exempelmeddelande.";
 
+/// The system that precedes the conversation actually beginning.
 const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du inte längra avbryta rollspelet, gå ur karaktär, eller skriva åt användaren.";
 
+/// An empty avatar, a transparent 1x1 PNG.
+///
+/// Used because Discord sections require an accessory, but a character may not have an avatar set.
 const EMPTY_AVATAR: &str = "https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png";
 
 /// A log of messages between the user and a character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct History {
-    /// The previous messages, the history of the chat.
-    previous: NonEmpty<Message>,
+    /// The ulid ID of the currently responding character.
+    #[builder(with = |id: &RecordId| id.to_owned())]
+    character: RecordId,
     /// The current responses the user can pick between by "swiping" (pressing next/previous).
     choices: NonEmpty<Message>,
     /// The index of the current response the user has chosen.
     #[builder(default)]
     current: usize,
-    /// The ulid ID of the currently responding character.
-    #[builder(with = |id: &RecordId| id.to_owned())]
-    character: RecordId,
+    #[builder(default)]
+    /// If the streaming has finished for this history.
+    ///
+    /// This is used to create embeds while streaming a response.
+    ///
+    /// Defaults to true, since if a history is saved, it has finished.
+    #[serde(skip_serializing, default = "default_true")]
+    has_finished: bool,
     /// The Discord Message ID of this history.
     #[builder(with = |id: MessageId| RecordId::from(("history", id.to_string())))]
     id: RecordId,
-    #[builder(default)]
-    #[serde(skip_serializing, default = "default_true")]
-    has_finished: bool,
+    /// The previous messages, the history of the chat.
+    previous: NonEmpty<Message>,
 }
 
+/// Always returns true.
+///
+/// Used for making `History.has_finished` true when deserializing.
 const fn default_true() -> bool {
     true
 }
 
+/// A log of messages between the user and a character.
 impl History {
-    pub fn edit_content(
-        &mut self,
-        author: impl Into<String>,
-        content: impl Into<String>,
-        editor: Option<impl Into<UserId>>,
-    ) {
-        self.choices[self.current].edit(author, content, editor);
+    /// Edits the content of the current choice message.
+    pub fn edit_content<A, C, E>(&mut self, author: A, content: C, editor: Option<E>)
+    where
+        A: Into<String>,
+        C: Into<String>,
+        E: Into<UserId>,
+    {
+        if let Some(choice) = self.choices.get_mut(self.current) {
+            choice.edit(author, content, editor);
+        }
     }
 
+    /// Sets whether the history has finished generating.
     pub const fn has_finished(&mut self, has_finished: bool) {
         self.has_finished = has_finished;
     }
 
+    /// Shows the previous choice by cycling the current index backward.
     pub fn previous(&mut self) {
-        self.current = (self.current + self.choices.len() - 1) % self.choices.len();
+        self.current = self
+            .current
+            .saturating_add(self.choices.len())
+            .saturating_sub(1)
+            .checked_rem(self.choices.len())
+            .unwrap_or_default();
     }
 
+    /// Shows the next choice by cycling the current index forward.
     pub const fn next(&mut self) {
-        self.current += 1;
+        self.current = self.current.saturating_add(1);
     }
 
+    /// Returns the current choice index.
     #[must_use]
     pub const fn current_choice(&self) -> usize {
         self.current
     }
 
+    /// Returns the number of choices.
     #[must_use]
     pub fn choices_len(&self) -> usize {
         self.choices.len()
     }
 
+    /// Returns whether the user is on the last choice.
     #[must_use]
     pub fn is_on_last_choice(&self) -> bool {
-        self.current_choice() + 1 >= self.choices_len()
+        self.current_choice().saturating_add(1) >= self.choices_len()
     }
 
+    /// Undoes the current message edit by showing the previous revision.
     pub fn undo(&mut self) {
-        self.choices[self.current].undo();
+        if let Some(message) = self.choices.get_mut(self.current) {
+            message.undo();
+        }
     }
 
+    /// Redoes the current message edit by showing the next revision.
     pub fn redo(&mut self) {
-        self.choices[self.current].redo();
+        if let Some(message) = self.choices.get_mut(self.current) {
+            message.redo();
+        }
     }
 
+    /// Returns the currently chosen message.
     #[must_use]
     pub fn chosen_choice_message(&self) -> &Message {
-        &self.choices[self.current]
+        self.choices
+            .get(self.current)
+            .unwrap_or_else(|| self.choices.first())
     }
 
+    /// Returns the Discord message ID of this history.
     #[must_use]
     pub const fn id(&self) -> &RecordId {
         &self.id
     }
 
-    pub fn set_id(&mut self, id: impl Into<MessageId>) {
+    /// Sets the Discord message ID of this history.
+    pub fn set_id<M: Into<MessageId>>(&mut self, id: M) {
         self.id = RecordId::from(("history", id.into().to_string()));
     }
 
+    /// Returns the last message in the history.
     #[must_use]
     pub fn last(&self) -> &Message {
         self.previous.last()
     }
 
+    /// Returns the character ID of the currently responding character.
     #[must_use]
     pub const fn character(&self) -> &RecordId {
         &self.character
     }
 
+    /// Sets the character ID of the currently responding character.
     pub fn set_character(&mut self, character: RecordId) {
         self.character = character;
     }
 
     /// Rebuilds the character setup portion of history.
+    ///
     /// This replaces personality, prompt, scenario, example messages, and system prompt
     /// with the new character's corresponding values.
+    #[expect(
+        clippy::expect_used,
+        reason = "multiple messages are unconditionally added, making it impossible for the nonempty to return an error"
+    )]
     pub fn replace_setup_with(&mut self, character: &Character, user_id: UserId) {
-        // Collect all non-setup messages (everything after BEGIN_MESSAGE)
         let conversation_start = self
             .previous
             .iter()
@@ -152,9 +204,8 @@ impl History {
                     .content()
                     .contains(BEGIN_MESSAGE)
             })
-            .map_or(0, |i| i + 1);
+            .map_or(0, |i| i.saturating_add(1));
 
-        // Build new setup for the character
         let mut new_previous: Vec<Message> = Vec::new();
         new_previous.push(Message::new_system(SYSTEM_MESSAGE));
 
@@ -179,8 +230,8 @@ impl History {
             new_previous.push(Message::new_system(BEGIN_EXAMPLE_MESSAGES));
 
             for (user_message, assistant_message) in character.example_messages() {
-                if let Some(user_message) = user_message {
-                    new_previous.push(Message::new_user("Användaren", user_message, user_id));
+                if let Some(content) = user_message {
+                    new_previous.push(Message::new_user("Användaren", content, user_id));
                 }
                 new_previous.push(Message::new_assistant(assistant_message, character));
                 new_previous.push(Message::new_system(EXAMPLE_MESSAGE_SEPARATOR));
@@ -193,7 +244,6 @@ impl History {
 
         new_previous.push(Message::new_system(BEGIN_MESSAGE));
 
-        // Append the actual conversation messages
         let conversation: Vec<Message> = self
             .previous
             .iter()
@@ -203,33 +253,38 @@ impl History {
 
         new_previous.extend(conversation);
 
-        // Replace the previous messages
         self.previous = NonEmpty::from_vec(new_previous).expect("setup should not be empty");
     }
 
-    pub fn push(&mut self, message: impl Into<Message>) {
+    /// Pushes a message to the history.
+    pub fn push<M: Into<Message>>(&mut self, message: M) {
         self.previous.push(message.into());
     }
 
+    /// Resets the choices, removing all but the first choice.
     pub fn reset_choices(&mut self) {
         self.choices.tail.truncate(0);
     }
 
-    pub fn set_choices(&mut self, choices: impl Into<Message>) {
+    /// Sets the choices and resets the current index to 0.
+    pub fn set_choices<M: Into<Message>>(&mut self, choices: M) {
         self.choices = NonEmpty::new(choices.into());
         self.current = 0;
     }
 
-    pub fn push_choice(&mut self, choice: impl Into<Message>) {
+    /// Pushes a new choice and sets the current index to that choice.
+    pub fn push_choice<M: Into<Message>>(&mut self, choice: M) {
         self.choices.push(choice.into());
-        self.current = self.choices_len() - 1;
+        self.current = self.choices_len().saturating_sub(1);
     }
 
+    /// Returns the previous messages in the history.
     #[must_use]
     pub const fn previous_messages(&self) -> &NonEmpty<Message> {
         &self.previous
     }
 
+    /// Converts the history to a placeholder interaction response.
     pub fn to_placeholder_interaction<'a>(
         &self,
         character: &'a Character,
@@ -238,6 +293,7 @@ impl History {
             .to_slash_initial_response(CreateInteractionResponseMessage::new())
     }
 
+    /// Converts the history to a placeholder message.
     pub fn to_placeholder_message<'a>(
         &self,
         character: &'a Character,
@@ -249,6 +305,7 @@ impl History {
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
+    /// Converts the history to a placeholder reply.
     fn to_placeholder<'a>(&self, character: &'a Character) -> CreateReply<'a> {
         let (has_previous, has_edit) = (false, false);
 
@@ -256,7 +313,11 @@ impl History {
             let pages = if self.choices.is_empty() {
                 String::new()
             } else {
-                format!("-# {}/{}", self.current + 2, self.choices.len() + 1)
+                format!(
+                    "-# {}/{}",
+                    self.current.saturating_add(1),
+                    self.choices.len()
+                )
             };
             Cow::Owned(vec![CreateContainerComponent::TextDisplay(
                 CreateTextDisplay::new(pages),
@@ -275,7 +336,7 @@ impl History {
             ))),
         ))]);
 
-        let components = create_buttons(1, self.has_finished, has_previous, has_edit, Vec::new());
+        let components = create_buttons(1, self.has_finished, has_previous, has_edit, &[]);
 
         let container = Cow::Owned(vec![CreateComponent::Container(CreateContainer::new(
             [title, components, footer].concat(),
@@ -286,6 +347,7 @@ impl History {
             .components(container)
     }
 
+    /// Converts the history into a bare response reply with the chosen message content.
     #[must_use]
     pub async fn into_bare_response(
         self,
@@ -323,10 +385,11 @@ impl History {
         CreateReply::default().content(link).embed(embed)
     }
 
-    pub async fn to_interaction<'a>(
+    /// Converts the history to an interaction response.
+    pub async fn to_interaction<'a, M: Into<MessageId>>(
         &'a self,
         character: &'a Character,
-        id: impl Into<MessageId>,
+        id: M,
         db: &Database,
     ) -> CreateInteractionResponse<'a> {
         CreateInteractionResponse::UpdateMessage(
@@ -336,10 +399,11 @@ impl History {
         )
     }
 
-    pub async fn to_edit_interaction<'a>(
+    /// Converts the history to an edit interaction response.
+    pub async fn to_edit_interaction<'a, M: Into<MessageId>>(
         &'a self,
         character: &'a Character,
-        id: impl Into<MessageId>,
+        id: M,
         db: &Database,
     ) -> EditInteractionResponse<'a> {
         self.to_response(character, id, db)
@@ -347,10 +411,11 @@ impl History {
             .to_slash_initial_response_edit(EditInteractionResponse::new())
     }
 
-    pub async fn to_edit_response<'a>(
+    /// Converts the history to an edit message response.
+    pub async fn to_edit_response<'a, M: Into<MessageId>>(
         &'a self,
         character: &'a Character,
-        id: impl Into<MessageId>,
+        id: M,
         db: &Database,
     ) -> EditMessage<'a> {
         self.to_response(character, id, db)
@@ -359,10 +424,11 @@ impl History {
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
-    pub async fn to_response<'a>(
+    /// Converts the history to a full response with buttons and choices.
+    pub async fn to_response<'a, M: Into<MessageId>>(
         &'a self,
         character: &'a Character,
-        id: impl Into<MessageId>,
+        id: M,
         db: &Database,
     ) -> CreateReply<'a> {
         let chosen = self.chosen_choice_message();
@@ -374,7 +440,7 @@ impl History {
             let pages = if self.choices.is_empty() {
                 String::new()
             } else {
-                format!("{}/{}", self.current + 1, self.choices.len())
+                format!("{}/{}", self.current.saturating_add(1), self.choices.len())
             };
 
             let elapsed = if chosen.current_editor().is_some() {
@@ -397,8 +463,8 @@ impl History {
             } else {
                 format!(
                     " | {}/{} {}",
-                    chosen.revision() + 1,
-                    chosen.revisions_len() + 1,
+                    chosen.revision().saturating_add(1),
+                    chosen.revisions_len().saturating_add(1),
                     editor
                 )
             };
@@ -412,10 +478,10 @@ impl History {
         };
 
         // content must contain at least 1 character, but we want it to remain visually empty
-        let content = if content.is_empty() { " " } else { content };
-        let (first, second) = match content.split_once('\n') {
+        let text = if content.is_empty() { " " } else { content };
+        let (first, second) = match text.split_once('\n') {
             Some((first, second)) => (first, Some(second)),
-            None => (content, None),
+            None => (text, None),
         };
 
         let title = Cow::Owned(vec![CreateContainerComponent::Section(CreateSection::new(
@@ -437,15 +503,15 @@ impl History {
             self.has_finished,
             has_previous,
             has_edit,
-            db.characters_by_usage().await.unwrap_or_default(),
+            &db.characters_by_usage().await.unwrap_or_default(),
         );
 
         let container = Cow::Owned(vec![CreateComponent::Container(CreateContainer::new(
             [
                 title,
-                Cow::Owned(second.map_or_else(Vec::new, |text| {
-                    text.split('\n')
-                        .filter(|l| !l.is_empty())
+                Cow::Owned(second.map_or_else(Vec::new, |rest| {
+                    rest.split('\n')
+                        .filter(|line| !line.is_empty())
                         .map(|part| {
                             CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part))
                         })
@@ -463,13 +529,13 @@ impl History {
     }
 }
 
-#[expect(clippy::needless_pass_by_value)]
+/// Creates button components for the history message.
 fn create_buttons<'a>(
     id: u64,
     finished: bool,
     previous: bool,
     edit: bool,
-    characters: Vec<Character>,
+    characters: &[Character],
 ) -> Cow<'a, [CreateContainerComponent<'a>]> {
     let prev_msg_id = format!("{id}prev");
     let next_msg_id = format!("{id}next");
@@ -499,7 +565,9 @@ fn create_buttons<'a>(
                     options: Cow::Owned(
                         characters
                             .iter()
-                            .map(|c| CreateSelectMenuOption::new(c.to_string(), c.id().to_string()))
+                            .map(|char| {
+                                CreateSelectMenuOption::new(char.to_string(), char.id().to_string())
+                            })
                             .collect(),
                     ),
                 },
@@ -509,6 +577,7 @@ fn create_buttons<'a>(
     Cow::Owned(components)
 }
 
+/// Creates a single button component.
 fn create_button(custom_id: String, emoji: &str, disabled: bool) -> CreateButton<'_> {
     CreateButton::new(custom_id)
         .disabled(disabled)
@@ -516,6 +585,7 @@ fn create_button(custom_id: String, emoji: &str, disabled: bool) -> CreateButton
         .emoji(ReactionType::Unicode(FixedString::from_str_trunc(emoji)))
 }
 
+/// Creates a new [`History`] from a character, message ID, and user ID.
 impl From<(&Character, MessageId, UserId)> for History {
     fn from((character, id, user_id): (&Character, MessageId, UserId)) -> Self {
         let mut history = NonEmpty::new(Message::new_system(SYSTEM_MESSAGE));
@@ -542,8 +612,8 @@ impl From<(&Character, MessageId, UserId)> for History {
             history.push(Message::new_system(BEGIN_EXAMPLE_MESSAGES));
 
             for (user_message, assistant_message) in character.example_messages() {
-                if let Some(user_message) = user_message {
-                    history.push(Message::new_user("Användaren", user_message, user_id));
+                if let Some(content) = user_message {
+                    history.push(Message::new_user("Användaren", content, user_id));
                 }
 
                 history.push(Message::new_assistant(assistant_message, character));

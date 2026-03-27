@@ -1,40 +1,48 @@
-use crate::Context;
-use miette::Diagnostic;
+//! Custom traits for extending poise contexts and interactions.
+
+use alloc::borrow::Cow;
 use poise::{
-    CreateReply, Modal, ReplyHandle, execute_modal_on_component_interaction,
+    ApplicationContext, Context, CreateReply, Modal, ReplyHandle,
+    execute_modal_on_component_interaction,
     serenity_prelude::{
-        ComponentInteraction, CreateInteractionResponse, CreateInteractionResponseMessage,
+        ComponentInteraction, Context as SerenityContext, CreateInteractionResponse,
+        CreateInteractionResponseMessage,
     },
 };
-use snafu::{ResultExt as _, Snafu};
 
-pub trait EditWith {
-    #[expect(async_fn_in_trait)] // i'm only using this in my code
-    async fn edit_with(
+/// A trait for sending ephemeral messages that only the user can see.
+pub trait SayEphemeral {
+    /// Send a string as an ephemeral reply.
+    async fn say_ephemeral(
         &self,
-        ctx: Context<'_>,
-        content: impl AsRef<str>,
-    ) -> Result<(), serenity::Error>;
+        content: impl Into<Cow<'_, str>>,
+    ) -> Result<ReplyHandle<'_>, serenity::Error>;
 }
 
-impl EditWith for ReplyHandle<'_> {
-    async fn edit_with(
+impl<U: Send + Sync + 'static, E> SayEphemeral for ApplicationContext<'_, U, E> {
+    async fn say_ephemeral(
         &self,
-        ctx: Context<'_>,
-        content: impl AsRef<str>,
-    ) -> Result<(), serenity::Error> {
-        self.edit(
-            ctx,
-            CreateReply::default()
-                .content(content.as_ref())
-                .components(vec![]),
-        )
-        .await
+        content: impl Into<Cow<'_, str>>,
+    ) -> Result<ReplyHandle<'_>, serenity::Error> {
+        self.send(CreateReply::new().content(content).ephemeral(true))
+            .await
     }
 }
 
+impl<U: Send + Sync + 'static, E> SayEphemeral for Context<'_, U, E> {
+    async fn say_ephemeral(
+        &self,
+        content: impl Into<Cow<'_, str>>,
+    ) -> Result<ReplyHandle<'_>, serenity::Error> {
+        self.send(CreateReply::new().content(content).ephemeral(true))
+            .await
+    }
+}
+
+/// A trait for responding to an interaction with a message.
 pub trait RespondToWith {
-    #[expect(async_fn_in_trait)] // i'm only using this in my code
+    /// Respond to the given interaction with the given text, by updating the
+    /// original message, additionally clearing its embeds and components.
     async fn respond_to_with(
         &self,
         interaction: &ComponentInteraction,
@@ -42,7 +50,7 @@ pub trait RespondToWith {
     ) -> Result<(), serenity::Error>;
 }
 
-impl RespondToWith for Context<'_> {
+impl<U: Send + Sync + 'static, E> RespondToWith for Context<'_, U, E> {
     async fn respond_to_with(
         &self,
         interaction: &ComponentInteraction,
@@ -62,39 +70,20 @@ impl RespondToWith for Context<'_> {
     }
 }
 
-#[derive(Debug, Snafu, Diagnostic)]
-#[snafu(display("Kunde inte visa modal: {source}"))]
-#[snafu(visibility(pub))]
-#[diagnostic(
-    code(traits::show_modal),
-    help("Försök igen eller starta om interaktionen")
-)]
-pub struct ShowModalError {
-    #[snafu(source)]
-    pub source: serenity::Error,
-}
-
-impl From<serenity::Error> for ShowModalError {
-    fn from(source: serenity::Error) -> Self {
-        Self { source }
-    }
-}
-
+/// Convenience function for showing a modal with no defaults and no timeout.
 pub trait ShowModal<M: Modal> {
-    #[expect(async_fn_in_trait)] // i'm only using this in my code
+    /// Show a modal on the given interaction, with no defaults and no timeout.
     async fn show_modal(
         &self,
         interaction: ComponentInteraction,
-    ) -> Result<Option<M>, ShowModalError>;
+    ) -> Result<Option<M>, serenity::Error>;
 }
 
-impl<M: Modal> ShowModal<M> for poise::serenity_prelude::Context {
+impl<M: Modal> ShowModal<M> for SerenityContext {
     async fn show_modal(
         &self,
         interaction: ComponentInteraction,
-    ) -> Result<Option<M>, ShowModalError> {
-        execute_modal_on_component_interaction::<M>(self, interaction, None, None)
-            .await
-            .context(ShowModalSnafu)
+    ) -> Result<Option<M>, serenity::Error> {
+        execute_modal_on_component_interaction::<M>(self, interaction, None, None).await
     }
 }
