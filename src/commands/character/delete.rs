@@ -2,6 +2,7 @@
 
 use crate::{
     AppResult, Context,
+    commands::autocomplete,
     constants::{CANCEL, DELETE, NEXT, PREVIOUS},
     error::{DeleteMessageSnafu, DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
     events::interaction::{Interaction, InteractionKind},
@@ -34,6 +35,7 @@ pub async fn delete(
     #[rest]
     #[rename = "namn"]
     #[description = "Gubbens namn"]
+    #[autocomplete = autocomplete]
     name: String,
 ) -> AppResult {
     let characters: Vec<Character> = ctx.data().db.characters_by_similarity(&name).await?;

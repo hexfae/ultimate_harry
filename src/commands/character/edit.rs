@@ -2,6 +2,7 @@
 
 use crate::{
     AppResult, Context,
+    commands::autocomplete,
     constants::{CANCEL, EDIT, NEXT, PREVIOUS},
     error::{
         DeleteMessageSnafu, DeleteResponseSnafu, EditResponseSnafu, SendMessageSnafu,
@@ -39,6 +40,7 @@ pub async fn edit(
     #[rest]
     #[rename = "namn"]
     #[description = "Gubbens namn"]
+    #[autocomplete = autocomplete]
     name: String,
 ) -> AppResult {
     let characters: Vec<Character> = ctx.data().db.characters_by_similarity(name).await?;

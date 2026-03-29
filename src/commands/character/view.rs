@@ -2,6 +2,7 @@
 
 use crate::{
     AppResult, Context,
+    commands::autocomplete,
     constants::{NEXT, PREVIOUS},
     error::{RetrieveMessageSnafu, SendMessageSnafu},
     models::character::{Character, ViewCharacterPages},
@@ -24,6 +25,7 @@ pub async fn view(
     #[rest]
     #[rename = "namn"]
     #[description = "Gubbens namn"]
+    #[autocomplete = autocomplete]
     name: Option<String>,
 ) -> AppResult {
     let characters: Vec<Character> = match name {
