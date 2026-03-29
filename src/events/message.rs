@@ -21,6 +21,9 @@ use std::time::Instant;
 /// Handle a new message being sent.
 pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> AppResult {
     react_to_mentions_and_replies(ctx, user_message, db).await?;
+    if user_message.author.bot() {
+        return Ok(());
+    }
 
     let Some((mut history, character)) =
         history_and_character_of_replied_to(user_message, db).await?
