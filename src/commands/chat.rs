@@ -3,7 +3,7 @@
 use crate::{
     AppResult, Context,
     commands::autocomplete,
-    error::{RetrieveMessageSnafu, SendMessageSnafu},
+    error::{EditMessageSnafu, RetrieveMessageSnafu, SendMessageSnafu},
     models::{character::Character, history::History},
     phrases::no_character,
     traits::SayEphemeral as _,
@@ -43,9 +43,13 @@ pub async fn chat(
         .send(history.to_response(character, id, &ctx.data().db).await)
         .await
         .context(SendMessageSnafu)?;
-    let actual_id = msg.message().await.context(RetrieveMessageSnafu)?.id;
 
+    let actual_id = msg.message().await.context(RetrieveMessageSnafu)?.id;
     history.set_id(actual_id);
+
+    msg.edit(ctx, history.to_response(character, actual_id, db).await)
+        .await
+        .context(EditMessageSnafu)?;
     db.upsert_history(history).await?;
 
     Ok(())
