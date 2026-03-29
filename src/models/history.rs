@@ -2,6 +2,7 @@
 
 use alloc::borrow::Cow;
 use bon::Builder;
+use core::time::Duration;
 use nonempty::NonEmpty;
 use poise::CreateReply;
 use serde::{Deserialize, Serialize};
@@ -288,9 +289,21 @@ impl History {
     pub fn to_placeholder_interaction<'a>(
         &self,
         character: &'a Character,
-    ) -> CreateInteractionResponseMessage<'a> {
-        self.to_placeholder(character)
-            .to_slash_initial_response(CreateInteractionResponseMessage::new())
+    ) -> CreateInteractionResponse<'a> {
+        CreateInteractionResponse::UpdateMessage(
+            self.to_placeholder(character, Duration::ZERO)
+                .to_slash_initial_response(CreateInteractionResponseMessage::new()),
+        )
+    }
+
+    /// Converts the history to a placeholder interaction response edit.
+    pub fn to_placeholder_interaction_edit<'a>(
+        &self,
+        character: &'a Character,
+        elapsed: Duration,
+    ) -> EditInteractionResponse<'a> {
+        self.to_placeholder(character, elapsed)
+            .to_slash_initial_response_edit(EditInteractionResponse::new())
     }
 
     /// Converts the history to a placeholder message.
@@ -299,14 +312,25 @@ impl History {
         character: &'a Character,
         replying_to: &DiscordMessage,
     ) -> CreateMessage<'a> {
-        self.to_placeholder(character)
+        self.to_placeholder(character, Duration::ZERO)
             .to_prefix(replying_to.into())
             .reference_message(replying_to)
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
-    /// Converts the history to a placeholder reply.
-    fn to_placeholder<'a>(&self, character: &'a Character) -> CreateReply<'a> {
+    /// Converts the history to a placeholder message edit.
+    pub fn to_placeholder_message_edit<'a>(
+        &self,
+        character: &'a Character,
+        elapsed: Duration,
+    ) -> EditMessage<'a> {
+        self.to_placeholder(character, elapsed)
+            .to_prefix_edit(EditMessage::new())
+            .allowed_mentions(CreateAllowedMentions::new())
+    }
+
+    /// Converts the history to a placeholder.
+    fn to_placeholder<'a>(&self, character: &'a Character, elapsed: Duration) -> CreateReply<'a> {
         let (has_previous, has_edit) = (false, false);
 
         let footer = {
@@ -314,9 +338,10 @@ impl History {
                 String::new()
             } else {
                 format!(
-                    "-# {}/{}",
+                    "-# {}/{} | tar {:.1}s | 0/{CHARACTER_LIMIT}",
                     self.current.saturating_add(1),
-                    self.choices.len()
+                    self.choices.len(),
+                    elapsed.as_secs_f32(),
                 )
             };
             vec![CreateContainerComponent::TextDisplay(
@@ -449,7 +474,11 @@ impl History {
                 String::new()
             } else {
                 chosen.time_taken().map_or_else(String::new, |elapsed| {
-                    format!(" | tog {:.1}s", elapsed.as_secs_f64())
+                    if self.has_finished {
+                        format!(" | tog {:.1}s", elapsed.as_secs_f64())
+                    } else {
+                        format!(" | tar {:.1}s", elapsed.as_secs_f64())
+                    }
                 })
             };
 

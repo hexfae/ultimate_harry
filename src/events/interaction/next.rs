@@ -9,13 +9,12 @@ use crate::{
     llm::LlmManager,
 };
 use core::time::Duration;
-use poise::serenity_prelude::{
-    ComponentInteraction, Context, CreateInteractionResponse, MessageId,
-};
+use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
 use serenity::futures::StreamExt as _;
 use snafu::ResultExt as _;
 use std::time::Instant;
+use tokio::time::{MissedTickBehavior, interval};
 
 /// Show the next reply to this message or a generate a new one.
 pub async fn next(
@@ -31,10 +30,7 @@ pub async fn next(
     if history.is_on_last_choice() {
         history.has_finished(false);
 
-        let placeholder = CreateInteractionResponse::UpdateMessage(
-            history.to_placeholder_interaction(&character),
-        );
-
+        let placeholder = history.to_placeholder_interaction(&character);
         interaction
             .create_response(&ctx.http, placeholder)
             .await
@@ -48,26 +44,33 @@ pub async fn next(
 
         let mut total = String::new();
         let now = Instant::now();
-        let mut time_since_last_edit = now;
         let mut stream = requester.request_stream(&history, None).await?;
+        let mut interval = interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-        while let Some(result) = stream.next().await {
-            if let MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta)) =
-                result.context(StreamingSnafu)?
-            {
-                if total.len() >= CHARACTER_LIMIT {
-                    break;
+        loop {
+            tokio::select! {
+                result = stream.next() => {
+                    match result.transpose().context(StreamingSnafu)? {
+                        Some(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta))) => {
+                            if total.len() >= CHARACTER_LIMIT {
+                                break;
+                            }
+                            total += delta.text();
+                        }
+                        Some(_) => {},
+                        None => break,
+                    }
                 }
-                total += delta.text();
-                if time_since_last_edit.elapsed() >= Duration::from_secs(1) {
-                    time_since_last_edit = Instant::now();
-                    history.set_choices((character.clone(), total.clone(), now.elapsed()));
-                    let edit = history.to_edit_interaction(&character, id, db).await;
-
-                    interaction
-                        .edit_response(&ctx.http, edit)
-                        .await
-                        .context(EditResponseSnafu)?;
+                _ = interval.tick() => {
+                    if total.is_empty() {
+                        let placeholder_edit = history.to_placeholder_interaction_edit(&character, now.elapsed());
+                        interaction.edit_response(&ctx.http, placeholder_edit).await.context(EditResponseSnafu)?;
+                    } else {
+                        history.set_choices((character.clone(), total.clone(), now.elapsed()));
+                        let edit = history.to_edit_interaction(&character, id, db).await;
+                        interaction.edit_response(&ctx.http, edit).await.context(EditResponseSnafu)?;
+                    }
                 }
             }
         }
