@@ -1,16 +1,14 @@
 //! The bot's Discord slash command for creating characters.
 
-use alloc::borrow::Cow;
-use core::time::Duration;
-use tokio::time::sleep;
-
 use crate::{
-    ApplicationContext, Context,
+    AppResult, ApplicationContext, Context,
+    error::{DeleteMessageSnafu, SendMessageSnafu, ShowModalSnafu},
     models::character::Character,
     phrases::{click_below, click_me, created},
     traits::SayEphemeral as _,
 };
-use miette::{Diagnostic, Result};
+use alloc::borrow::Cow;
+use core::time::Duration;
 use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal, execute_modal_on_component_interaction,
     serenity_prelude::{
@@ -19,11 +17,12 @@ use poise::{
         small_fixed_array::{FixedArray, FixedString},
     },
 };
-use snafu::{ResultExt as _, Snafu};
+use snafu::ResultExt as _;
+use tokio::time::sleep;
 
 /// The bot's Discord slash command for creating characters.
 #[poise::command(slash_command, rename = "skapa")]
-pub async fn create(ctx: ApplicationContext<'_>) -> Result<()> {
+pub async fn create(ctx: ApplicationContext<'_>) -> AppResult {
     let Some(first_modal) = execute_modal(ctx, None, None)
         .await
         .context(ShowModalSnafu)?
@@ -69,7 +68,7 @@ async fn create_collector(ctx: ApplicationContext<'_>) -> Option<ComponentIntera
 async fn show_modal_on_button_press<M: Modal>(
     ctx: ApplicationContext<'_>,
     msg: ReplyHandle<'_>,
-) -> Result<Option<M>, CreateCharacterError> {
+) -> AppResult<Option<M>> {
     if let Some(interaction) = create_collector(ctx).await {
         msg.delete(Context::Application(ctx))
             .await
@@ -91,39 +90,4 @@ fn create_reply_with_tempting_button<'a>(id: impl Into<Cow<'a, str>>) -> CreateR
     CreateReply::default()
         .content(click_below())
         .components(component)
-}
-
-/// All errors that can happen when creating a character.
-#[derive(Debug, Snafu, Diagnostic)]
-enum CreateCharacterError {
-    /// Sending a message failed.
-    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen om en stund"),
-        code(commands::character::create::send_message)
-    )]
-    SendMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Deleting a message failed.
-    #[snafu(display("Kunde inte ta bort meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen om en stund"),
-        code(commands::character::create::delete_message)
-    )]
-    DeleteMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Showing a modal failed.
-    #[snafu(display("Kunde inte visa modal: {source}"))]
-    #[diagnostic(
-        help("Försök igen om en stund"),
-        code(commands::character::create::show_modal)
-    )]
-    ShowModal {
-        /// The source of the error.
-        source: serenity::Error,
-    },
 }

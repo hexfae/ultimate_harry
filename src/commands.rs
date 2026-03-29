@@ -1,11 +1,11 @@
 //! The bot's Discord slash commands.
 
-mod character;
-mod chat;
-mod emoji;
-mod model;
-mod name;
-mod pin_channel;
+pub mod character;
+pub mod chat;
+pub mod emoji;
+pub mod model;
+pub mod name;
+pub mod pin_channel;
 
 pub use character::character;
 pub use chat::chat;

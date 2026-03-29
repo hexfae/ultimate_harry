@@ -1,18 +1,18 @@
 //! The ready event handler for when the bot connects to Discord.
 
 use crate::{
-    Result,
+    AppResult,
     commands::{character, chat, emoji, model, name, pin_channel},
+    error::RegisterCommandSnafu,
 };
 use core::time::Duration;
-use miette::Diagnostic;
 use nanorand::{Rng as _, WyRand};
 use poise::{
     samples::register_in_guild,
     serenity_prelude::{ActivityData, ActivityType, Context, small_fixed_array::FixedString},
 };
 use serenity::all::Ready;
-use snafu::{ResultExt as _, Snafu};
+use snafu::ResultExt as _;
 use std::time::Instant;
 use tokio::time::sleep;
 use tracing::info;
@@ -25,14 +25,14 @@ use tracing::info;
     clippy::integer_division,
     reason = "the loss of precision is desired, we divide by constant, non-zero numbers"
 )]
-pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<()> {
+pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> AppResult {
     info!("ready");
     let ctx_clone = ctx.clone();
     let commands = vec![character(), chat(), emoji(), model(), pin_channel(), name()];
     for guild in &data_about_bot.guilds {
         register_in_guild(&ctx_clone.http, &commands, guild.id)
             .await
-            .context(RegisterCommandInGuildSnafu)?;
+            .context(RegisterCommandSnafu)?;
     }
     tokio::spawn(async move {
         let start = Instant::now();
@@ -63,16 +63,4 @@ pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> Result<()> {
         }
     });
     Ok(())
-}
-
-/// Registering a command in a guild failed.
-#[derive(Debug, Snafu, Diagnostic)]
-#[snafu(display("Kunde inte registrera kommando i servern: {source}"))]
-#[diagnostic(
-    help("Försök igen eller kontrollera att Discord-servern är tillgänglig"),
-    code(events::ready::register_command)
-)]
-pub struct RegisterCommandInGuildError {
-    /// The source of the error.
-    source: serenity::Error,
 }

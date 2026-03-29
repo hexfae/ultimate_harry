@@ -1,10 +1,10 @@
 //! The event handler and the Discord events it responds to.
 
-mod interaction;
-mod message;
-mod ready;
+pub mod interaction;
+pub mod message;
+pub mod ready;
 
-use crate::app_state::AppState;
+use crate::{app_state::AppState, error::AppError};
 use alloc::sync::Arc;
 use miette::{IntoDiagnostic as _, Report, Result};
 use poise::FrameworkError;
@@ -12,6 +12,7 @@ use serenity::{
     all::{Context, EventHandler as EventHandlerTrait, FullEvent, Interaction},
     async_trait,
 };
+use strip_ansi_escapes::strip_str;
 use tracing::error;
 
 /// The bot's event handler.
@@ -43,15 +44,14 @@ impl EventHandlerTrait for EventHandler {
     clippy::print_stderr,
     reason = "color printing is broken when logging with tracing"
 )]
-#[expect(
-    clippy::use_debug,
-    reason = "debug printing is necessary for fancy miette diagnostics"
-)]
-pub async fn on_error(framework_error: FrameworkError<'_, AppState, Report>) -> Result<()> {
+pub async fn on_error(framework_error: FrameworkError<'_, AppState, AppError>) -> Result<()> {
     if let FrameworkError::Command { error, ctx, .. } = framework_error {
-        error!("in command: {error}");
-        eprintln!("{error:?}");
-        ctx.say(error.to_string()).await.into_diagnostic()?;
+        let report = format!("{:?}", Report::from(error));
+        error!("in command");
+        eprintln!("{report}");
+        ctx.say(format!("```\n{}```", strip_str(report)))
+            .await
+            .into_diagnostic()?;
     }
     Ok(())
 }

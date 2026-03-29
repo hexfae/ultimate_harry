@@ -6,6 +6,7 @@ mod app_state;
 mod commands;
 mod constants;
 mod database;
+mod error;
 mod events;
 mod llm;
 mod models;
@@ -15,10 +16,12 @@ mod traits;
 use crate::{
     app_state::AppState,
     commands::{character, chat, emoji, model, name, pin_channel},
+    error::AppError,
     events::{EventHandler, on_error},
 };
 use alloc::sync::Arc;
-use miette::{Diagnostic, Report, Result};
+use core::result::Result as CoreResult;
+use miette::{Diagnostic, Result};
 use poise::{
     Framework, FrameworkOptions,
     serenity_prelude::{ClientBuilder, GatewayIntents, Token, TokenError as SerenityTokenError},
@@ -29,10 +32,12 @@ use std::{env::var, fs::read_to_string, io};
 use tracing::warn;
 use tracing_subscriber::fmt::init as tracing_init;
 
+/// The default `Result` type used throughout most of the bot.
+pub type AppResult<T = (), E = AppError> = CoreResult<T, E>;
 /// The default `Context` type used in most slash commands.
-pub type Context<'a> = poise::Context<'a, AppState, Report>;
+pub type Context<'a> = poise::Context<'a, AppState, AppError>;
 /// The default `ApplicationContext` type used in certain slash commands.
-pub type ApplicationContext<'a> = poise::ApplicationContext<'a, AppState, Report>;
+pub type ApplicationContext<'a> = poise::ApplicationContext<'a, AppState, AppError>;
 
 /// The Discord intents needed for Ultimate Harry to function.
 ///

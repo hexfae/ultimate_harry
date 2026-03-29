@@ -8,7 +8,7 @@ mod previous;
 mod redo;
 mod undo;
 
-use crate::database::Database;
+use crate::{AppResult, database::Database};
 use miette::{Diagnostic, Result, SourceSpan};
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use snafu::Snafu;
@@ -23,16 +23,20 @@ use undo::undo;
 
 /// An interaction that happened on Ultimate Harry.
 #[derive(Debug)]
-struct UltimateInteraction {
+pub struct Interaction {
     ///  The ID of the relevant message.
-    id: MessageId,
+    pub id: MessageId,
     /// The kind of interaction that happened.
-    kind: InteractionKind,
+    pub kind: InteractionKind,
 }
 
 /// The different kinds of possible interactions.
 #[derive(Debug)]
-enum InteractionKind {
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "there is no better name for it"
+)]
+pub enum InteractionKind {
     /// Show the previous reply.
     Previous,
     /// Show the next reply or generate a new one.
@@ -47,12 +51,20 @@ enum InteractionKind {
     Pin,
     /// Send a new reply to this reply as the given character.
     Character,
+    /// Confirm performing the desired operation.
+    Confirm,
+    /// Cancel performing the desired operation.
+    Cancel,
 }
 
 /// An unknown interaction happened.
 #[derive(Debug, Snafu, Diagnostic)]
 #[snafu(display("Okänd interaktion: {custom_id}"))]
-struct UnknownInteraction {
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "there is no better name for it"
+)]
+pub struct UnknownInteraction {
     /// The ID of the interaction.
     #[source_code]
     custom_id: String,
@@ -66,8 +78,8 @@ pub async fn component(
     ctx: &Context,
     interaction: &ComponentInteraction,
     db: &Database,
-) -> Result<()> {
-    let ultimate_interaction = TryInto::<UltimateInteraction>::try_into(interaction)?;
+) -> AppResult {
+    let ultimate_interaction = TryInto::<Interaction>::try_into(interaction)?;
 
     let (id, kind) = (ultimate_interaction.id, ultimate_interaction.kind);
 
@@ -79,6 +91,7 @@ pub async fn component(
         InteractionKind::Redo => redo(ctx, interaction, id, db).await?,
         InteractionKind::Pin => pin(ctx, interaction, id, db).await?,
         InteractionKind::Character => character(ctx, interaction, id, db).await?,
+        _ => {} // handled elsewhere
     }
     Ok(())
 }
@@ -95,6 +108,8 @@ impl TryFrom<&str> for InteractionKind {
             "redo" => Ok(Self::Redo),
             "pinn" => Ok(Self::Pin),
             "char" => Ok(Self::Character),
+            "conf" => Ok(Self::Confirm),
+            "canc" => Ok(Self::Cancel),
             _ => Err(UnknownInteraction {
                 custom_id: value.to_owned(),
                 span: (0..value.len()).into(),
@@ -103,7 +118,7 @@ impl TryFrom<&str> for InteractionKind {
     }
 }
 
-impl TryFrom<&ComponentInteraction> for UltimateInteraction {
+impl TryFrom<&ComponentInteraction> for Interaction {
     type Error = UnknownInteraction;
 
     fn try_from(interaction: &ComponentInteraction) -> Result<Self, Self::Error> {

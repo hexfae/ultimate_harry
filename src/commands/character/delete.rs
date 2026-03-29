@@ -1,16 +1,16 @@
 //! The bot's Discord slash command for deleting characters.
 
 use crate::{
-    Context, Result,
-    commands::character::interaction::InteractionType,
+    AppResult, Context,
     constants::{CANCEL, DELETE, NEXT, PREVIOUS},
+    error::{DeleteMessageSnafu, DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
+    events::interaction::{Interaction, InteractionKind},
     models::character::Character,
     phrases::{ask_delete, cancelled, deleted, no_character},
     traits::{RespondToWith as _, SayEphemeral as _},
 };
 use alloc::borrow::Cow;
 use core::time::Duration;
-use miette::Diagnostic;
 use nonempty::NonEmpty;
 use poise::{
     CreateReply, ReplyHandle,
@@ -21,12 +21,12 @@ use poise::{
     },
 };
 use serenity::all::ReactionType;
-use snafu::{ResultExt as _, Snafu};
+use snafu::ResultExt as _;
 use surrealdb::RecordId;
 use tokio::time::sleep;
 
 /// The 4 buttons that are visible on a character deletion embed.
-const BUTTONS: [&str; 4] = ["confirm", "cancel", "prev", "next"];
+const BUTTONS: [&str; 4] = ["conf", "canc", "prev", "next"];
 
 #[poise::command(slash_command, rename = "döda")]
 pub async fn delete(
@@ -35,7 +35,7 @@ pub async fn delete(
     #[rename = "namn"]
     #[description = "Gubbens namn"]
     name: String,
-) -> Result<()> {
+) -> AppResult {
     let characters: Vec<Character> = ctx.data().db.characters_by_similarity(&name).await?;
 
     let pages = characters.len();
@@ -71,35 +71,35 @@ pub async fn delete(
 async fn display_pagination(
     ctx: Context<'_>,
     characters_and_footers: NonEmpty<(Character, String)>,
-) -> Result<()> {
+) -> AppResult {
     let mut current_page: usize = 0;
     let pages = characters_and_footers.len();
 
     send_initial_embed(ctx, characters_and_footers.first().to_owned()).await?;
 
     while let Some(interaction) = create_collector(ctx).await {
-        let interaction_type = InteractionType::try_from(&interaction)?;
-        match interaction_type {
-            InteractionType::Previous => {
+        let interaction_type = Interaction::try_from(&interaction)?;
+        match interaction_type.kind {
+            InteractionKind::Previous => {
                 current_page = current_page
                     .saturating_add(pages)
                     .saturating_sub(1)
                     .strict_rem(pages);
             }
-            InteractionType::Next => {
+            InteractionKind::Next => {
                 current_page = current_page.saturating_add(1).strict_rem(pages);
             }
-            InteractionType::Cancel => {
+            InteractionKind::Cancel => {
                 delete_cancelled(ctx, interaction).await?;
                 return Ok(());
             }
-            InteractionType::Confirm => {
+            InteractionKind::Confirm => {
                 let (character, _footer_text) = characters_and_footers
                     .get(current_page)
                     .unwrap_or_else(|| characters_and_footers.first())
                     .clone();
 
-                let confirm_id = format!("{}confirm", ctx.id());
+                let confirm_id = format!("{}conf", ctx.id());
 
                 let Some(response) = ask_for_confirmation(ctx, interaction).await? else {
                     continue;
@@ -113,6 +113,7 @@ async fn display_pagination(
                 }
                 return Ok(());
             }
+            _ => {} // no more kinds possible on this type of message
         }
 
         let (character, footer_text) = characters_and_footers
@@ -154,23 +155,22 @@ async fn create_collector(ctx: Context<'_>) -> Option<ComponentInteraction> {
 async fn send_initial_embed(
     ctx: Context<'_>,
     (character, footer_text): (Character, String),
-) -> Result<ReplyHandle<'_>> {
+) -> AppResult<ReplyHandle<'_>> {
     let id = ctx.id();
     let embed = character
         .into_embed_with_footer_text(footer_text, &ctx.data().db)
         .await;
     let buttons = create_buttons(id);
-    Ok(ctx
-        .send(CreateReply::default().embed(embed).components(buttons))
+    ctx.send(CreateReply::default().embed(embed).components(buttons))
         .await
-        .context(SendMessageSnafu)?)
+        .context(SendMessageSnafu)
 }
 
 /// Returns a component action row containing 4 buttons for manipulating characters.
 #[must_use]
 pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
-    let confirm = format!("{id}confirm");
-    let cancel = format!("{id}cancel");
+    let confirm = format!("{id}conf");
+    let cancel = format!("{id}canc");
     let prev = format!("{id}prev");
     let next = format!("{id}next");
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
@@ -200,7 +200,7 @@ pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
 }
 
 /// Sends a message about the cancellation of deleting a character, and deletes the message 5 seconds later.
-async fn delete_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> Result<()> {
+async fn delete_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> AppResult {
     ctx.respond_to_with(&interaction, cancelled())
         .await
         .context(SendMessageSnafu)?;
@@ -216,7 +216,7 @@ async fn delete_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -
 async fn ask_for_confirmation(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
-) -> Result<Option<ComponentInteraction>> {
+) -> AppResult<Option<ComponentInteraction>> {
     let reply = Character::to_confirm_interaction_response(ctx.id(), ask_delete());
     interaction
         .create_response(ctx.http(), reply)
@@ -224,8 +224,8 @@ async fn ask_for_confirmation(
         .context(SendResponseSnafu)?;
 
     let id = ctx.id();
-    let confirm_id = format!("{id}confirm");
-    let cancel_id = format!("{id}cancel");
+    let confirm_id = format!("{id}conf");
+    let cancel_id = format!("{id}canc");
 
     Ok(ComponentInteractionCollector::new(ctx.serenity_context())
         .author_id(ctx.author().id)
@@ -241,7 +241,7 @@ async fn delete_confirmed(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
     id: &RecordId,
-) -> Result<()> {
+) -> AppResult {
     ctx.data().db.delete_character(id, ctx.author()).await?;
 
     ctx.respond_to_with(&interaction, deleted())
@@ -253,49 +253,4 @@ async fn delete_confirmed(
         .await
         .context(DeleteResponseSnafu)?;
     Ok(())
-}
-
-/// All errors that can happen when deleting a character.
-#[derive(Debug, Snafu, Diagnostic)]
-pub enum DeleteCharacterError {
-    /// Sending a message failed.
-    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen om en stund"),
-        code(commands::character::delete::send_message)
-    )]
-    SendMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Deleting a message failed.
-    #[snafu(display("Kunde inte ta bort meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen om en stund"),
-        code(commands::character::delete::delete_message)
-    )]
-    DeleteMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Sending a response failed.
-    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
-    #[diagnostic(
-        help("Detta kan bero på att interaktionen har gått ut"),
-        code(commands::character::delete::send_response)
-    )]
-    SendResponse {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    #[snafu(display("Kunde inte ta bort svar: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller starta om interaktionen"),
-        code(commands::character::delete::delete_response)
-    )]
-    /// Deleting a response failed.
-    DeleteResponse {
-        /// The source of the error.
-        source: serenity::Error,
-    },
 }

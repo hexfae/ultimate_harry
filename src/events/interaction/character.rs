@@ -1,15 +1,18 @@
 //! The select menu that makes the bot respond as a different character.
 
 use crate::{
-    database::Database, events::message::history_and_character_of, llm::LlmManager,
+    AppResult,
+    database::Database,
+    error::{EditMessageSnafu, SendMessageSnafu, SendResponseSnafu},
+    events::message::history_and_character_of,
+    llm::LlmManager,
     models::message::Message,
 };
-use miette::{Diagnostic, Result};
 use poise::serenity_prelude::{
     ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
 use serenity::all::ComponentInteractionDataKind;
-use snafu::{ResultExt as _, Snafu};
+use snafu::ResultExt as _;
 use std::time::Instant;
 
 /// Respond to the history of this message as the given character.
@@ -18,7 +21,7 @@ pub async fn character(
     interaction: &ComponentInteraction,
     id: MessageId,
     db: &Database,
-) -> Result<()> {
+) -> AppResult {
     let maybe_selected_char_id = match interaction.data.kind {
         ComponentInteractionDataKind::StringSelect { ref values } => values.into_iter().next(),
         _ => None,
@@ -97,39 +100,4 @@ pub async fn character(
     db.upsert_history(history.clone()).await?;
 
     Ok(())
-}
-
-/// All errors that can happen when responding as a new character.
-#[derive(Debug, Snafu, Diagnostic)]
-enum SendAsCharacterError {
-    /// Sending a message failed.
-    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
-        code(events::interaction::character::send_message)
-    )]
-    SendMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Sending a response failed.
-    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"),
-        code(events::interaction::character::send_response)
-    )]
-    SendResponse {
-        ///The source of the error.
-        source: serenity::Error,
-    },
-    /// Editing a message failed.
-    #[snafu(display("Kunde inte redigera meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att meddelandet fortfarande finns"),
-        code(events::interaction::character::edit_message)
-    )]
-    EditMessage {
-        ///The source of the error.
-        source: serenity::Error,
-    },
 }

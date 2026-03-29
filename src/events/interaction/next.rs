@@ -1,20 +1,20 @@
 //! The button that shows the next reply of a message or generates a new one.
 
 use crate::{
-    constants::CHARACTER_LIMIT, database::Database, events::message::history_and_character_of,
+    AppResult,
+    constants::CHARACTER_LIMIT,
+    database::Database,
+    error::{EditResponseSnafu, SendResponseSnafu, StreamingSnafu},
+    events::message::history_and_character_of,
     llm::LlmManager,
 };
 use core::time::Duration;
-use miette::{Diagnostic, Result};
 use poise::serenity_prelude::{
     ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
-use rig::{
-    agent::{MultiTurnStreamItem, StreamingError},
-    streaming::StreamedAssistantContent,
-};
+use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
 use serenity::futures::StreamExt as _;
-use snafu::{ResultExt as _, Snafu};
+use snafu::ResultExt as _;
 use std::time::Instant;
 
 /// Show the next reply to this message or a generate a new one.
@@ -23,7 +23,7 @@ pub async fn next(
     interaction: &ComponentInteraction,
     id: MessageId,
     db: &Database,
-) -> Result<()> {
+) -> AppResult {
     let Some((mut history, character)) = history_and_character_of(id, db).await? else {
         return Ok(());
     };
@@ -96,41 +96,4 @@ pub async fn next(
     db.upsert_history(history).await?;
 
     Ok(())
-}
-
-/// All errors that can happen when showing the next reply.
-#[derive(Debug, Snafu, Diagnostic)]
-enum NextReplyError {
-    /// Sending a response failed.
-    #[snafu(display("Kunde inte skicka interaktionssvar: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att interaktionen fortfarande är giltig"),
-        code(events::interaction::next::send_response)
-    )]
-    SendResponse {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Editing a response failed.
-    #[snafu(display("Kunde inte redigera interaktionssvar: {source}"))]
-    #[diagnostic(
-        help("Detta kan bero på att interaktionen har gått ut"),
-        code(events::interaction::next::edit_response)
-    )]
-    EditResponse {
-        ///The source of the error.
-        source: serenity::Error,
-    },
-    /// Streaming the AI model response failed.
-    #[snafu(display("Strömning misslyckades: {source}"))]
-    #[diagnostic(
-        help(
-            "Försök igen eller kontrollera att modellen är tillgänglig och att nätverket fungerar"
-        ),
-        code(events::interaction::next::streaming)
-    )]
-    Streaming {
-        ///The source of the error.
-        source: StreamingError,
-    },
 }

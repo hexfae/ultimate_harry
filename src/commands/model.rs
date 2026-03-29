@@ -1,8 +1,7 @@
 //! The bot's Discord slash command for setting various AI model settings.
 
-use crate::{Context, database::DatabaseError, traits::SayEphemeral as _};
-use miette::{Diagnostic, Result};
-use snafu::{ResultExt as _, Snafu};
+use crate::{AppResult, Context, error::SendMessageSnafu, traits::SayEphemeral as _};
+use snafu::ResultExt as _;
 
 /// The bot's Discord slash command for setting various AI model settings.
 #[poise::command(slash_command)]
@@ -14,7 +13,7 @@ pub async fn model(
     presence_penalty: Option<f32>,
     temperature: Option<f32>,
     top_p: Option<f32>,
-) -> Result<()> {
+) -> AppResult {
     let mut model_settings = ctx.data().db.model_settings().await;
     if let Some(new_model) = model {
         model_settings.model = new_model;
@@ -34,36 +33,7 @@ pub async fn model(
     if let Some(new_top_p) = top_p {
         model_settings.top_p = new_top_p;
     }
-    ctx.data()
-        .db
-        .upsert_model_settings(model_settings)
-        .await
-        .context(SaveSettingsSnafu)?;
+    ctx.data().db.upsert_model_settings(model_settings).await?;
     ctx.say_ephemeral("done").await.context(SendMessageSnafu)?;
     Ok(())
-}
-
-/// All errors that can happen when changing model settings.
-#[derive(Debug, Snafu, Diagnostic)]
-enum ModelSettingsError {
-    /// Sending a message failed.
-    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
-        code(commands::model::send_message)
-    )]
-    SendMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Saving the model settings to the database failed.
-    #[snafu(display("Kunde inte spara modellinställningar: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att inställningarna är giltiga"),
-        code(commands::model::save_settings)
-    )]
-    SaveSettings {
-        /// The source of the error.
-        source: DatabaseError,
-    },
 }

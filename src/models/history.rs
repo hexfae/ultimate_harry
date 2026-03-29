@@ -456,7 +456,7 @@ impl History {
             let similarity = character.similarity();
 
             let editor = match chosen.current_editor() {
-                Some(user_id) => db.substitute_name(user_id).await,
+                Some(user_id) => format!(" | redigerad av {}", db.substitute_name(user_id).await),
                 None => String::new(),
             };
 
@@ -464,7 +464,7 @@ impl History {
                 String::new()
             } else {
                 format!(
-                    " | {}/{} {}",
+                    " | {}/{}{}",
                     chosen.revision().saturating_add(1),
                     chosen.revisions_len().saturating_add(1),
                     editor

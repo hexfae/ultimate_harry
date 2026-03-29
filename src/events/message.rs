@@ -4,24 +4,22 @@
 //! processing it and generating AI responses for character chats.
 
 use crate::{
+    AppResult,
     constants::CHARACTER_LIMIT,
-    database::{Database, DatabaseError},
+    database::Database,
+    error::{EditMessageSnafu, ReactSnafu, SendMessageSnafu, StreamingSnafu},
     llm::LlmManager,
     models::{character::Character, history::History},
 };
 use core::time::Duration;
-use miette::{Diagnostic, Result};
 use poise::serenity_prelude::{Context, Message};
-use rig::{
-    agent::{MultiTurnStreamItem, StreamingError},
-    streaming::StreamedAssistantContent,
-};
+use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
 use serenity::{all::MessageId, futures::StreamExt as _};
-use snafu::{ResultExt as _, Snafu};
+use snafu::ResultExt as _;
 use std::time::Instant;
 
 /// Handle a new message being sent.
-pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Result<()> {
+pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> AppResult {
     react_to_mentions_and_replies(ctx, user_message, db).await?;
 
     let Some((mut history, character)) =
@@ -97,7 +95,7 @@ async fn react_to_mentions_and_replies(
     ctx: &Context,
     new_message: &Message,
     db: &Database,
-) -> Result<(), NewMessageError> {
+) -> AppResult {
     let all_emoji = db.user_emoji().await?;
     if new_message.mention_everyone() {
         for user_emoji in &all_emoji {
@@ -137,7 +135,7 @@ async fn react_to_mentions_and_replies(
 pub async fn history_and_character_of_replied_to(
     message: &Message,
     db: &Database,
-) -> Result<Option<(History, Character)>> {
+) -> AppResult<Option<(History, Character)>> {
     let Some(replied_to) = message.referenced_message.as_deref() else {
         return Ok(None);
     };
@@ -154,7 +152,7 @@ pub async fn history_and_character_of_replied_to(
 pub async fn history_and_character_of(
     message: MessageId,
     db: &Database,
-) -> Result<Option<(History, Character)>> {
+) -> AppResult<Option<(History, Character)>> {
     let Some(history) = db.history(message).await? else {
         return Ok(None);
     };
@@ -162,55 +160,4 @@ pub async fn history_and_character_of(
         return Ok(None);
     };
     Ok(Some((history, character)))
-}
-
-/// All errors that can happen when handling a new message.
-#[derive(Debug, Snafu, Diagnostic)]
-enum NewMessageError {
-    /// Sending a message failed.
-    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
-        code(events::message::send_message)
-    )]
-    SendMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Editing a message failed.
-    #[snafu(display("Kunde inte redigera meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att meddelandet fortfarande finns"),
-        code(events::message::edit_message)
-    )]
-    EditMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Reacting to a message failed.
-    #[snafu(display("Kunde inte reagera på meddelande: {source}"))]
-    #[diagnostic(help("Försök igen"), code(events::message::react))]
-    React {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Interacting with the database failed.
-    #[snafu(transparent)]
-    #[diagnostic(transparent)]
-    Database {
-        /// The source of the error.
-        source: DatabaseError,
-    },
-    /// Streaming the AI model response failed.
-    #[snafu(display("Strömning misslyckades: {source}"))]
-    #[diagnostic(
-        help(
-            "Försök igen eller kontrollera att modellen är tillgänglig och att nätverket fungerar"
-        ),
-        code(events::message::streaming)
-    )]
-    Streaming {
-        ///The source of the error.
-        source: StreamingError,
-    },
 }

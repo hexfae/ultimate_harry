@@ -1,11 +1,11 @@
 //! The bot's Discord slash commands for manipulating characters.
 
-mod create;
-mod delete;
-mod edit;
-mod interaction;
-mod view;
+pub mod create;
+pub mod delete;
+pub mod edit;
+pub mod view;
 
+use crate::AppResult;
 use create::create;
 use delete::delete;
 use edit::edit;
@@ -18,6 +18,6 @@ use view::view;
     rename = "gubbe"
 )]
 #[expect(clippy::unused_async, reason = "poise requires commands to be async")]
-pub async fn character(_: crate::Context<'_>) -> Result<(), miette::Report> {
+pub async fn character(_: crate::Context<'_>) -> AppResult {
     Ok(())
 }

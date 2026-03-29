@@ -1,14 +1,14 @@
 //! The bot's Discord slash command for viewing characters.
 
 use crate::{
-    Context, Result,
+    AppResult, Context,
     constants::{NEXT, PREVIOUS},
+    error::{RetrieveMessageSnafu, SendMessageSnafu},
     models::character::{Character, ViewCharacterPages},
     phrases::no_character,
     traits::SayEphemeral as _,
 };
 use alloc::borrow::Cow;
-use miette::Diagnostic;
 use poise::{
     CreateReply,
     serenity_prelude::{
@@ -16,7 +16,7 @@ use poise::{
         small_fixed_array::FixedString,
     },
 };
-use snafu::{ResultExt as _, Snafu};
+use snafu::ResultExt as _;
 
 #[poise::command(slash_command, rename = "visa")]
 pub async fn view(
@@ -25,7 +25,7 @@ pub async fn view(
     #[rename = "namn"]
     #[description = "Gubbens namn"]
     name: Option<String>,
-) -> Result<()> {
+) -> AppResult {
     let characters: Vec<Character> = match name {
         Some(character_name) => ctx.data().db.characters_by_similarity(character_name).await,
         None => ctx.data().db.characters_by_usage().await,
@@ -66,7 +66,7 @@ async fn send_message<'a>(
     character: &'a Character,
     footer_text: String,
     total_pages: usize,
-) -> Result<MessageId> {
+) -> AppResult<MessageId> {
     let id = ctx.id();
     let embed = character
         .clone()
@@ -102,29 +102,4 @@ pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateCompon
         .into(),
     ))]
     .into()
-}
-
-/// All errors that can happen when viewing characters.
-#[derive(Debug, Snafu, Diagnostic)]
-enum ViewCharacterError {
-    /// Sending a message failed.
-    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen om en stund"),
-        code(commands::character::view::send_message)
-    )]
-    SendMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Retrieving a message failed.
-    #[snafu(display("Kunde inte hämta meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att meddelandet fortfarande finns."),
-        code(commands::character::view::retrieve_message)
-    )]
-    RetrieveMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
 }

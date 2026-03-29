@@ -1,15 +1,15 @@
 //! The bot's Discord slash command for creating chats.
 
 use crate::{
-    Context,
+    AppResult, Context,
     commands::autocomplete,
+    error::{RetrieveMessageSnafu, SendMessageSnafu},
     models::{character::Character, history::History},
     phrases::no_character,
     traits::SayEphemeral as _,
 };
-use miette::{Diagnostic, Result};
 use poise::serenity_prelude::MessageId;
-use snafu::{ResultExt as _, Snafu};
+use snafu::ResultExt as _;
 
 #[poise::command(slash_command, rename = "prata")]
 pub async fn chat(
@@ -19,7 +19,7 @@ pub async fn chat(
     #[description = "Gubbens namn"]
     #[autocomplete = autocomplete]
     name: Option<String>,
-) -> Result<()> {
+) -> AppResult {
     let db = &ctx.data().db;
 
     let characters: Vec<Character> = if let Some(character_name) = name {
@@ -49,29 +49,4 @@ pub async fn chat(
     db.upsert_history(history).await?;
 
     Ok(())
-}
-
-/// All errors that can happen when starting a new chat.
-#[derive(Debug, Snafu, Diagnostic)]
-enum ChatError {
-    /// Sending a message failed.
-    #[snafu(display("Kunde inte skicka meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att kanalen är tillgänglig"),
-        code(commands::chat::send_message)
-    )]
-    SendMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
-    /// Retrieving a message failed.
-    #[snafu(display("Kunde inte hämta meddelande: {source}"))]
-    #[diagnostic(
-        help("Försök igen eller kontrollera att meddelandet fortfarande finns"),
-        code(commands::chat::retrieve_message)
-    )]
-    RetrieveMessage {
-        /// The source of the error.
-        source: serenity::Error,
-    },
 }
