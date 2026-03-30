@@ -88,6 +88,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
     history.set_choices((character.clone(), total, now.elapsed()));
     history.set_id(&bot_message);
     history.has_finished(true);
+    db.upsert_history(history.clone()).await?;
 
     let edit = history.to_edit_response(&character, &bot_message, db).await;
 
@@ -95,8 +96,6 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         .edit(ctx, edit)
         .await
         .context(EditMessageSnafu)?;
-
-    db.upsert_history(history).await?;
 
     Ok(())
 }
