@@ -33,10 +33,10 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
     };
 
     let author = db.substitute_name(&user_message.author).await;
-    history.push(history.chosen_choice_message().to_owned());
+    history.push(history.chosen_message().to_owned());
     history.push((user_message, author));
     history.reset_choices();
-    history.has_finished(false);
+    history.set_finished(false);
 
     let placeholder_message = history.to_placeholder_message(&character, user_message);
 
@@ -87,7 +87,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
 
     history.set_choices((character.clone(), total, now.elapsed()));
     history.set_id(&bot_message);
-    history.has_finished(true);
+    history.set_finished(true);
     db.upsert_history(history.clone()).await?;
 
     let edit = history.to_edit_response(&character, &bot_message, db).await;

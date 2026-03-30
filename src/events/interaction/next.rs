@@ -28,7 +28,7 @@ pub async fn next(
     };
 
     if history.is_on_last_choice() {
-        history.has_finished(false);
+        history.set_finished(false);
 
         let placeholder = history.to_placeholder_interaction(&character);
         interaction
@@ -77,7 +77,7 @@ pub async fn next(
 
         // current choice is set in this function
         history.push_choice((character.clone(), total, now.elapsed()));
-        history.has_finished(true);
+        history.set_finished(true);
 
         let response = history.to_edit_interaction(&character, id, db).await;
 

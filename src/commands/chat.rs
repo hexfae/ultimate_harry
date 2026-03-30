@@ -37,7 +37,7 @@ pub async fn chat(
 
     let id = MessageId::new(1);
     let mut history = History::from((character, id, ctx.author().id));
-    history.has_finished(true);
+    history.set_finished(true);
 
     let msg = ctx
         .send(history.to_response(character, id, &ctx.data().db).await)

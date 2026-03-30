@@ -100,7 +100,7 @@ impl History {
     }
 
     /// Sets whether the history has finished generating.
-    pub const fn has_finished(&mut self, has_finished: bool) {
+    pub const fn set_finished(&mut self, has_finished: bool) {
         self.has_finished = has_finished;
     }
 
@@ -115,8 +115,10 @@ impl History {
     }
 
     /// Shows the next choice by cycling the current index forward.
-    pub const fn next(&mut self) {
-        self.current = self.current.saturating_add(1);
+    pub fn next(&mut self) {
+        if !self.is_on_last_choice() {
+            self.current = self.current.saturating_add(1);
+        }
     }
 
     /// Returns the current choice index.
@@ -127,14 +129,24 @@ impl History {
 
     /// Returns the number of choices.
     #[must_use]
-    pub fn choices_len(&self) -> usize {
+    pub fn choices_count(&self) -> usize {
         self.choices.len()
+    }
+
+    /// Returns true if there are multiple choices of this history.
+    fn has_multiple_choices(&self) -> bool {
+        self.choices.len() > 1
+    }
+
+    /// Returns true if the currently chosen message has one or more edits.
+    fn chosen_has_edit(&self) -> bool {
+        self.chosen_message().revisions_count() > 0
     }
 
     /// Returns whether the user is on the last choice.
     #[must_use]
     pub fn is_on_last_choice(&self) -> bool {
-        self.current_choice().saturating_add(1) >= self.choices_len()
+        self.current_choice().saturating_add(1) >= self.choices_count()
     }
 
     /// Undoes the current message edit by showing the previous revision.
@@ -153,7 +165,7 @@ impl History {
 
     /// Returns the currently chosen message.
     #[must_use]
-    pub fn chosen_choice_message(&self) -> &Message {
+    pub fn chosen_message(&self) -> &Message {
         self.choices
             .get(self.current)
             .unwrap_or_else(|| self.choices.first())
@@ -276,7 +288,7 @@ impl History {
     /// Pushes a new choice and sets the current index to that choice.
     pub fn push_choice<M: Into<Message>>(&mut self, choice: M) {
         self.choices.push(choice.into());
-        self.current = self.choices_len().saturating_sub(1);
+        self.current = self.choices_count().saturating_sub(1);
     }
 
     /// Returns the previous messages in the history.
@@ -383,13 +395,13 @@ impl History {
         db: &Database,
     ) -> CreateReply<'static> {
         let content = self
-            .chosen_choice_message()
+            .chosen_message()
             .chosen_revision()
             .head()
             .content()
             .to_owned();
         let footer = {
-            let editor = match self.chosen_choice_message().current_editor() {
+            let editor = match self.chosen_message().current_editor() {
                 Some(user_id) => db.substitute_name(user_id).await,
                 None => String::new(),
             };
@@ -458,17 +470,14 @@ impl History {
         id: M,
         db: &Database,
     ) -> CreateReply<'a> {
-        let chosen = self.chosen_choice_message();
-
-        let has_previous = self.choices.len() > 1;
-        let has_edit = chosen.revisions_len() > 0;
+        let chosen = self.chosen_message();
         let content = chosen.chosen_revision().head().content();
         let footer = {
-            let pages = if self.choices.is_empty() {
-                String::new()
-            } else {
-                format!("{}/{}", self.current.saturating_add(1), self.choices.len())
-            };
+            let pages = format!(
+                "{}/{}",
+                self.current.saturating_add(1),
+                self.choices_count()
+            );
 
             let elapsed = if chosen.current_editor().is_some() {
                 String::new()
@@ -489,15 +498,15 @@ impl History {
                 None => String::new(),
             };
 
-            let edit_pages = if chosen.revisions_len() == 0 {
-                String::new()
-            } else {
+            let edit_pages = if self.chosen_has_edit() {
                 format!(
                     " | {}/{}{}",
                     chosen.revision().saturating_add(1),
-                    chosen.revisions_len().saturating_add(1),
+                    chosen.revisions_count().saturating_add(1),
                     editor
                 )
+            } else {
+                String::new()
             };
 
             let len = format!(" | {}/{CHARACTER_LIMIT}", content.len());
@@ -534,8 +543,8 @@ impl History {
         let components = create_buttons(
             id.into().into(),
             self.has_finished,
-            has_previous,
-            has_edit,
+            self.has_multiple_choices(),
+            self.chosen_has_edit(),
             &db.characters_by_usage().await.unwrap_or_default(),
         );
 

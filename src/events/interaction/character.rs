@@ -47,7 +47,7 @@ pub async fn character(
         return Ok(());
     };
 
-    history.push(history.chosen_choice_message().to_owned());
+    history.push(history.chosen_message().to_owned());
 
     history.push(Message::new_system(format!(
         "Användaren byter karaktär till {new_character}."
@@ -113,7 +113,7 @@ pub async fn character(
 
     history.set_choices((new_character.clone(), total, now.elapsed()));
     history.set_id(&response_message);
-    history.has_finished(true);
+    history.set_finished(true);
 
     let edit = history
         .to_edit_response(&new_character, &response_message, db)

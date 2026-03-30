@@ -220,37 +220,19 @@ impl Message {
         }
     }
 
-    /// Returns the parts of the message at the given version.
-    ///
-    /// Version 0 is the original message, version 1 is the first revision, etc.
-    pub fn get_version_part<U: Into<usize> + Copy>(&self, version: U) -> &Parts {
-        match version.into() {
-            0 => &self.parts,
-            other => self
-                .revisions
-                .get(other.saturating_sub(1))
-                .map_or(&self.parts, |revision| &revision.parts),
-        }
-    }
-
     /// Returns the number of revisions (edits) this message has.
     #[must_use]
-    pub const fn revisions_len(&self) -> usize {
+    pub const fn revisions_count(&self) -> usize {
         self.revisions.len()
-    }
-
-    /// Returns the Discord user ID of the editor of the given version, if any.
-    pub fn editor_of_version<U: Into<usize> + Copy>(&self, version: U) -> Option<UserId> {
-        match version.into() {
-            0 => None,
-            _ => self.revisions.get(version.into().saturating_sub(1))?.editor,
-        }
     }
 
     #[must_use]
     /// The editor of the currently chosen revision, if any.
     pub fn current_editor(&self) -> Option<UserId> {
-        self.editor_of_version(self.revision)
+        match self.revision {
+            0 => None,
+            _ => self.revisions.get(self.revision.saturating_sub(1))?.editor,
+        }
     }
 
     /// Returns the current version of this message.
@@ -267,8 +249,8 @@ impl Message {
     pub fn undo(&mut self) {
         self.revision = self
             .revision
-            .saturating_add(self.revisions_len())
-            .checked_rem(self.revisions_len().saturating_add(1))
+            .saturating_add(self.revisions_count())
+            .checked_rem(self.revisions_count().saturating_add(1))
             .unwrap_or_default();
     }
 
@@ -279,7 +261,7 @@ impl Message {
         self.revision = self
             .revision
             .saturating_add(1)
-            .checked_rem(self.revisions_len().saturating_add(1))
+            .checked_rem(self.revisions_count().saturating_add(1))
             .unwrap_or_default();
     }
 
