@@ -17,6 +17,7 @@ use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
 use serenity::{all::ComponentInteractionDataKind, futures::StreamExt as _};
 use snafu::ResultExt as _;
 use std::time::Instant;
+use surrealdb::RecordId;
 use tokio::time::{MissedTickBehavior, interval};
 
 /// Respond to the history of this message as the given character.
@@ -26,16 +27,15 @@ pub async fn character(
     id: MessageId,
     db: &Database,
 ) -> AppResult {
-    let maybe_selected_char_id = match interaction.data.kind {
-        ComponentInteractionDataKind::StringSelect { ref values } => values.into_iter().next(),
-        _ => None,
-    };
-
-    let Some(selected_char_id) = maybe_selected_char_id else {
+    let ComponentInteractionDataKind::StringSelect { ref values } = interaction.data.kind else {
         return Ok(());
     };
 
-    let Ok(selected_record_id) = selected_char_id.parse::<surrealdb::RecordId>() else {
+    let Some(selected_char_id) = values.first() else {
+        return Ok(());
+    };
+
+    let Ok(selected_record_id) = selected_char_id.parse::<RecordId>() else {
         return Ok(());
     };
 
@@ -47,23 +47,25 @@ pub async fn character(
         return Ok(());
     };
 
-    history.push(history.chosen_message().to_owned());
-
-    history.push(Message::new_system(format!(
-        "Användaren byter karaktär till {new_character}."
-    )));
-
-    history.reset_choices();
-
     let user_id = interaction.message.author.id;
+    history.push(history.chosen_message().to_owned());
+    history.reset_choices();
     history.replace_setup_with(&new_character, user_id);
+    history.push(Message::new_user(
+        "System",
+        format!("Svara nu som {new_character}."),
+        user_id,
+    ));
+    history.set_finished(false);
 
     interaction
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
         .await
         .context(SendResponseSnafu)?;
 
-    let placeholder = history.to_placeholder_message(&new_character, &interaction.message);
+    let placeholder = history
+        .to_placeholder_message(&new_character, &interaction.message, db)
+        .await;
 
     let mut response_message = interaction
         .message
@@ -80,7 +82,12 @@ pub async fn character(
 
     let mut total = String::new();
     let now = Instant::now();
-    let mut stream = requester.request_stream(&history, None).await?;
+    let mut stream = requester
+        .request_stream(
+            &history,
+            Some(format!("Fortsätt rollspelet som {new_character}.")),
+        )
+        .await?;
     let mut interval = interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
@@ -104,7 +111,7 @@ pub async fn character(
                         total += "30 sekunder har gått utan ett svar. Jag ger upp.";
                         break;
                     }
-                    let placeholder_edit = history.to_placeholder_message_edit(&new_character, now.elapsed());
+                    let placeholder_edit = history.to_placeholder_message_edit(&new_character, now.elapsed(), db).await;
                     response_message.edit(ctx, placeholder_edit).await.context(EditMessageSnafu)?;
                 } else {
                     history.set_choices((new_character.clone(), total.clone(), now.elapsed()));
@@ -118,6 +125,7 @@ pub async fn character(
     history.set_choices((new_character.clone(), total, now.elapsed()));
     history.set_id(&response_message);
     history.set_finished(true);
+    db.upsert_history(history.clone()).await?;
 
     let edit = history
         .to_edit_response(&new_character, &response_message, db)
@@ -127,8 +135,6 @@ pub async fn character(
         .edit(ctx, edit)
         .await
         .context(EditMessageSnafu)?;
-
-    db.upsert_history(history.clone()).await?;
 
     Ok(())
 }

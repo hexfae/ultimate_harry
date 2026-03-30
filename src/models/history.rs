@@ -267,6 +267,7 @@ impl History {
         new_previous.extend(conversation);
 
         self.previous = NonEmpty::from_vec(new_previous).expect("setup should not be empty");
+        self.set_character(character.id().to_owned());
     }
 
     /// Pushes a message to the history.
@@ -274,9 +275,10 @@ impl History {
         self.previous.push(message.into());
     }
 
-    /// Resets the choices, removing all but the first choice.
+    /// Resets the choices, removing all but the first choice, and resets the current index to 0.
     pub fn reset_choices(&mut self) {
         self.choices.tail.truncate(0);
+        self.current = 0;
     }
 
     /// Sets the choices and resets the current index to 0.
@@ -291,6 +293,13 @@ impl History {
         self.current = self.choices_count().saturating_sub(1);
     }
 
+    /// Updates the current choice in place.
+    pub fn update_current_choice<M: Into<Message>>(&mut self, choice: M) {
+        if let Some(slot) = self.choices.get_mut(self.current) {
+            *slot = choice.into();
+        }
+    }
+
     /// Returns the previous messages in the history.
     #[must_use]
     pub const fn previous_messages(&self) -> &NonEmpty<Message> {
@@ -298,51 +307,64 @@ impl History {
     }
 
     /// Converts the history to a placeholder interaction response.
-    pub fn to_placeholder_interaction<'a>(
+    pub async fn to_placeholder_interaction<'a>(
         &self,
         character: &'a Character,
+        db: &Database,
     ) -> CreateInteractionResponse<'a> {
         CreateInteractionResponse::UpdateMessage(
-            self.to_placeholder(character, Duration::ZERO)
+            self.to_placeholder(character, Duration::ZERO, db)
+                .await
                 .to_slash_initial_response(CreateInteractionResponseMessage::new()),
         )
     }
 
     /// Converts the history to a placeholder interaction response edit.
-    pub fn to_placeholder_interaction_edit<'a>(
+    pub async fn to_placeholder_interaction_edit<'a>(
         &self,
         character: &'a Character,
         elapsed: Duration,
+        db: &Database,
     ) -> EditInteractionResponse<'a> {
-        self.to_placeholder(character, elapsed)
+        self.to_placeholder(character, elapsed, db)
+            .await
             .to_slash_initial_response_edit(EditInteractionResponse::new())
     }
 
     /// Converts the history to a placeholder message.
-    pub fn to_placeholder_message<'a>(
+    pub async fn to_placeholder_message<'a>(
         &self,
         character: &'a Character,
         replying_to: &DiscordMessage,
+        db: &Database,
     ) -> CreateMessage<'a> {
-        self.to_placeholder(character, Duration::ZERO)
+        self.to_placeholder(character, Duration::ZERO, db)
+            .await
             .to_prefix(replying_to.into())
             .reference_message(replying_to)
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
     /// Converts the history to a placeholder message edit.
-    pub fn to_placeholder_message_edit<'a>(
+    pub async fn to_placeholder_message_edit<'a>(
         &self,
         character: &'a Character,
         elapsed: Duration,
+        db: &Database,
     ) -> EditMessage<'a> {
-        self.to_placeholder(character, elapsed)
+        self.to_placeholder(character, elapsed, db)
+            .await
             .to_prefix_edit(EditMessage::new())
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
     /// Converts the history to a placeholder.
-    fn to_placeholder<'a>(&self, character: &'a Character, elapsed: Duration) -> CreateReply<'a> {
+    async fn to_placeholder<'a>(
+        &self,
+        character: &'a Character,
+        elapsed: Duration,
+        db: &Database,
+    ) -> CreateReply<'a> {
         let (has_previous, has_edit) = (false, false);
 
         let footer = {
@@ -375,7 +397,13 @@ impl History {
         ))]
         .into();
 
-        let components = create_buttons(1, self.has_finished, has_previous, has_edit, &[]);
+        let components = create_buttons(
+            1,
+            self.has_finished,
+            has_previous,
+            has_edit,
+            &db.characters_by_usage().await.unwrap_or_default(),
+        );
 
         let container = vec![CreateComponent::Container(CreateContainer::new(
             [title, components, footer].concat(),

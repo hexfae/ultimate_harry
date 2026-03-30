@@ -28,9 +28,10 @@ pub async fn next(
     };
 
     if history.is_on_last_choice() {
+        history.push_choice((character.clone(), String::new(), Duration::ZERO));
         history.set_finished(false);
 
-        let placeholder = history.to_placeholder_interaction(&character);
+        let placeholder = history.to_placeholder_interaction(&character, db).await;
         interaction
             .create_response(&ctx.http, placeholder)
             .await
@@ -68,10 +69,10 @@ pub async fn next(
                             total += "30 sekunder har gått utan ett svar. Jag ger upp.";
                             break;
                         }
-                        let placeholder_edit = history.to_placeholder_interaction_edit(&character, now.elapsed());
+                        let placeholder_edit = history.to_placeholder_interaction_edit(&character, now.elapsed(), db).await;
                         interaction.edit_response(&ctx.http, placeholder_edit).await.context(EditResponseSnafu)?;
                     } else {
-                        history.set_choices((character.clone(), total.clone(), now.elapsed()));
+                        history.update_current_choice((character.clone(), total.clone(), now.elapsed()));
                         let edit = history.to_edit_interaction(&character, id, db).await;
                         interaction.edit_response(&ctx.http, edit).await.context(EditResponseSnafu)?;
                     }
@@ -79,8 +80,8 @@ pub async fn next(
             }
         }
 
-        // current choice is set in this function
-        history.push_choice((character.clone(), total, now.elapsed()));
+        // update the pre-allocated choice with the final content.
+        history.update_current_choice((character.clone(), total, now.elapsed()));
         history.set_finished(true);
 
         let response = history.to_edit_interaction(&character, id, db).await;

@@ -38,7 +38,9 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
     history.reset_choices();
     history.set_finished(false);
 
-    let placeholder_message = history.to_placeholder_message(&character, user_message);
+    let placeholder_message = history
+        .to_placeholder_message(&character, user_message, db)
+        .await;
 
     let mut bot_message = user_message
         .channel_id
@@ -78,7 +80,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
                         total += "30 sekunder har gått utan ett svar. Jag ger upp.";
                         break;
                     }
-                    let placeholder_edit = history.to_placeholder_message_edit(&character, now.elapsed());
+                    let placeholder_edit = history.to_placeholder_message_edit(&character, now.elapsed(), db).await;
                     bot_message.edit(ctx, placeholder_edit).await.context(EditMessageSnafu)?;
                 } else {
                     history.set_choices((character.clone(), total.clone(), now.elapsed()));
