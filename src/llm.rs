@@ -1,11 +1,11 @@
 //! The LLM manager for generating responses from AI models.
 
-use crate::{constants::CHARACTER_LIMIT, models::history::History};
+use crate::models::history::History;
 use core::pin::Pin;
 use miette::Diagnostic;
 use rig::{
     agent::{AgentBuilder, MultiTurnStreamItem, StreamingError},
-    completion::{Chat as _, PromptError},
+    completion::PromptError,
     http_client::Error as RigError,
     message::Message,
     providers::openrouter::{Client, CompletionModel, streaming::StreamingCompletionResponse},
@@ -14,7 +14,6 @@ use rig::{
 use serde::{Deserialize, Serialize};
 use serenity::futures::Stream;
 use snafu::{ResultExt as _, Snafu};
-use unicode_segmentation::UnicodeSegmentation as _;
 
 /// The LLM manager for generating responses from AI models.
 ///
@@ -64,43 +63,6 @@ impl LlmManager {
     #[must_use]
     pub const fn new(settings: ModelSettings) -> Self {
         Self { settings }
-    }
-
-    /// Returns the response of the given character of the given history.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if building the client fails or if getting the response fails.
-    pub async fn request(
-        &self,
-        history: &History,
-        prompt: Option<String>,
-    ) -> Result<String, LlmError> {
-        let client = Client::new(&self.settings.api_key).context(BuildClientSnafu)?;
-        let model = CompletionModel::new(client, &self.settings.model);
-
-        let mut rig_messages: Vec<Message> = Vec::new();
-        for msg in history.previous_messages() {
-            rig_messages.extend(msg.to_rig_messages());
-        }
-
-        let agent = AgentBuilder::new(model)
-            .temperature(self.settings.temperature.into())
-            .build();
-
-        let response = agent
-            .chat(
-                Message::system(prompt.unwrap_or_else(|| "Fortsätt rollspelet.".to_owned())),
-                rig_messages,
-            )
-            .await
-            .context(GetResponseSnafu)?;
-
-        Ok(response
-            .graphemes(true)
-            .take(CHARACTER_LIMIT)
-            .chain([" "])
-            .collect())
     }
 
     /// Returns a stream of responses from the AI model.

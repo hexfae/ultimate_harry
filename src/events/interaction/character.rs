@@ -2,18 +2,22 @@
 
 use crate::{
     AppResult,
+    constants::CHARACTER_LIMIT,
     database::Database,
-    error::{EditMessageSnafu, SendMessageSnafu, SendResponseSnafu},
+    error::{EditMessageSnafu, SendMessageSnafu, SendResponseSnafu, StreamingSnafu},
     events::message::history_and_character_of,
     llm::LlmManager,
     models::message::Message,
 };
+use core::time::Duration;
 use poise::serenity_prelude::{
     ComponentInteraction, Context, CreateInteractionResponse, MessageId,
 };
-use serenity::all::ComponentInteractionDataKind;
+use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
+use serenity::{all::ComponentInteractionDataKind, futures::StreamExt as _};
 use snafu::ResultExt as _;
 use std::time::Instant;
+use tokio::time::{MissedTickBehavior, interval};
 
 /// Respond to the history of this message as the given character.
 pub async fn character(
@@ -45,9 +49,9 @@ pub async fn character(
 
     history.push(history.chosen_choice_message().to_owned());
 
-    let user_name = db.substitute_name(interaction.message.author.id).await;
-    let discord_msg = (*interaction.message).clone();
-    history.push(Message::from((&discord_msg, user_name)));
+    history.push(Message::new_system(format!(
+        "Användaren byter karaktär till {new_character}."
+    )));
 
     history.reset_choices();
 
@@ -74,28 +78,51 @@ pub async fn character(
             .unwrap_or(db.model_settings().await),
     );
 
+    let mut total = String::new();
     let now = Instant::now();
-    let response = requester
-        .request(
-            &history,
-            Some(format!(
-                "Du hoppar nu in i rollspelet som {new_character}. Fortsätt rollspelet."
-            )),
-        )
-        .await?;
+    let mut stream = requester.request_stream(&history, None).await?;
+    let mut interval = interval(Duration::from_secs(1));
+    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-    history.set_choices((new_character.clone(), response, now.elapsed()));
+    loop {
+        tokio::select! {
+            result = stream.next() => {
+                match result.transpose().context(StreamingSnafu)? {
+                    Some(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta))) => {
+                        if total.len() >= CHARACTER_LIMIT {
+                            break;
+                        }
+                        total += delta.text();
+                    }
+                    Some(_) => {},
+                    None => break,
+                }
+            }
+            _ = interval.tick() => {
+                if total.is_empty() {
+                    let placeholder_edit = history.to_placeholder_message_edit(&new_character, now.elapsed());
+                    response_message.edit(ctx, placeholder_edit).await.context(EditMessageSnafu)?;
+                } else {
+                    history.set_choices((new_character.clone(), total.clone(), now.elapsed()));
+                    let edit = history.to_edit_response(&new_character, &response_message, db).await;
+                    response_message.edit(ctx, edit).await.context(EditMessageSnafu)?;
+                }
+            }
+        }
+    }
+
+    history.set_choices((new_character.clone(), total, now.elapsed()));
+    history.set_id(&response_message);
+    history.has_finished(true);
 
     let edit = history
-        .to_edit_response(&new_character, response_message.id, db)
+        .to_edit_response(&new_character, &response_message, db)
         .await;
 
     response_message
         .edit(ctx, edit)
         .await
         .context(EditMessageSnafu)?;
-
-    history.set_id(response_message.id);
 
     db.upsert_history(history.clone()).await?;
 
