@@ -64,6 +64,10 @@ pub async fn next(
                 }
                 _ = interval.tick() => {
                     if total.is_empty() {
+                        if now.elapsed() >= Duration::from_secs(30) {
+                            total += "30 sekunder har gått utan ett svar. Jag ger upp.";
+                            break;
+                        }
                         let placeholder_edit = history.to_placeholder_interaction_edit(&character, now.elapsed());
                         interaction.edit_response(&ctx.http, placeholder_edit).await.context(EditResponseSnafu)?;
                     } else {
