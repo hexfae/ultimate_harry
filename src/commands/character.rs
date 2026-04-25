@@ -3,17 +3,19 @@
 pub mod create;
 pub mod delete;
 pub mod edit;
+pub mod model;
 pub mod view;
 
 use crate::AppResult;
 use create::create;
 use delete::delete;
 use edit::edit;
+use model::model;
 use view::view;
 
 #[poise::command(
     slash_command,
-    subcommands("create", "edit", "view", "delete"),
+    subcommands("create", "edit", "view", "delete", "model"),
     subcommand_required,
     rename = "gubbe"
 )]

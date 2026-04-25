@@ -212,6 +212,19 @@ impl Database {
             .context(SetModelSettingsSnafu)
     }
 
+    /// Sets a character's AI model settings override.
+    pub async fn set_character_model_settings(
+        &self,
+        id: &RecordId,
+        model_settings: ModelSettings,
+    ) -> Result<Option<Character>, DatabaseError> {
+        self.0
+            .update(id)
+            .merge(CharacterModelSettings { model_settings })
+            .await
+            .context(UpdateSnafu)
+    }
+
     /// Returns the bot's AI model settings.
     pub async fn model_settings(&self) -> ModelSettings {
         self.0
@@ -312,6 +325,13 @@ struct DeletedBy {
 struct NextVersion {
     /// The new version's ID.
     next_version: RecordId,
+}
+
+/// A character's AI model settings override.
+#[derive(Serialize)]
+struct CharacterModelSettings {
+    /// The model settings.
+    model_settings: ModelSettings,
 }
 
 impl From<UserId> for DeletedBy {
