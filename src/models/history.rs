@@ -215,10 +215,11 @@ impl History {
     }
 
     /// Shows the next choice by cycling the current index forward.
+    ///
+    /// Callers must ensure this is not invoked on the last choice; advancing off
+    /// the end is handled separately as a swipe-to-generate.
     pub fn next(&mut self) {
-        if !self.is_on_last_choice() {
-            self.current = self.current.saturating_add(1);
-        }
+        self.current = self.current.saturating_add(1);
     }
 
     /// Returns the current choice index.
