@@ -3,6 +3,7 @@
 pub mod interaction;
 pub mod message;
 pub mod ready;
+pub mod streaming;
 
 use crate::{app_state::AppState, error::AppError};
 use alloc::sync::Arc;

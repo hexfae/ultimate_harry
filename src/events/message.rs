@@ -5,19 +5,16 @@
 
 use crate::{
     AppResult,
-    constants::CHARACTER_LIMIT,
     database::Database,
-    error::{EditMessageSnafu, ReactSnafu, SendMessageSnafu, StreamingSnafu},
+    error::{EditMessageSnafu, ReactSnafu, SendMessageSnafu},
+    events::streaming::{MessageSink, stream_into},
     llm::LlmManager,
     models::{character::Character, history::History},
 };
-use core::time::Duration;
 use poise::serenity_prelude::{Context, Message};
-use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
-use serenity::{all::MessageId, futures::StreamExt as _};
+use serenity::all::MessageId;
 use snafu::ResultExt as _;
 use std::time::Instant;
-use tokio::time::{MissedTickBehavior, interval};
 
 /// Handle a new message being sent.
 pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> AppResult {
@@ -50,65 +47,19 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
 
     let requester = LlmManager::new(db.resolved_model_settings(&character).await);
 
-    let mut total = String::new();
     let now = Instant::now();
     let context = db
         .build_context(&history, &character, user_message.author.id)
         .await?;
 
-    // OpenRouter (or the upstream model) occasionally ends a stream having
-    // produced zero tokens, which would otherwise leave the user with an empty
-    // reply. Re-request a few times before giving up so a single empty
-    // completion doesn't swallow the response.
-    let max_attempts: u32 = 3;
-    let mut attempt: u32 = 0;
-    'attempts: loop {
-        attempt = attempt.saturating_add(1);
-        let mut stream = requester.request_stream(&context, None).await?;
-        let mut interval = interval(Duration::from_secs(1));
-        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-
-        loop {
-            tokio::select! {
-                result = stream.next() => {
-                    match result.transpose().context(StreamingSnafu)? {
-                        Some(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta))) => {
-                            if total.len() >= CHARACTER_LIMIT {
-                                break 'attempts;
-                            }
-                            total += delta.text();
-                        }
-                        Some(_) => {},
-                        None => break,
-                    }
-                }
-                _ = interval.tick() => {
-                    if total.is_empty() {
-                        if now.elapsed() >= Duration::from_secs(30) {
-                            total += "30 sekunder har gått utan ett svar. Jag ger upp.";
-                            break 'attempts;
-                        }
-                        let placeholder_edit = history.to_placeholder_message_edit(&character, now.elapsed(), db).await;
-                        bot_message.edit(ctx, placeholder_edit).await.context(EditMessageSnafu)?;
-                    } else {
-                        history.set_choices((character.clone(), total.clone(), now.elapsed()));
-                        let edit = history.to_edit_response(&character, &bot_message, db).await;
-                        bot_message.edit(ctx, edit).await.context(EditMessageSnafu)?;
-                    }
-                }
-            }
-        }
-
-        // the stream ended: keep a non-empty reply, otherwise retry until we
-        // run out of attempts.
-        if !total.is_empty() {
-            break 'attempts;
-        }
-        if attempt >= max_attempts {
-            total += "AI:n gav inget svar efter flera försök. Jag ger upp.";
-            break 'attempts;
-        }
-    }
+    let mut sink = MessageSink {
+        ctx,
+        history: &mut history,
+        character: &character,
+        message: &mut bot_message,
+        db,
+    };
+    let total = stream_into(&requester, &context, None, now, &mut sink).await?;
 
     history.set_choices((character.clone(), total, now.elapsed()));
     history.set_id(&bot_message);
