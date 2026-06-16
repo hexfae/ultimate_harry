@@ -23,20 +23,38 @@ pub struct EventHandler;
 impl EventHandlerTrait for EventHandler {
     async fn dispatch(&self, ctx: &Context, event: &FullEvent) {
         let data: Arc<AppState> = ctx.data();
-        drop(match event {
-            FullEvent::Ready { data_about_bot, .. } => ready::ready(ctx, data_about_bot).await,
+        match event {
+            FullEvent::Ready { data_about_bot, .. } => {
+                drop(ready::ready(ctx, data_about_bot).await);
+            }
+            // chat replies and interactions stream an LLM response and only
+            // persist the resulting `History` once finished, so run them under
+            // the tracker and let the shutdown drain wait for them.
             FullEvent::Message { new_message, .. } => {
-                message::message(ctx, new_message, &data.db).await
+                let reply_ctx = ctx.clone();
+                let user_message = new_message.clone();
+                data.tasks.clone().spawn(async move {
+                    let state: Arc<AppState> = reply_ctx.data();
+                    if let Err(why) = message::message(&reply_ctx, &user_message, &state.db).await {
+                        error!("in message handler: {why:?}");
+                    }
+                });
             }
-            FullEvent::InteractionCreate { interaction, .. } => {
-                if let Interaction::Component(component) = interaction {
-                    interaction::component(ctx, component, &data.db).await
-                } else {
-                    Ok(())
-                }
+            FullEvent::InteractionCreate {
+                interaction: Interaction::Component(component),
+                ..
+            } => {
+                let reply_ctx = ctx.clone();
+                let pressed = component.clone();
+                data.tasks.clone().spawn(async move {
+                    let state: Arc<AppState> = reply_ctx.data();
+                    if let Err(why) = interaction::component(&reply_ctx, &pressed, &state.db).await {
+                        error!("in interaction handler: {why:?}");
+                    }
+                });
             }
-            _ => Ok(()),
-        });
+            _ => {}
+        }
     }
 }
 

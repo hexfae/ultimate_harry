@@ -1,12 +1,16 @@
 //! The state of the app, containing the database and statistics.
 
 use crate::database::{Database, DatabaseError};
+use tokio_util::task::TaskTracker;
 
 /// The database and statistics of the bot.
 #[derive(Debug)]
 pub struct AppState {
     /// The `native_db` database.
     pub db: Database,
+    /// Tracks in-flight event handlers so a graceful shutdown can wait for
+    /// streaming replies to finish persisting their `History` before exiting.
+    pub tasks: TaskTracker,
 }
 
 impl AppState {
@@ -19,6 +23,9 @@ impl AppState {
     pub async fn new() -> Result<Self, DatabaseError> {
         let db = Database::new().await?;
 
-        Ok(Self { db })
+        Ok(Self {
+            db,
+            tasks: TaskTracker::new(),
+        })
     }
 }

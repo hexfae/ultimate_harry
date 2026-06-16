@@ -21,7 +21,7 @@ use crate::{
     events::{EventHandler, on_error},
 };
 use alloc::sync::Arc;
-use core::result::Result as CoreResult;
+use core::{result::Result as CoreResult, time::Duration};
 use miette::{Diagnostic, Result};
 use poise::{
     Framework, FrameworkOptions,
@@ -30,7 +30,8 @@ use poise::{
 use rustls::crypto::aws_lc_rs;
 use snafu::{ResultExt as _, Snafu};
 use std::{env::var, fs::read_to_string, io};
-use tracing::warn;
+use tokio::{signal, time::timeout};
+use tracing::{info, warn};
 use tracing_subscriber::fmt::init as tracing_init;
 
 /// The default `Result` type used throughout most of the bot.
@@ -57,7 +58,7 @@ async fn main() -> Result<()> {
     let token_string = read_to_string(token_path).context(TokenPathSnafu)?;
     let token = Token::try_from(token_string).context(InvalidSnafu)?;
 
-    let app_state = AppState::new().await?;
+    let app_state = Arc::new(AppState::new().await?);
 
     let framework = Framework::builder()
         .options(FrameworkOptions {
@@ -73,15 +74,62 @@ async fn main() -> Result<()> {
         })
         .build();
 
-    Ok(ClientBuilder::new(token, INTENTS)
+    let mut client = ClientBuilder::new(token, INTENTS)
         .framework(Box::new(framework))
-        .data(Arc::new(app_state))
+        .data(Arc::clone(&app_state))
         .event_handler(Arc::new(EventHandler))
         .await
-        .context(BuildSnafu)?
-        .start()
-        .await
-        .context(StartSnafu)?)
+        .context(BuildSnafu)?;
+
+    let shutdown = client.shard_manager.get_shutdown_trigger();
+    drop(tokio::spawn(async move {
+        wait_for_shutdown().await;
+        info!("shutdown signal received, disconnecting from the gateway");
+        if !shutdown() {
+            warn!("the shard manager had already shut down");
+        }
+    }));
+
+    client.start().await.context(StartSnafu)?;
+
+    // the gateway has stopped, so no new replies will start; wait for the
+    // in-flight ones to finish persisting their History before exiting.
+    app_state.tasks.close();
+    if timeout(SHUTDOWN_GRACE, app_state.tasks.wait()).await.is_err() {
+        warn!("timed out waiting for in-flight replies to finish");
+    }
+
+    Ok(())
+}
+
+/// How long to wait for in-flight replies to finish after the gateway stops
+/// before exiting anyway.
+const SHUTDOWN_GRACE: Duration = Duration::from_mins(1);
+
+/// Resolves once the process is asked to shut down, via SIGINT (ctrl-c) or,
+/// on Unix, SIGTERM.
+async fn wait_for_shutdown() {
+    let interrupt = async {
+        if let Err(why) = signal::ctrl_c().await {
+            warn!("failed to listen for ctrl-c: {why}");
+        }
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut term) => drop(term.recv().await),
+            Err(why) => warn!("failed to listen for SIGTERM: {why}"),
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = core::future::pending::<()>();
+
+    tokio::select! {
+        () = interrupt => {},
+        () = terminate => {},
+    }
 }
 
 /// Installing `aws-lc-rs` as the default `rustls` provider failed.
