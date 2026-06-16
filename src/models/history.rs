@@ -58,6 +58,7 @@ use serenity::{
 use crate::{
     constants::{CHARACTER_LIMIT, EDIT, NEXT, PIN, PREVIOUS, REDO, UNDO},
     database::Database,
+    events::interaction::InteractionKind,
     models::{character::Character, message::Message},
 };
 
@@ -677,13 +678,13 @@ fn create_buttons<'a>(
     edit: bool,
     characters: &[Character],
 ) -> Cow<'a, [CreateContainerComponent<'a>]> {
-    let prev_msg_id = format!("{id}prev");
-    let next_msg_id = format!("{id}next");
-    let edit_msg_id = format!("{id}edit");
-    let undo_id = format!("{id}undo");
-    let redo_id = format!("{id}redo");
-    let pin_id = format!("{id}pinn");
-    let char_id = format!("{id}char");
+    let prev_msg_id = format!("{id}{}", InteractionKind::Previous);
+    let next_msg_id = format!("{id}{}", InteractionKind::Next);
+    let edit_msg_id = format!("{id}{}", InteractionKind::Edit);
+    let undo_id = format!("{id}{}", InteractionKind::Undo);
+    let redo_id = format!("{id}{}", InteractionKind::Redo);
+    let pin_id = format!("{id}{}", InteractionKind::Pin);
+    let char_id = format!("{id}{}", InteractionKind::Character);
 
     let mut components = vec![
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(

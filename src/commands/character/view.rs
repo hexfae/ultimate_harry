@@ -5,6 +5,7 @@ use crate::{
     commands::autocomplete,
     constants::{NEXT, PREVIOUS},
     error::{RetrieveMessageSnafu, SendMessageSnafu},
+    events::interaction::InteractionKind,
     models::character::{Character, ViewCharacterPages},
     phrases::no_character,
     traits::SayEphemeral as _,
@@ -85,8 +86,8 @@ async fn send_message<'a>(
 /// Returns a component action row containing 2 buttons for viewing others.
 #[must_use]
 pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateComponent<'static>]> {
-    let prev = format!("{id}prev");
-    let next = format!("{id}next");
+    let prev = format!("{id}{}", InteractionKind::Previous);
+    let next = format!("{id}{}", InteractionKind::Next);
     let disabled = total_pages < 2;
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         vec![

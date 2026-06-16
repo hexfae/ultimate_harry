@@ -26,7 +26,12 @@ use snafu::ResultExt as _;
 use tokio::time::sleep;
 
 /// The 4 buttons that are visible on a character deletion embed.
-const BUTTONS: [&str; 4] = ["conf", "canc", "prev", "next"];
+const BUTTONS: [&str; 4] = [
+    InteractionKind::Confirm.as_tag(),
+    InteractionKind::Cancel.as_tag(),
+    InteractionKind::Previous.as_tag(),
+    InteractionKind::Next.as_tag(),
+];
 
 #[poise::command(slash_command, rename = "döda")]
 pub async fn delete(
@@ -100,7 +105,7 @@ async fn display_pagination(
                     .unwrap_or_else(|| characters_and_footers.first())
                     .clone();
 
-                let confirm_id = format!("{}conf", ctx.id());
+                let confirm_id = format!("{}{}", ctx.id(), InteractionKind::Confirm);
 
                 let Some(response) = ask_for_confirmation(ctx, interaction).await? else {
                     continue;
@@ -170,10 +175,10 @@ async fn send_initial_embed(
 /// Returns a component action row containing 4 buttons for manipulating characters.
 #[must_use]
 pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
-    let confirm = format!("{id}conf");
-    let cancel = format!("{id}canc");
-    let prev = format!("{id}prev");
-    let next = format!("{id}next");
+    let confirm = format!("{id}{}", InteractionKind::Confirm);
+    let cancel = format!("{id}{}", InteractionKind::Cancel);
+    let prev = format!("{id}{}", InteractionKind::Previous);
+    let next = format!("{id}{}", InteractionKind::Next);
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         vec![
             CreateButton::new(confirm)
@@ -225,8 +230,8 @@ async fn ask_for_confirmation(
         .context(SendResponseSnafu)?;
 
     let id = ctx.id();
-    let confirm_id = format!("{id}conf");
-    let cancel_id = format!("{id}canc");
+    let confirm_id = format!("{id}{}", InteractionKind::Confirm);
+    let cancel_id = format!("{id}{}", InteractionKind::Cancel);
 
     Ok(ComponentInteractionCollector::new(ctx.serenity_context())
         .author_id(ctx.author().id)

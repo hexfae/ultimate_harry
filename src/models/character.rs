@@ -23,6 +23,7 @@ use url::Url;
 
 use crate::{
     database::Database,
+    events::interaction::InteractionKind,
     llm::ModelSettings,
     models::modals::{
         CreateCharacterModal, EditCharacterModal, SecondCreateCharacterModal,
@@ -539,8 +540,8 @@ fn validate_url(maybe_url: Option<String>) -> Option<String> {
 /// Creates confirmation buttons with "confirm" and "cancel" actions.
 fn create_confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
     let id = into_id.into();
-    let confirm_id = format!("{id}conf");
-    let cancel_id = format!("{id}canc");
+    let confirm_id = format!("{id}{}", InteractionKind::Confirm);
+    let cancel_id = format!("{id}{}", InteractionKind::Cancel);
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         vec![
             CreateButton::new(confirm_id)

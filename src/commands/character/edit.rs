@@ -32,7 +32,12 @@ use snafu::ResultExt as _;
 use tokio::time::sleep;
 
 /// The 4 buttons that are visible on a character deletion embed.
-const BUTTONS: [&str; 4] = ["conf", "canc", "prev", "next"];
+const BUTTONS: [&str; 4] = [
+    InteractionKind::Confirm.as_tag(),
+    InteractionKind::Cancel.as_tag(),
+    InteractionKind::Previous.as_tag(),
+    InteractionKind::Next.as_tag(),
+];
 
 #[poise::command(slash_command, rename = "ändra")]
 pub async fn edit(
@@ -165,10 +170,10 @@ async fn send_initial_embed(
 /// Returns a component action row containing 4 buttons for manipulating characters.
 #[must_use]
 pub fn create_buttons(id: u64) -> Cow<'static, [CreateComponent<'static>]> {
-    let confirm = format!("{id}conf");
-    let cancel = format!("{id}canc");
-    let prev = format!("{id}prev");
-    let next = format!("{id}next");
+    let confirm = format!("{id}{}", InteractionKind::Confirm);
+    let cancel = format!("{id}{}", InteractionKind::Cancel);
+    let prev = format!("{id}{}", InteractionKind::Previous);
+    let next = format!("{id}{}", InteractionKind::Next);
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         vec![
             CreateButton::new(confirm)

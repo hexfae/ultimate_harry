@@ -9,6 +9,7 @@ mod redo;
 mod undo;
 
 use crate::{AppResult, database::Database};
+use core::fmt::{self, Display, Formatter};
 use miette::{Diagnostic, Result, SourceSpan};
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use snafu::Snafu;
@@ -31,7 +32,7 @@ pub struct Interaction {
 }
 
 /// The different kinds of possible interactions.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 #[expect(
     clippy::module_name_repetitions,
     reason = "there is no better name for it"
@@ -96,25 +97,54 @@ pub async fn component(
     Ok(())
 }
 
+impl InteractionKind {
+    /// Every interaction kind, the basis for tag round-tripping and the round-trip test.
+    const ALL: [Self; 9] = [
+        Self::Previous,
+        Self::Next,
+        Self::Edit,
+        Self::Undo,
+        Self::Redo,
+        Self::Pin,
+        Self::Character,
+        Self::Confirm,
+        Self::Cancel,
+    ];
+
+    /// The 4-character tag that encodes this kind in a component's `custom_id`.
+    #[must_use]
+    pub const fn as_tag(&self) -> &'static str {
+        match *self {
+            Self::Previous => "prev",
+            Self::Next => "next",
+            Self::Edit => "edit",
+            Self::Undo => "undo",
+            Self::Redo => "redo",
+            Self::Pin => "pinn",
+            Self::Character => "char",
+            Self::Confirm => "conf",
+            Self::Cancel => "canc",
+        }
+    }
+}
+
+impl Display for InteractionKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_tag())
+    }
+}
+
 impl TryFrom<&str> for InteractionKind {
     type Error = UnknownInteraction;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            "prev" => Ok(Self::Previous),
-            "next" => Ok(Self::Next),
-            "edit" => Ok(Self::Edit),
-            "undo" => Ok(Self::Undo),
-            "redo" => Ok(Self::Redo),
-            "pinn" => Ok(Self::Pin),
-            "char" => Ok(Self::Character),
-            "conf" => Ok(Self::Confirm),
-            "canc" => Ok(Self::Cancel),
-            _ => Err(UnknownInteraction {
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.as_tag() == value)
+            .ok_or_else(|| UnknownInteraction {
                 custom_id: value.to_owned(),
                 span: (0..value.len()).into(),
-            }),
-        }
+            })
     }
 }
 
@@ -135,5 +165,26 @@ impl TryFrom<&ComponentInteraction> for Interaction {
         })?);
         let kind = str_kind.try_into()?;
         Ok(Self { id, kind })
+    }
+}
+
+/// Tests for the tag encoding shared by every component `custom_id`.
+#[cfg(test)]
+mod tests {
+    use super::InteractionKind;
+
+    /// Each kind's tag must be 4 characters and parse back to the same kind.
+    #[test]
+    fn tags_round_trip() {
+        for kind in InteractionKind::ALL {
+            let tag = kind.as_tag();
+            assert_eq!(tag.len(), 4, "tag {tag:?} must be exactly 4 characters");
+            let reparsed = InteractionKind::try_from(tag).ok();
+            assert_eq!(
+                reparsed,
+                Some(kind),
+                "tag {tag:?} did not round-trip to its kind"
+            );
+        }
     }
 }
