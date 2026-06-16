@@ -165,8 +165,8 @@ impl Database {
             .primary::<Character>(old_id.to_owned())
             .context(UpdateSnafu)?
             .with_context(|| NoCharacterSnafu {
-                found: new_id.clone(),
-                span: 0..new_id.len(),
+                found: old_id.to_owned(),
+                span: 0..old_id.len(),
             })?;
         character.set_next_version(new_id);
         write.upsert(character.clone()).context(UpdateSnafu)?;
