@@ -14,6 +14,6 @@ pub async fn model(
     let mut model_settings = ctx.data().db.model_settings().await;
     model_settings.apply_overrides(model, api_key, temperature);
     ctx.data().db.upsert_model_settings(model_settings).await?;
-    ctx.say_ephemeral("done").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
     Ok(())
 }

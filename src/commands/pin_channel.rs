@@ -7,6 +7,6 @@ use snafu::ResultExt as _;
 #[poise::command(slash_command)]
 pub async fn pin_channel(ctx: Context<'_>, channel: GuildChannel) -> AppResult {
     ctx.data().db.upsert_pin_channel(channel.id).await?;
-    ctx.say_ephemeral("done").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
     Ok(())
 }

@@ -31,6 +31,6 @@ pub async fn model(
     model_settings.apply_overrides(model, api_key, temperature);
     db.set_character_model_settings(character.id(), model_settings)
         .await?;
-    ctx.say_ephemeral("done").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
     Ok(())
 }

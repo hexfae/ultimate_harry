@@ -18,6 +18,6 @@ pub async fn name(
     let user_id = user.unwrap_or_else(|| ctx.author().id);
     ctx.data().db.upsert_user_name(user_id, name).await?;
 
-    ctx.say_ephemeral("done").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
     Ok(())
 }
