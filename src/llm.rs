@@ -44,6 +44,26 @@ pub struct ModelSettings {
     pub temperature: f32,
 }
 
+impl ModelSettings {
+    /// Overrides any field for which a new value is supplied, leaving the rest untouched.
+    pub fn apply_overrides(
+        &mut self,
+        model: Option<String>,
+        api_key: Option<String>,
+        temperature: Option<f32>,
+    ) {
+        if let Some(new_model) = model {
+            self.model = new_model;
+        }
+        if let Some(new_api_key) = api_key {
+            self.api_key = new_api_key;
+        }
+        if let Some(new_temperature) = temperature {
+            self.temperature = new_temperature;
+        }
+    }
+}
+
 impl LlmManager {
     /// Creates a new LLM manager with the given settings.
     #[must_use]

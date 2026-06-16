@@ -12,15 +12,7 @@ pub async fn model(
     temperature: Option<f32>,
 ) -> AppResult {
     let mut model_settings = ctx.data().db.model_settings().await;
-    if let Some(new_model) = model {
-        model_settings.model = new_model;
-    }
-    if let Some(new_api_key) = api_key {
-        model_settings.api_key = new_api_key;
-    }
-    if let Some(new_temperature) = temperature {
-        model_settings.temperature = new_temperature;
-    }
+    model_settings.apply_overrides(model, api_key, temperature);
     ctx.data().db.upsert_model_settings(model_settings).await?;
     ctx.say_ephemeral("done").await.context(SendMessageSnafu)?;
     Ok(())
