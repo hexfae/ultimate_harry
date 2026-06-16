@@ -247,9 +247,8 @@ impl Database {
         &self,
         history: &History,
         character: &Character,
-        user_id: UserId,
     ) -> Result<Vec<Message>, DatabaseError> {
-        let mut context = scaffolding(character, user_id);
+        let mut context = scaffolding(character);
         let pending: HashMap<&str, &Message> = history
             .pending()
             .iter()

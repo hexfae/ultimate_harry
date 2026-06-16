@@ -49,9 +49,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
     let requester = LlmManager::new(db.resolved_model_settings(&character).await);
 
     let now = Instant::now();
-    let context = db
-        .build_context(&history, &character, user_message.author.id)
-        .await?;
+    let context = db.build_context(&history, &character).await?;
 
     let mut sink = MessageSink {
         ctx,

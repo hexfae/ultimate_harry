@@ -41,9 +41,7 @@ pub async fn next(
         let requester = LlmManager::new(db.resolved_model_settings(&character).await);
 
         let now = Instant::now();
-        let context = db
-            .build_context(&history, &character, interaction.user.id)
-            .await?;
+        let context = db.build_context(&history, &character).await?;
 
         let mut sink = InteractionSink {
             ctx,

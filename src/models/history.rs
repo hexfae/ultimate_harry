@@ -150,7 +150,7 @@ pub struct StoredHistory {
 /// These frame the roleplay (system message, personality, prompt, scenario, example messages,
 /// system prompt) and are rebuilt from the character at request time rather than stored. The
 /// generated message IDs are throwaway, since scaffolding is never persisted.
-pub fn scaffolding(character: &Character, user_id: UserId) -> Vec<Message> {
+pub fn scaffolding(character: &Character) -> Vec<Message> {
     let mut messages = vec![Message::new_system(SYSTEM_MESSAGE)];
 
     if let Some(personality) = character.personality() {
@@ -174,7 +174,7 @@ pub fn scaffolding(character: &Character, user_id: UserId) -> Vec<Message> {
         messages.push(Message::new_system(BEGIN_EXAMPLE_MESSAGES));
         for (user_message, assistant_message) in character.example_messages() {
             if let Some(content) = user_message {
-                messages.push(Message::new_user("Användaren", content, user_id));
+                messages.push(Message::new_user("Användaren", content));
             }
             messages.push(Message::new_assistant(assistant_message, character));
             messages.push(Message::new_system(EXAMPLE_MESSAGE_SEPARATOR));
