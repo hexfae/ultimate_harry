@@ -159,6 +159,9 @@ pub struct Character {
     /// The similarity of the character to the input.
     ///
     /// This is `Some` when the user searches a character by name, e.g. `chat` or `delete`. and `None` in e.g. `view`.
+    ///
+    /// Transient view state, never persisted: rebuilt by `rank_by_similarity` at query time.
+    #[serde(skip)]
     similarity: Option<f64>,
 }
 
