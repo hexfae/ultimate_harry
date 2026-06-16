@@ -20,6 +20,10 @@ use std::time::Instant;
 use tokio::time::{MissedTickBehavior, interval};
 
 /// Respond to the history of this message as the given character.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the streaming loop with empty-completion retry is a single cohesive flow"
+)]
 pub async fn character(
     ctx: &Context,
     interaction: &ComponentInteraction,
@@ -79,43 +83,63 @@ pub async fn character(
     let mut total = String::new();
     let now = Instant::now();
     let context = db.build_context(&history, &new_character, user_id).await?;
-    let mut stream = requester
-        .request_stream(
-            &context,
-            Some(format!("Fortsätt rollspelet som {new_character}.")),
-        )
-        .await?;
-    let mut interval = interval(Duration::from_secs(1));
-    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-    loop {
-        tokio::select! {
-            result = stream.next() => {
-                match result.transpose().context(StreamingSnafu)? {
-                    Some(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta))) => {
-                        if total.len() >= CHARACTER_LIMIT {
-                            break;
+    // OpenRouter (or the upstream model) occasionally ends a stream having
+    // produced zero tokens, which would otherwise leave the user with an empty
+    // reply. Re-request a few times before giving up so a single empty
+    // completion doesn't swallow the response.
+    let max_attempts: u32 = 3;
+    let mut attempt: u32 = 0;
+    'attempts: loop {
+        attempt = attempt.saturating_add(1);
+        let mut stream = requester
+            .request_stream(
+                &context,
+                Some(format!("Fortsätt rollspelet som {new_character}.")),
+            )
+            .await?;
+        let mut interval = interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        loop {
+            tokio::select! {
+                result = stream.next() => {
+                    match result.transpose().context(StreamingSnafu)? {
+                        Some(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta))) => {
+                            if total.len() >= CHARACTER_LIMIT {
+                                break 'attempts;
+                            }
+                            total += delta.text();
                         }
-                        total += delta.text();
+                        Some(_) => {},
+                        None => break,
                     }
-                    Some(_) => {},
-                    None => break,
+                }
+                _ = interval.tick() => {
+                    if total.is_empty() {
+                        if now.elapsed() >= Duration::from_secs(30) {
+                            total += "30 sekunder har gått utan ett svar. Jag ger upp.";
+                            break 'attempts;
+                        }
+                        let placeholder_edit = history.to_placeholder_message_edit(&new_character, now.elapsed(), db).await;
+                        response_message.edit(ctx, placeholder_edit).await.context(EditMessageSnafu)?;
+                    } else {
+                        history.set_choices((new_character.clone(), total.clone(), now.elapsed()));
+                        let edit = history.to_edit_response(&new_character, &response_message, db).await;
+                        response_message.edit(ctx, edit).await.context(EditMessageSnafu)?;
+                    }
                 }
             }
-            _ = interval.tick() => {
-                if total.is_empty() {
-                    if now.elapsed() >= Duration::from_secs(30) {
-                        total += "30 sekunder har gått utan ett svar. Jag ger upp.";
-                        break;
-                    }
-                    let placeholder_edit = history.to_placeholder_message_edit(&new_character, now.elapsed(), db).await;
-                    response_message.edit(ctx, placeholder_edit).await.context(EditMessageSnafu)?;
-                } else {
-                    history.set_choices((new_character.clone(), total.clone(), now.elapsed()));
-                    let edit = history.to_edit_response(&new_character, &response_message, db).await;
-                    response_message.edit(ctx, edit).await.context(EditMessageSnafu)?;
-                }
-            }
+        }
+
+        // the stream ended: keep a non-empty reply, otherwise retry until we
+        // run out of attempts.
+        if !total.is_empty() {
+            break 'attempts;
+        }
+        if attempt >= max_attempts {
+            total += "AI:n gav inget svar efter flera försök. Jag ger upp.";
+            break 'attempts;
         }
     }
 
