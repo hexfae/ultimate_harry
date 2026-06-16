@@ -1,4 +1,8 @@
-//! The message model for chat messages between users and characters.
+//! The message model: a single turn in a conversation.
+//!
+//! Messages are stored once in their own `native_db` table, keyed by [`Message`]'s `id`, and
+//! referenced by ID from history records (see [`crate::models::history`]). A message's ID is the
+//! Discord message ID when it came from a user, otherwise a generated ULID.
 
 use bon::Builder;
 use core::time::Duration;

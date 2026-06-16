@@ -69,6 +69,9 @@ impl LlmManager {
     ///
     /// This method is used for generating responses that are streamed back to the user,
     /// providing a more interactive experience.
+    ///
+    /// `context` is the already-assembled message list (scaffolding followed by the conversation),
+    /// built by [`Database::build_context`](crate::database::Database::build_context).
     pub async fn request_stream(
         &self,
         context: &[ChatMessage],

@@ -1,4 +1,38 @@
-//! The history model for storing chat histories between users and characters.
+//! The history model: a conversation between a user and a character.
+//!
+//! A new [`History`] is saved per bot reply, keyed by that reply's Discord message ID, so a button
+//! interaction or a user reply can find the conversation from the message it acted on.
+//!
+//! ## Normalized storage
+//!
+//! History is stored in two pieces so the same message is never written twice and the derivable
+//! scaffolding is never written at all:
+//!
+//! - Each [`Message`] lives once in its own `native_db` table, keyed by its ID.
+//! - [`StoredHistory`] (the persisted form) holds only ordered ID lists: `previous` (the chat
+//!   context) and `choices` (the swipeable replies for this turn).
+//! - The system-prompt scaffolding (the Swedish roleplay framing built by [`scaffolding`]) is not
+//!   stored; it is rebuilt from the character at request time. Characters are versioned and a
+//!   history references a specific version, so the rebuilt scaffolding always matches.
+//!
+//! This replaced an older design where every history stored the whole conversation (plus
+//! scaffolding) inline, which duplicated messages across the many histories of one conversation and
+//! grew quadratically.
+//!
+//! ## In-memory vs stored
+//!
+//! [`History`] (this in-memory form, used by the chat loop, interaction handlers, and rendering)
+//! differs from [`StoredHistory`]:
+//!
+//! - `choices` are hydrated into full [`Message`]s, because the swipe/edit/undo/redo/regenerate
+//!   handlers operate on them directly. Rendering also only needs `choices` + the character.
+//! - `previous` stays as IDs; the full messages are resolved (and the scaffolding prepended) only
+//!   when building the LLM context, via [`Database::build_context`](crate::database::Database::build_context).
+//! - `pending` buffers messages pushed this turn so they can be written to the message table on the
+//!   next save.
+//!
+//! [`History::into_stored`] (on save) and [`History::hydrate`] (on load) bridge the two forms;
+//! `Database::history` / `Database::upsert_history` perform the message-table resolution.
 
 use alloc::borrow::Cow;
 use bon::Builder;
