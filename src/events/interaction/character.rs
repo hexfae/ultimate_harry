@@ -46,7 +46,7 @@ pub async fn character(
     let user_id = interaction.message.author.id;
     history.push(history.chosen_message().to_owned());
     history.reset_choices();
-    history.replace_setup_with(&new_character, user_id);
+    history.set_character(new_character.id().to_owned());
     history.push(Message::new_user(
         "System",
         format!("Svara nu som {new_character}."),
@@ -78,9 +78,10 @@ pub async fn character(
 
     let mut total = String::new();
     let now = Instant::now();
+    let context = db.build_context(&history, &new_character, user_id).await?;
     let mut stream = requester
         .request_stream(
-            &history,
+            &context,
             Some(format!("Fortsätt rollspelet som {new_character}.")),
         )
         .await?;

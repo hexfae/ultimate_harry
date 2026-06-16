@@ -1,6 +1,6 @@
 //! The LLM manager for generating responses from AI models.
 
-use crate::models::history::History;
+use crate::models::message::Message as ChatMessage;
 use core::pin::Pin;
 use miette::Diagnostic;
 use rig::{
@@ -71,7 +71,7 @@ impl LlmManager {
     /// providing a more interactive experience.
     pub async fn request_stream(
         &self,
-        history: &History,
+        context: &[ChatMessage],
         prompt: Option<String>,
     ) -> Result<
         Pin<
@@ -90,7 +90,7 @@ impl LlmManager {
         let model = CompletionModel::new(client, &self.settings.model);
 
         let mut rig_messages: Vec<Message> = Vec::new();
-        for msg in history.previous_messages() {
+        for msg in context {
             rig_messages.extend(msg.to_rig_messages());
         }
 

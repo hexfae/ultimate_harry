@@ -54,12 +54,13 @@ const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du in
 const EMPTY_AVATAR: &str = "https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png";
 
 /// A log of messages between the user and a character.
-#[derive(Debug, Clone, Serialize, Deserialize, Builder)]
-#[native_model(id = 2, version = 1, with = crate::codec::Json)]
-#[native_db]
+///
+/// This is the in-memory form used by the chat loop, interaction handlers, and rendering.
+/// It is persisted as a [`StoredHistory`] (which holds message IDs, not inline messages); the
+/// system-prompt scaffolding is never stored, but rebuilt from the character via [`scaffolding`].
+#[derive(Debug, Clone, Builder)]
 pub struct History {
-    /// The Discord Message ID of this history, used as the primary key.
-    #[primary_key]
+    /// The Discord Message ID of this history.
     #[builder(with = |id: MessageId| id.to_string())]
     id: String,
     /// The ulid ID of the currently responding character.
@@ -70,23 +71,84 @@ pub struct History {
     /// The index of the current response the user has chosen.
     #[builder(default)]
     current: usize,
-    #[builder(default)]
-    /// If the streaming has finished for this history.
+    /// If the streaming has finished for this history. Transient, never stored.
     ///
     /// This is used to create embeds while streaming a response.
-    ///
-    /// Defaults to true, since if a history is saved, it has finished.
-    #[serde(skip, default = "default_true")]
+    #[builder(default = true)]
     has_finished: bool,
-    /// The previous messages, the history of the chat.
-    previous: NonEmpty<Message>,
+    /// The IDs of the previous messages (the chat context), resolved from the message table on
+    /// demand. Contains no scaffolding.
+    #[builder(default)]
+    previous: Vec<String>,
+    /// Messages introduced this turn that must be persisted on save. Not part of the stored shape.
+    #[builder(default)]
+    pending: Vec<Message>,
 }
 
-/// Always returns true.
+/// The persisted form of a [`History`]: only message IDs, no inline messages and no scaffolding.
+#[derive(Debug, Serialize, Deserialize)]
+#[native_model(id = 2, version = 1, with = crate::codec::Json)]
+#[native_db]
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "StoredHistory is the persisted counterpart of History and belongs in this module"
+)]
+pub struct StoredHistory {
+    /// The Discord Message ID of this history, used as the primary key.
+    #[primary_key]
+    pub id: String,
+    /// The ulid ID of the currently responding character.
+    pub character: String,
+    /// The IDs of the previous messages (the chat context), in order.
+    pub previous: Vec<String>,
+    /// The IDs of the current swipeable responses.
+    pub choices: Vec<String>,
+    /// The index of the current chosen response.
+    pub current: usize,
+}
+
+/// Builds the system-prompt scaffolding messages for a character.
 ///
-/// Used for making `History.has_finished` true when deserializing.
-const fn default_true() -> bool {
-    true
+/// These frame the roleplay (system message, personality, prompt, scenario, example messages,
+/// system prompt) and are rebuilt from the character at request time rather than stored. The
+/// generated message IDs are throwaway, since scaffolding is never persisted.
+pub fn scaffolding(character: &Character, user_id: UserId) -> Vec<Message> {
+    let mut messages = vec![Message::new_system(SYSTEM_MESSAGE)];
+
+    if let Some(personality) = character.personality() {
+        messages.push(Message::new_system(BEGIN_PERSONALITY));
+        messages.push(Message::new_assistant(personality, character));
+    }
+
+    if let Some(prompt) = character.prompt() {
+        let mut begin_prompt = BEGIN_PROMPT.to_owned();
+        begin_prompt.push_str(prompt);
+        messages.push(Message::new_system(begin_prompt));
+    }
+
+    if let Some(scenario) = character.scenario() {
+        let mut begin_scenario = BEGIN_SCENARIO.to_owned();
+        begin_scenario.push_str(scenario);
+        messages.push(Message::new_system(begin_scenario));
+    }
+
+    if !character.example_messages().is_empty() {
+        messages.push(Message::new_system(BEGIN_EXAMPLE_MESSAGES));
+        for (user_message, assistant_message) in character.example_messages() {
+            if let Some(content) = user_message {
+                messages.push(Message::new_user("Användaren", content, user_id));
+            }
+            messages.push(Message::new_assistant(assistant_message, character));
+            messages.push(Message::new_system(EXAMPLE_MESSAGE_SEPARATOR));
+        }
+    }
+
+    if let Some(system_prompt) = character.system_prompt() {
+        messages.push(Message::new_system(system_prompt));
+    }
+
+    messages.push(Message::new_system(BEGIN_MESSAGE));
+    messages
 }
 
 /// A log of messages between the user and a character.
@@ -186,12 +248,6 @@ impl History {
         self.id = id.into().to_string();
     }
 
-    /// Returns the last message in the history.
-    #[must_use]
-    pub fn last(&self) -> &Message {
-        self.previous.last()
-    }
-
     /// Returns the character ID of the currently responding character.
     #[must_use]
     pub fn character(&self) -> &str {
@@ -203,80 +259,11 @@ impl History {
         self.character = character;
     }
 
-    /// Rebuilds the character setup portion of history.
-    ///
-    /// This replaces personality, prompt, scenario, example messages, and system prompt
-    /// with the new character's corresponding values.
-    #[expect(
-        clippy::expect_used,
-        reason = "multiple messages are unconditionally added, making it impossible for the nonempty to return an error"
-    )]
-    pub fn replace_setup_with(&mut self, character: &Character, user_id: UserId) {
-        let conversation_start = self
-            .previous
-            .iter()
-            .position(|msg| {
-                msg.chosen_revision()
-                    .head()
-                    .content()
-                    .contains(BEGIN_MESSAGE)
-            })
-            .map_or(0, |i| i.saturating_add(1));
-
-        let mut new_previous: Vec<Message> = Vec::new();
-        new_previous.push(Message::new_system(SYSTEM_MESSAGE));
-
-        if let Some(personality) = character.personality() {
-            new_previous.push(Message::new_system(BEGIN_PERSONALITY));
-            new_previous.push(Message::new_assistant(personality, character));
-        }
-
-        if let Some(prompt) = character.prompt() {
-            let mut begin_prompt = BEGIN_PROMPT.to_owned();
-            begin_prompt.push_str(prompt);
-            new_previous.push(Message::new_system(begin_prompt));
-        }
-
-        if let Some(scenario) = character.scenario() {
-            let mut begin_scenario = BEGIN_SCENARIO.to_owned();
-            begin_scenario.push_str(scenario);
-            new_previous.push(Message::new_system(begin_scenario));
-        }
-
-        if !character.example_messages().is_empty() {
-            new_previous.push(Message::new_system(BEGIN_EXAMPLE_MESSAGES));
-
-            for (user_message, assistant_message) in character.example_messages() {
-                if let Some(content) = user_message {
-                    new_previous.push(Message::new_user("Användaren", content, user_id));
-                }
-                new_previous.push(Message::new_assistant(assistant_message, character));
-                new_previous.push(Message::new_system(EXAMPLE_MESSAGE_SEPARATOR));
-            }
-        }
-
-        if let Some(system_prompt) = character.system_prompt() {
-            new_previous.push(Message::new_system(system_prompt));
-        }
-
-        new_previous.push(Message::new_system(BEGIN_MESSAGE));
-
-        let conversation: Vec<Message> = self
-            .previous
-            .iter()
-            .skip(conversation_start)
-            .cloned()
-            .collect();
-
-        new_previous.extend(conversation);
-
-        self.previous = NonEmpty::from_vec(new_previous).expect("setup should not be empty");
-        self.set_character(character.id().to_owned());
-    }
-
-    /// Pushes a message to the history.
-    pub fn push<M: Into<Message>>(&mut self, message: M) {
-        self.previous.push(message.into());
+    /// Appends a message to the chat context and queues it for persistence on the next save.
+    pub fn push<M: Into<Message>>(&mut self, value: M) {
+        let message = value.into();
+        self.previous.push(message.id().to_owned());
+        self.pending.push(message);
     }
 
     /// Resets the choices, removing all but the first choice, and resets the current index to 0.
@@ -304,10 +291,51 @@ impl History {
         }
     }
 
-    /// Returns the previous messages in the history.
+    /// Returns the IDs of the previous messages (the chat context), in order.
     #[must_use]
-    pub const fn previous_messages(&self) -> &NonEmpty<Message> {
+    pub fn previous_ids(&self) -> &[String] {
         &self.previous
+    }
+
+    /// Returns the messages queued for persistence (those pushed this turn, not yet in the table).
+    #[must_use]
+    pub fn pending(&self) -> &[Message] {
+        &self.pending
+    }
+
+    /// Converts the in-memory history into its persisted form plus the messages that must be
+    /// written to the message table (the queued `pending` messages and the current choices).
+    #[must_use]
+    pub fn into_stored(self) -> (StoredHistory, Vec<Message>) {
+        let choices = self
+            .choices
+            .iter()
+            .map(|message| message.id().to_owned())
+            .collect();
+        let mut messages = self.pending;
+        messages.extend(self.choices);
+        let stored = StoredHistory {
+            id: self.id,
+            character: self.character,
+            previous: self.previous,
+            choices,
+            current: self.current,
+        };
+        (stored, messages)
+    }
+
+    /// Rebuilds an in-memory history from its persisted form and its resolved choice messages.
+    #[must_use]
+    pub fn hydrate(stored: StoredHistory, choices: NonEmpty<Message>) -> Self {
+        Self {
+            id: stored.id,
+            character: stored.character,
+            choices,
+            current: stored.current,
+            has_finished: true,
+            previous: stored.previous,
+            pending: Vec::new(),
+        }
     }
 
     /// Converts the history to a placeholder interaction response.
@@ -663,54 +691,16 @@ fn create_button(custom_id: String, emoji: &str, disabled: bool) -> CreateButton
 }
 
 /// Creates a new [`History`] from a character, message ID, and user ID.
+///
+/// The conversation starts empty (the scaffolding is derived at request time); the greeting is
+/// the single initial choice.
 impl From<(&Character, MessageId, UserId)> for History {
-    fn from((character, id, user_id): (&Character, MessageId, UserId)) -> Self {
-        let mut history = NonEmpty::new(Message::new_system(SYSTEM_MESSAGE));
-
-        if let Some(personality) = character.personality() {
-            history.push(Message::new_system(BEGIN_PERSONALITY));
-            history.push(Message::new_assistant(personality, character));
-        }
-
-        if let Some(prompt) = character.prompt() {
-            let mut begin_prompt = BEGIN_PROMPT.to_owned();
-            begin_prompt.push_str(prompt);
-            history.push(Message::new_system(begin_prompt));
-        }
-
-        if let Some(scenario) = character.scenario() {
-            let mut begin_scenario = BEGIN_SCENARIO.to_owned();
-            begin_scenario.push_str(scenario);
-
-            history.push(Message::new_system(begin_scenario));
-        }
-
-        if !character.example_messages().is_empty() {
-            history.push(Message::new_system(BEGIN_EXAMPLE_MESSAGES));
-
-            for (user_message, assistant_message) in character.example_messages() {
-                if let Some(content) = user_message {
-                    history.push(Message::new_user("Användaren", content, user_id));
-                }
-
-                history.push(Message::new_assistant(assistant_message, character));
-
-                history.push(Message::new_system(EXAMPLE_MESSAGE_SEPARATOR));
-            }
-        }
-
-        if let Some(system_prompt) = character.system_prompt() {
-            history.push(Message::new_system(system_prompt));
-        }
-
-        history.push(Message::new_system(BEGIN_MESSAGE));
-
+    fn from((character, id, _user_id): (&Character, MessageId, UserId)) -> Self {
         let mut message = Message::new_system("");
         message.edit(character.name(), character.greeting(), None::<u64>);
         let choices = NonEmpty::new(message);
 
         Self::builder()
-            .previous(history)
             .choices(choices)
             .character(character.id())
             .id(id)

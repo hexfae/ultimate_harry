@@ -12,14 +12,18 @@ use native_db::{
     native_db,
 };
 use native_model::{Model as _, native_model};
+use nonempty::NonEmpty;
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
 use snafu::{OptionExt as _, ResultExt as _, Snafu};
+use std::collections::HashMap;
+use tracing::warn;
 
 use crate::llm::ModelSettings;
 use crate::models::{
     character::{Character, ViewCharacterPages},
-    history::History,
+    history::{History, StoredHistory, scaffolding},
+    message::Message,
 };
 
 /// The path of the embedded `native_db` database file.
@@ -44,7 +48,8 @@ impl Debug for Database {
 async fn models() -> Result<&'static Models, DatabaseError> {
     let mut models = Models::new();
     models.define::<Character>().context(DefineModelSnafu)?;
-    models.define::<History>().context(DefineModelSnafu)?;
+    models.define::<StoredHistory>().context(DefineModelSnafu)?;
+    models.define::<Message>().context(DefineModelSnafu)?;
     models.define::<ViewCharacterPages>().context(DefineModelSnafu)?;
     models.define::<GlobalModelSettings>().context(DefineModelSnafu)?;
     models.define::<PinChannel>().context(DefineModelSnafu)?;
@@ -179,21 +184,86 @@ impl Database {
         write.commit().context(InsertSnafu)
     }
 
-    /// Returns a chat history by its ID.
+    /// Returns a chat history by its ID, hydrating its choice messages from the message table.
     pub async fn history<T: Into<MessageId>>(
         &self,
         id: T,
     ) -> Result<Option<History>, DatabaseError> {
-        let read = self.0.r_transaction().context(GetSnafu)?;
-        read.get()
-            .primary(id.into().to_string())
-            .context(GetSnafu)
+        let maybe_stored = {
+            let read = self.0.r_transaction().context(GetSnafu)?;
+            read.get()
+                .primary::<StoredHistory>(id.into().to_string())
+                .context(GetSnafu)?
+        };
+        let Some(stored) = maybe_stored else {
+            return Ok(None);
+        };
+        let Some(choices) = NonEmpty::from_vec(self.messages(&stored.choices).await?) else {
+            warn!("history {} has no resolvable choices", stored.id);
+            return Ok(None);
+        };
+        Ok(Some(History::hydrate(stored, choices)))
     }
 
-    /// Updates or inserts a chat history.
+    /// Resolves a list of message IDs into messages, in order, skipping any that are missing.
+    pub async fn messages(&self, ids: &[String]) -> Result<Vec<Message>, DatabaseError> {
+        let read = self.0.r_transaction().context(GetSnafu)?;
+        let mut messages = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(message) = read
+                .get()
+                .primary::<Message>(id.clone())
+                .context(GetSnafu)?
+            {
+                messages.push(message);
+            } else {
+                warn!("history references a missing message: {id}");
+            }
+        }
+        Ok(messages)
+    }
+
+    /// Builds the full LLM context for a history: the character's scaffolding followed by the
+    /// previous messages, in order.
+    ///
+    /// Previous messages just pushed this turn live in the history's `pending` buffer (not yet in
+    /// the table), so those are taken from memory and the rest are resolved from the message table.
+    pub async fn build_context(
+        &self,
+        history: &History,
+        character: &Character,
+        user_id: UserId,
+    ) -> Result<Vec<Message>, DatabaseError> {
+        let mut context = scaffolding(character, user_id);
+        let pending: HashMap<&str, &Message> = history
+            .pending()
+            .iter()
+            .map(|message| (message.id(), message))
+            .collect();
+        let read = self.0.r_transaction().context(GetSnafu)?;
+        for id in history.previous_ids() {
+            if let Some(message) = pending.get(id.as_str()) {
+                context.push((*message).clone());
+            } else if let Some(message) =
+                read.get().primary::<Message>(id.clone()).context(GetSnafu)?
+            {
+                context.push(message);
+            } else {
+                warn!("history references a missing message: {id}");
+            }
+        }
+        Ok(context)
+    }
+
+    /// Updates or inserts a chat history, writing its choice and pending messages to the message
+    /// table and storing the history as message-ID lists.
     pub async fn upsert_history(&self, history: History) -> Result<(), DatabaseError> {
+        let (stored, messages) = history.into_stored();
         let write = self.0.rw_transaction().context(InsertSnafu)?;
-        write.upsert(history).context(InsertSnafu)?;
+        for message in messages {
+            write.upsert(message).context(InsertSnafu)?;
+        }
+        write.upsert(stored).context(InsertSnafu)?;
         write.commit().context(InsertSnafu)
     }
 

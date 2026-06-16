@@ -56,7 +56,10 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
 
     let mut total = String::new();
     let now = Instant::now();
-    let mut stream = requester.request_stream(&history, None).await?;
+    let context = db
+        .build_context(&history, &character, user_message.author.id)
+        .await?;
+    let mut stream = requester.request_stream(&context, None).await?;
     let mut interval = interval(Duration::from_secs(1));
     interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
