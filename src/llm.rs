@@ -37,25 +37,11 @@ pub struct ModelSettings {
     pub model: String,
     /// The API key for the `OpenRouter` service.
     pub api_key: String,
-    /// The frequency penalty to apply to the model.
-    ///
-    /// Positive values penalize new tokens based on their existing frequency,
-    /// reducing the likelihood of repeating the same tokens.
-    pub frequency_penalty: f32,
-    /// The presence penalty to apply to the model.
-    ///
-    /// Positive values penalize new tokens based on whether they appear in the
-    /// conversation, encouraging the model to talk about new topics.
-    pub presence_penalty: f32,
     /// The temperature to use for generating responses.
     ///
     /// Higher values make the output more random, while lower values make it
     /// more deterministic and focused.
     pub temperature: f32,
-    /// The `top_p` value to use for nucleus sampling.
-    ///
-    /// This controls the cumulative probability of tokens to consider.
-    pub top_p: f32,
 }
 
 impl LlmManager {
@@ -115,10 +101,7 @@ impl Default for ModelSettings {
         Self {
             model: "deepseek/deepseek-v3.2".to_owned(),
             api_key: String::new(),
-            frequency_penalty: 0.0,
-            presence_penalty: 0.0,
             temperature: 1.0,
-            top_p: 0.95,
         }
     }
 }
