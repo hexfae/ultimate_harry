@@ -27,9 +27,7 @@ pub async fn model(
         return Ok(());
     };
 
-    let mut model_settings = character
-        .model_settings()
-        .unwrap_or(db.model_settings().await);
+    let mut model_settings = db.resolved_model_settings(character).await;
     if let Some(new_model) = model {
         model_settings.model = new_model;
     }

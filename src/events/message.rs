@@ -48,11 +48,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         .await
         .context(SendMessageSnafu)?;
 
-    let requester = LlmManager::new(
-        character
-            .model_settings()
-            .unwrap_or(db.model_settings().await),
-    );
+    let requester = LlmManager::new(db.resolved_model_settings(&character).await);
 
     let mut total = String::new();
     let now = Instant::now();

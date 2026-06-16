@@ -340,6 +340,15 @@ impl Database {
             .map_or_else(ModelSettings::default, |stored| stored.settings)
     }
 
+    /// Returns the character's own model settings, falling back to the
+    /// bot's global settings only when the character has no override.
+    pub async fn resolved_model_settings(&self, character: &Character) -> ModelSettings {
+        match character.model_settings() {
+            Some(settings) => settings,
+            None => self.model_settings().await,
+        }
+    }
+
     /// Returns the bot's pin channel.
     pub async fn pins_channel(&self) -> ChannelId {
         let Ok(read) = self.0.r_transaction() else {
