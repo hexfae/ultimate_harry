@@ -162,6 +162,37 @@ pub struct Character {
     similarity: Option<f64>,
 }
 
+/// A lightweight projection of a character for the hand-off select menu.
+///
+/// The menu only needs the label shown to the user and the ID to switch to, so
+/// this avoids cloning (and carrying around) whole [`Character`] records just to
+/// render 25 select options.
+#[derive(Debug, Clone)]
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "this is a projection of a Character, so the shared prefix is meaningful"
+)]
+pub struct CharacterOption {
+    /// The display label (emoji + name), as produced by the character's `Display`.
+    label: String,
+    /// The character's ID, used as the select option's value.
+    id: String,
+}
+
+impl CharacterOption {
+    /// Returns the option's display label.
+    #[must_use]
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Returns the option's character ID.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
 /// A paginated view of multiple characters.
 ///
 /// This is used when viewing characters, allowing the user to navigate
@@ -245,6 +276,15 @@ impl Character {
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Returns a lightweight hand-off menu option (label + ID) for this character.
+    #[must_use]
+    pub fn to_menu_option(&self) -> CharacterOption {
+        CharacterOption {
+            label: self.to_string(),
+            id: self.id.clone(),
+        }
     }
 
     /// Returns whether the character is visible (not deleted and not superseded by a newer version).

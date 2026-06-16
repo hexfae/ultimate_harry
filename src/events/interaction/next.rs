@@ -26,11 +26,13 @@ pub async fn next(
         return Ok(());
     };
 
+    let options = db.character_menu_options().await?;
+
     if history.is_on_last_choice() {
         history.push_choice((character.clone(), String::new(), Duration::ZERO));
         history.set_finished(false);
 
-        let placeholder = history.to_placeholder_interaction(&character, db).await;
+        let placeholder = history.to_placeholder_interaction(&character, &options);
         interaction
             .create_response(&ctx.http, placeholder)
             .await
@@ -50,6 +52,7 @@ pub async fn next(
             interaction,
             id,
             db,
+            options: options.clone(),
         };
         let total = stream_into(&requester, &context, None, now, &mut sink).await?;
 
@@ -57,7 +60,9 @@ pub async fn next(
         history.update_current_choice((character.clone(), total, now.elapsed()));
         history.set_finished(true);
 
-        let response = history.to_edit_interaction(&character, id, db).await;
+        let response = history
+            .to_edit_interaction(&character, id, db, &options)
+            .await;
 
         interaction
             .edit_response(&ctx.http, response)
@@ -66,7 +71,7 @@ pub async fn next(
     } else {
         history.next();
 
-        let response = history.to_interaction(&character, id, db).await;
+        let response = history.to_interaction(&character, id, db, &options).await;
 
         interaction
             .create_response(&ctx.http, response)

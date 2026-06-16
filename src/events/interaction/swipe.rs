@@ -25,7 +25,8 @@ pub async fn swipe<Mutate: FnOnce(&mut History)>(
 
     mutate(&mut history);
 
-    let response = history.to_interaction(&character, id, db).await;
+    let options = db.character_menu_options().await?;
+    let response = history.to_interaction(&character, id, db, &options).await;
 
     interaction
         .create_response(&ctx.http, response)

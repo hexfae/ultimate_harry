@@ -59,7 +59,10 @@ use crate::{
     constants::{CHARACTER_LIMIT, EDIT, NEXT, PIN, PREVIOUS, REDO, UNDO},
     database::Database,
     events::interaction::InteractionKind,
-    models::{character::Character, message::Message},
+    models::{
+        character::{Character, CharacterOption},
+        message::Message,
+    },
 };
 
 /// The system message that precedes every conversation.
@@ -375,63 +378,59 @@ impl History {
     }
 
     /// Converts the history to a placeholder interaction response.
-    pub async fn to_placeholder_interaction<'a>(
+    pub fn to_placeholder_interaction<'a>(
         &self,
         character: &'a Character,
-        db: &Database,
+        options: &[CharacterOption],
     ) -> CreateInteractionResponse<'a> {
         CreateInteractionResponse::UpdateMessage(
-            self.to_placeholder(character, Duration::ZERO, db)
-                .await
+            self.to_placeholder(character, Duration::ZERO, options)
                 .to_slash_initial_response(CreateInteractionResponseMessage::new()),
         )
     }
 
     /// Converts the history to a placeholder interaction response edit.
-    pub async fn to_placeholder_interaction_edit<'a>(
+    pub fn to_placeholder_interaction_edit<'a>(
         &self,
         character: &'a Character,
         elapsed: Duration,
-        db: &Database,
+        options: &[CharacterOption],
     ) -> EditInteractionResponse<'a> {
-        self.to_placeholder(character, elapsed, db)
-            .await
+        self.to_placeholder(character, elapsed, options)
             .to_slash_initial_response_edit(EditInteractionResponse::new())
     }
 
     /// Converts the history to a placeholder message.
-    pub async fn to_placeholder_message<'a>(
+    pub fn to_placeholder_message<'a>(
         &self,
         character: &'a Character,
         replying_to: &DiscordMessage,
-        db: &Database,
+        options: &[CharacterOption],
     ) -> CreateMessage<'a> {
-        self.to_placeholder(character, Duration::ZERO, db)
-            .await
+        self.to_placeholder(character, Duration::ZERO, options)
             .to_prefix(replying_to.into())
             .reference_message(replying_to)
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
     /// Converts the history to a placeholder message edit.
-    pub async fn to_placeholder_message_edit<'a>(
+    pub fn to_placeholder_message_edit<'a>(
         &self,
         character: &'a Character,
         elapsed: Duration,
-        db: &Database,
+        options: &[CharacterOption],
     ) -> EditMessage<'a> {
-        self.to_placeholder(character, elapsed, db)
-            .await
+        self.to_placeholder(character, elapsed, options)
             .to_prefix_edit(EditMessage::new())
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
     /// Converts the history to a placeholder.
-    async fn to_placeholder<'a>(
+    fn to_placeholder<'a>(
         &self,
         character: &'a Character,
         elapsed: Duration,
-        db: &Database,
+        options: &[CharacterOption],
     ) -> CreateReply<'a> {
         let (has_previous, has_edit) = (false, false);
 
@@ -465,13 +464,7 @@ impl History {
         ))]
         .into();
 
-        let components = create_buttons(
-            1,
-            self.has_finished,
-            has_previous,
-            has_edit,
-            &db.characters_by_usage().await.unwrap_or_default(),
-        );
+        let components = create_buttons(1, self.has_finished, has_previous, has_edit, options);
 
         let container = vec![CreateComponent::Container(CreateContainer::new(
             [title, components, footer].concat(),
@@ -526,9 +519,10 @@ impl History {
         character: &'a Character,
         id: M,
         db: &Database,
+        options: &[CharacterOption],
     ) -> CreateInteractionResponse<'a> {
         CreateInteractionResponse::UpdateMessage(
-            self.to_response(character, id, db)
+            self.to_response(character, id, db, options)
                 .await
                 .to_slash_initial_response(CreateInteractionResponseMessage::new()),
         )
@@ -540,8 +534,9 @@ impl History {
         character: &'a Character,
         id: M,
         db: &Database,
+        options: &[CharacterOption],
     ) -> EditInteractionResponse<'a> {
-        self.to_response(character, id, db)
+        self.to_response(character, id, db, options)
             .await
             .to_slash_initial_response_edit(EditInteractionResponse::new())
     }
@@ -552,8 +547,9 @@ impl History {
         character: &'a Character,
         id: M,
         db: &Database,
+        options: &[CharacterOption],
     ) -> EditMessage<'a> {
-        self.to_response(character, id, db)
+        self.to_response(character, id, db, options)
             .await
             .to_prefix_edit(EditMessage::new())
             .allowed_mentions(CreateAllowedMentions::new())
@@ -565,6 +561,7 @@ impl History {
         character: &'a Character,
         id: M,
         db: &Database,
+        options: &[CharacterOption],
     ) -> CreateReply<'a> {
         let chosen = self.chosen_message();
         let content = chosen.chosen_revision().head().content();
@@ -642,7 +639,7 @@ impl History {
             self.has_finished,
             self.has_multiple_choices(),
             self.chosen_has_edit(),
-            &db.characters_by_usage().await.unwrap_or_default(),
+            options,
         );
 
         let container = vec![CreateComponent::Container(CreateContainer::new(
@@ -676,7 +673,7 @@ fn create_buttons<'a>(
     finished: bool,
     previous: bool,
     edit: bool,
-    characters: &[Character],
+    options: &[CharacterOption],
 ) -> Cow<'a, [CreateContainerComponent<'a>]> {
     let prev_msg_id = format!("{id}{}", InteractionKind::Previous);
     let next_msg_id = format!("{id}{}", InteractionKind::Next);
@@ -701,15 +698,18 @@ fn create_buttons<'a>(
             vec![create_button(pin_id, PIN, !finished)].into(),
         )),
     ];
-    if !characters.is_empty() {
+    if !options.is_empty() {
         components.push(CreateContainerComponent::ActionRow(
             CreateActionRow::SelectMenu(CreateSelectMenu::new(
                 char_id,
                 CreateSelectMenuKind::String {
-                    options: characters
+                    options: options
                         .iter()
-                        .map(|char| {
-                            CreateSelectMenuOption::new(char.to_string(), char.id().to_owned())
+                        .map(|option| {
+                            CreateSelectMenuOption::new(
+                                option.label().to_owned(),
+                                option.id().to_owned(),
+                            )
                         })
                         .collect(),
                 },

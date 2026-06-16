@@ -35,9 +35,10 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
     history.reset_choices();
     history.set_finished(false);
 
-    let placeholder_message = history
-        .to_placeholder_message(&character, user_message, db)
-        .await;
+    let options = db.character_menu_options().await?;
+
+    let placeholder_message =
+        history.to_placeholder_message(&character, user_message, &options);
 
     let mut bot_message = user_message
         .channel_id
@@ -58,6 +59,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         character: &character,
         message: &mut bot_message,
         db,
+        options: options.clone(),
     };
     let total = stream_into(&requester, &context, None, now, &mut sink).await?;
 
@@ -66,7 +68,9 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
     history.set_finished(true);
     db.upsert_history(history.clone()).await?;
 
-    let edit = history.to_edit_response(&character, &bot_message, db).await;
+    let edit = history
+        .to_edit_response(&character, &bot_message, db, &options)
+        .await;
 
     bot_message
         .edit(ctx, edit)

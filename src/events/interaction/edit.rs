@@ -32,7 +32,10 @@ pub async fn edit(
 
     history.edit_content(character.name(), modal.content, Some(interaction.user.id));
 
-    let response = history.to_edit_interaction(&character, id, db).await;
+    let options = db.character_menu_options().await?;
+    let response = history
+        .to_edit_interaction(&character, id, db, &options)
+        .await;
 
     interaction
         .edit_response(&ctx.http, response)

@@ -13,7 +13,11 @@ use crate::{
     database::Database,
     error::{EditMessageSnafu, EditResponseSnafu, StreamingSnafu},
     llm::LlmManager,
-    models::{character::Character, history::History, message::Message as ChatMessage},
+    models::{
+        character::{Character, CharacterOption},
+        history::History,
+        message::Message as ChatMessage,
+    },
 };
 use core::time::Duration;
 use poise::serenity_prelude::{ComponentInteraction, Context, Message, MessageId};
@@ -61,14 +65,15 @@ pub struct MessageSink<'a> {
     pub message: &'a mut Message,
     /// The database used while rendering.
     pub db: &'a Database,
+    /// The hand-off select-menu options, computed once for the whole stream.
+    pub options: Vec<CharacterOption>,
 }
 
 impl ReplySink for MessageSink<'_> {
     async fn placeholder(&mut self, elapsed: Duration) -> AppResult {
-        let edit = self
-            .history
-            .to_placeholder_message_edit(self.character, elapsed, self.db)
-            .await;
+        let edit =
+            self.history
+                .to_placeholder_message_edit(self.character, elapsed, &self.options);
         self.message
             .edit(self.ctx, edit)
             .await
@@ -81,7 +86,7 @@ impl ReplySink for MessageSink<'_> {
             .set_choices((self.character.clone(), total, elapsed));
         let edit = self
             .history
-            .to_edit_response(self.character, &*self.message, self.db)
+            .to_edit_response(self.character, &*self.message, self.db, &self.options)
             .await;
         self.message
             .edit(self.ctx, edit)
@@ -105,14 +110,15 @@ pub struct InteractionSink<'a> {
     pub id: MessageId,
     /// The database used while rendering.
     pub db: &'a Database,
+    /// The hand-off select-menu options, computed once for the whole stream.
+    pub options: Vec<CharacterOption>,
 }
 
 impl ReplySink for InteractionSink<'_> {
     async fn placeholder(&mut self, elapsed: Duration) -> AppResult {
-        let edit = self
-            .history
-            .to_placeholder_interaction_edit(self.character, elapsed, self.db)
-            .await;
+        let edit =
+            self.history
+                .to_placeholder_interaction_edit(self.character, elapsed, &self.options);
         self.interaction
             .edit_response(&self.ctx.http, edit)
             .await
@@ -125,7 +131,7 @@ impl ReplySink for InteractionSink<'_> {
             .update_current_choice((self.character.clone(), total, elapsed));
         let edit = self
             .history
-            .to_edit_interaction(self.character, self.id, self.db)
+            .to_edit_interaction(self.character, self.id, self.db, &self.options)
             .await;
         self.interaction
             .edit_response(&self.ctx.http, edit)

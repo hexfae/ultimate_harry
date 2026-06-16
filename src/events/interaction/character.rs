@@ -58,9 +58,10 @@ pub async fn character(
         .await
         .context(SendResponseSnafu)?;
 
-    let placeholder = history
-        .to_placeholder_message(&new_character, &interaction.message, db)
-        .await;
+    let options = db.character_menu_options().await?;
+
+    let placeholder =
+        history.to_placeholder_message(&new_character, &interaction.message, &options);
 
     let mut response_message = interaction
         .message
@@ -81,6 +82,7 @@ pub async fn character(
         character: &new_character,
         message: &mut response_message,
         db,
+        options: options.clone(),
     };
     let total = stream_into(&requester, &context, Some(prompt), now, &mut sink).await?;
 
@@ -90,7 +92,7 @@ pub async fn character(
     db.upsert_history(history.clone()).await?;
 
     let edit = history
-        .to_edit_response(&new_character, &response_message, db)
+        .to_edit_response(&new_character, &response_message, db, &options)
         .await;
 
     response_message

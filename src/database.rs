@@ -21,7 +21,7 @@ use tracing::warn;
 
 use crate::llm::ModelSettings;
 use crate::models::{
-    character::{Character, ViewCharacterPages},
+    character::{Character, CharacterOption, ViewCharacterPages},
     history::{History, StoredHistory, scaffolding},
     message::Message,
 };
@@ -110,6 +110,21 @@ impl Database {
         });
         characters.truncate(MAX_RESULTS);
         Ok(characters)
+    }
+
+    /// Returns up to 25 visible characters as lightweight hand-off menu options,
+    /// sorted by the most commonly used ones.
+    ///
+    /// This is the shape the chat select menu needs; computing it once per reply
+    /// (rather than re-scanning the whole character table on every streaming tick
+    /// and button press) is the point of the projection.
+    pub async fn character_menu_options(&self) -> Result<Vec<CharacterOption>, DatabaseError> {
+        Ok(self
+            .characters_by_usage()
+            .await?
+            .iter()
+            .map(Character::to_menu_option)
+            .collect())
     }
 
     /// Returns up to 25 visible characters, sorted randomly.

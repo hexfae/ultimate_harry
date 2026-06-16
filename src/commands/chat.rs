@@ -39,17 +39,22 @@ pub async fn chat(
     let mut history = History::from((character, id, ctx.author().id));
     history.set_finished(true);
 
+    let options = db.character_menu_options().await?;
+
     let msg = ctx
-        .send(history.to_response(character, id, &ctx.data().db).await)
+        .send(history.to_response(character, id, db, &options).await)
         .await
         .context(SendMessageSnafu)?;
 
     let actual_id = msg.message().await.context(RetrieveMessageSnafu)?.id;
     history.set_id(actual_id);
 
-    msg.edit(ctx, history.to_response(character, actual_id, db).await)
-        .await
-        .context(EditMessageSnafu)?;
+    msg.edit(
+        ctx,
+        history.to_response(character, actual_id, db, &options).await,
+    )
+    .await
+    .context(EditMessageSnafu)?;
     db.upsert_history(history).await?;
 
     Ok(())
