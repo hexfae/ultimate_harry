@@ -5,7 +5,7 @@ use crate::database::{Database, DatabaseError};
 /// The database and statistics of the bot.
 #[derive(Debug)]
 pub struct AppState {
-    /// The `SurrealDB` database.
+    /// The `native_db` database.
     pub db: Database,
 }
 

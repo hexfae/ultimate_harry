@@ -13,9 +13,10 @@ use poise::serenity_prelude::{
         ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, UserId,
     },
 };
+use native_db::{ToKey as _, native_db};
+use native_model::{Model as _, native_model};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use surrealdb::RecordId;
 use tracing::warn;
 use ulid::Ulid;
 use url::Url;
@@ -37,7 +38,12 @@ const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %T | %F";
 
 /// A character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
+#[native_model(id = 1, version = 1, with = crate::codec::Json)]
+#[native_db]
 pub struct Character {
+    /// The character's unique ID (a ULID), generated on creation. Used as the primary key.
+    #[primary_key]
+    id: String,
     /// The character's name.
     #[builder(into)]
     name: String,
@@ -46,8 +52,6 @@ pub struct Character {
     /// This is the first message in every conversation.
     #[builder(into)]
     greeting: String,
-    /// The character's unique ID, generated on creation.
-    id: RecordId,
     /// The Discord user ID of the character's original creator.
     #[builder(into)]
     creator: UserId,
@@ -59,11 +63,11 @@ pub struct Character {
     /// The ID of the next version of the character.
     ///
     /// If Some, the character will no longer be visible.
-    next_version: Option<RecordId>,
+    next_version: Option<String>,
     /// The ID of the previous version of the character.
     ///
     /// This is used for rollback purposes.
-    previous_version: Option<RecordId>,
+    previous_version: Option<String>,
     /// The character's nickname.
     ///
     /// This is intended to be a short version of the name, to
@@ -162,13 +166,16 @@ pub struct Character {
 /// This is used when viewing characters, allowing the user to navigate
 /// between multiple character results using buttons.
 #[derive(Debug, Serialize, Deserialize, Builder)]
+#[native_model(id = 3, version = 1, with = crate::codec::Json)]
+#[native_db]
 pub struct ViewCharacterPages {
-    /// The Discord message ID of the character page message.
-    #[builder(with = |id: MessageId| RecordId::from(("character_page", id.to_string())))]
-    id: RecordId,
+    /// The Discord message ID of the character page message, used as the primary key.
+    #[primary_key]
+    #[builder(with = |id: MessageId| id.to_string())]
+    id: String,
     /// The character IDs shown on this page.
-    #[builder(with = |cs: &[Character]| cs.iter().map(Character::id).cloned().collect())]
-    characters: Vec<RecordId>,
+    #[builder(with = |cs: &[Character]| cs.iter().map(|character| character.id().to_owned()).collect())]
+    characters: Vec<String>,
     /// The current page index being displayed.
     #[builder(default)]
     current_page: usize,
@@ -235,8 +242,49 @@ impl Character {
 
     /// Returns the character's unique ID.
     #[must_use]
-    pub const fn id(&self) -> &RecordId {
+    pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Returns whether the character is visible (not deleted and not superseded by a newer version).
+    #[must_use]
+    pub const fn is_visible(&self) -> bool {
+        self.deleted_at.is_none() && self.next_version.is_none()
+    }
+
+    /// Filters out deleted and superseded characters, then returns up to 25 ranked by name
+    /// (and nickname) similarity to the input, breaking ties by number of conversations had.
+    ///
+    /// This replaces the old `MOST_SIMILAR_TO` `SurrealQL` query and sets each returned
+    /// character's `similarity` for display.
+    #[must_use]
+    pub fn rank_by_similarity(characters: Vec<Self>, input: &str) -> Vec<Self> {
+        let mut ranked: Vec<Self> = characters
+            .into_iter()
+            .filter(Self::is_visible)
+            .map(|mut character| {
+                let name_similarity =
+                    strsim::normalized_damerau_levenshtein(&character.name, input);
+                let similarity = character.nickname.as_deref().map_or(
+                    name_similarity,
+                    |nickname| {
+                        name_similarity
+                            .max(strsim::normalized_damerau_levenshtein(nickname, input))
+                    },
+                );
+                character.similarity = Some(similarity);
+                character
+            })
+            .collect();
+        ranked.sort_by(|left, right| {
+            let left_similarity = left.similarity.unwrap_or_default();
+            let right_similarity = right.similarity.unwrap_or_default();
+            right_similarity
+                .total_cmp(&left_similarity)
+                .then_with(|| right.conversations_had.cmp(&left.conversations_had))
+        });
+        ranked.truncate(25);
+        ranked
     }
 
     /// Returns the total number of conversations the character has had.
@@ -271,6 +319,22 @@ impl Character {
         self.model_settings.clone()
     }
 
+    /// Sets the character's model settings override.
+    pub fn set_model_settings(&mut self, model_settings: ModelSettings) {
+        self.model_settings = Some(model_settings);
+    }
+
+    /// Marks the character as deleted by the given user, recording the time of deletion.
+    pub fn mark_deleted(&mut self, deleted_by: UserId) {
+        self.deleted_by = Some(deleted_by);
+        self.deleted_at = Some(Zoned::now());
+    }
+
+    /// Sets the ID of the next version of this character, hiding it from view.
+    pub fn set_next_version(&mut self, next_version: String) {
+        self.next_version = Some(next_version);
+    }
+
     /// Returns the similarity indicator for display.
     ///
     /// Returns e.g. ` | 75% namnlikhet` if `Some(0.75)`, otherwise returns an empty String.
@@ -297,7 +361,7 @@ impl Character {
         self.edited_at = Some(Zoned::now());
         self.version = self.version.saturating_add(1);
         self.previous_version = Some(self.id.clone());
-        self.id = RecordId::from(("character", Ulid::new().to_string()));
+        self.id = Ulid::new().to_string();
         let avatar_url = validate_url(second_modal.avatar);
         // the reason why these can't just be `self.foo = bar` is because
         // if the user doesn't fill in a field, it will be None, and we
@@ -390,7 +454,7 @@ impl Character {
             embed = embed.field("Redigerad", edited, false);
         }
         embed = embed
-            .field("ID", self.id.key().to_string(), false)
+            .field("ID", self.id.clone(), false)
             .footer(CreateEmbedFooter::new(footer_text.into()));
 
         if let Some(avatar) = self.avatar.clone() {
@@ -428,8 +492,8 @@ impl Character {
 impl ViewCharacterPages {
     #[must_use]
     /// Returns the Discord message ID of this character page.
-    pub fn id(&self) -> RecordId {
-        self.id.clone()
+    pub fn id(&self) -> &str {
+        &self.id
     }
 }
 
@@ -441,7 +505,7 @@ impl From<(CreateCharacterModal, SecondCreateCharacterModal, UserId)> for Charac
         Self::builder()
             .name(first.name)
             .greeting(first.greeting)
-            .id(RecordId::from(("character", Ulid::new().to_string())))
+            .id(Ulid::new().to_string())
             .maybe_nickname(first.nickname)
             .maybe_description(first.description)
             .maybe_personality(first.personality)

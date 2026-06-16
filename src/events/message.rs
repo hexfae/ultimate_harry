@@ -128,7 +128,7 @@ async fn react_to_mentions_and_replies(
     if let Some(ref replied_to) = new_message.referenced_message
         && let Some(user_emoji) = all_emoji
             .iter()
-            .find(|emoji| emoji.user_id == replied_to.author.id)
+            .find(|emoji| emoji.user_id == replied_to.author.id.to_string())
     {
         new_message
             .react(&ctx.http, user_emoji.emoji.clone())
@@ -136,7 +136,10 @@ async fn react_to_mentions_and_replies(
             .context(ReactSnafu)?;
     }
     for mention in &new_message.mentions {
-        if let Some(user_emoji) = all_emoji.iter().find(|emoji| emoji.user_id == mention.id) {
+        if let Some(user_emoji) = all_emoji
+            .iter()
+            .find(|emoji| emoji.user_id == mention.id.to_string())
+        {
             new_message
                 .react(&ctx.http, user_emoji.emoji.clone())
                 .await

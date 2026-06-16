@@ -1,12 +1,20 @@
-//! A convenience wrapper implementing several methods on a `SurrealDB` database.
+//! A convenience wrapper implementing several methods on a `native_db` database.
+#![expect(
+    clippy::unused_async,
+    reason = "the native_db backend is synchronous, but the Database API is kept async for uniformity and to avoid rippling .await removal across every call site"
+)]
 
-use jiff::Zoned;
+use core::fmt::{Debug, Formatter, Result as FmtResult};
 use miette::{Diagnostic, SourceSpan};
+use nanorand::Rng as _;
+use native_db::{
+    Builder, Database as NativeDatabase, Models, ToKey as _, db_type::Error as NativeError,
+    native_db,
+};
+use native_model::{Model as _, native_model};
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
 use snafu::{OptionExt as _, ResultExt as _, Snafu};
-use surrealdb::{RecordId, engine::any::Any};
-use surrealdb::{Surreal, opt::auth::Root};
 
 use crate::llm::ModelSettings;
 use crate::models::{
@@ -14,62 +22,63 @@ use crate::models::{
     history::History,
 };
 
-/// The credentials for the root user of the (local) remote `SurrealDB` database. Used in debug mode.
-const ROOT: Root<'_> = Root {
-    username: "root",
-    password: "root",
-};
+/// The path of the embedded `native_db` database file.
+const DATABASE_PATH: &str = "harry_database.db";
 
-/// The default address of the (local) remote `SurrealDB` database. Used in debug mode.
-const REMOTE_DATABASE_PATH: &str = "ws://localhost:8000";
-/// The default path of the embedded `SurrealDB` database. Used in release mode.
-#[cfg(not(debug_assertions))]
-const EMBEDDED_DATABASE_PATH: &str = "surrealkv://harry_database";
+/// The fixed primary key used for singleton records (model settings, pin channel).
+const SINGLETON_KEY: &str = "global";
 
-/// The default `SurrealDB` namespace.
-const NAMESPACE: &str = "harry";
-/// The default `SurrealDB` database.
-const DATABASE: &str = "harry";
+/// The maximum number of characters returned by the listing queries.
+const MAX_RESULTS: usize = 25;
 
-/// A newtype wrapper around `Surreal<Any>`.
-#[derive(Debug)]
-pub struct Database(Surreal<Any>);
+/// A newtype wrapper around a `native_db` database.
+pub struct Database(NativeDatabase<'static>);
+
+impl Debug for Database {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.debug_struct("Database").finish_non_exhaustive()
+    }
+}
+
+/// Builds the set of `native_db` models for every persisted type.
+async fn models() -> Result<&'static Models, DatabaseError> {
+    let mut models = Models::new();
+    models.define::<Character>().context(DefineModelSnafu)?;
+    models.define::<History>().context(DefineModelSnafu)?;
+    models.define::<ViewCharacterPages>().context(DefineModelSnafu)?;
+    models.define::<GlobalModelSettings>().context(DefineModelSnafu)?;
+    models.define::<PinChannel>().context(DefineModelSnafu)?;
+    models.define::<UserName>().context(DefineModelSnafu)?;
+    models.define::<UserEmoji>().context(DefineModelSnafu)?;
+    Ok(Box::leak(Box::new(models)))
+}
 
 impl Database {
-    /// Connects to a local database in debug mode, or creates a local
-    /// `SurrealKV` one in release mode.
+    /// Opens (or creates) the embedded database file.
     pub async fn new() -> Result<Self, DatabaseError> {
-        let db: Surreal<Any> = Surreal::init();
-        #[cfg(debug_assertions)]
-        {
-            db.connect(REMOTE_DATABASE_PATH)
-                .await
-                .context(ConnectSnafu {
-                    found: REMOTE_DATABASE_PATH,
-                    span: 0..REMOTE_DATABASE_PATH.len(),
-                })?;
-            db.signin(ROOT).await.context(SignInSnafu)?;
-        };
-        #[cfg(not(debug_assertions))]
-        db.connect(EMBEDDED_DATABASE_PATH)
-            .await
-            .context(ConnectSnafu {
-                found: EMBEDDED_DATABASE_PATH,
-                span: 0..EMBEDDED_DATABASE_PATH.len(),
-            })?;
-        db.use_ns(NAMESPACE)
-            .use_db(DATABASE)
-            .await
-            .with_context(|_| UseNamespaceDatabaseSnafu {
-                namespace: NAMESPACE.to_owned(),
-                database: DATABASE.to_owned(),
-            })?;
+        let models = models().await?;
+        let db = Builder::new()
+            .create(models, DATABASE_PATH)
+            .context(ConnectSnafu)?;
         Ok(Self(db))
     }
 
+    /// Returns every character currently stored, regardless of visibility.
+    async fn all_characters(&self) -> Result<Vec<Character>, DatabaseError> {
+        let read = self.0.r_transaction().context(GetSnafu)?;
+        read.scan()
+            .primary::<Character>()
+            .context(GetSnafu)?
+            .all()
+            .context(GetSnafu)?
+            .collect::<Result<Vec<Character>, NativeError>>()
+            .context(GetSnafu)
+    }
+
     /// Returns a single character by its ID.
-    pub async fn character(&self, id: &RecordId) -> Result<Option<Character>, DatabaseError> {
-        self.0.select(id).await.context(GetSnafu)
+    pub async fn character(&self, id: &str) -> Result<Option<Character>, DatabaseError> {
+        let read = self.0.r_transaction().context(GetSnafu)?;
+        read.get().primary(id.to_owned()).context(GetSnafu)
     }
 
     /// Returns up to 25 characters, sorted by the most similar ones to the given name.
@@ -77,87 +86,97 @@ impl Database {
         &self,
         name: T,
     ) -> Result<Vec<Character>, DatabaseError> {
-        self.0
-            .query(MOST_SIMILAR_TO)
-            .bind(("input", name.into()))
-            .await
-            .context(GetSnafu)?
-            .take(2)
-            .context(GetSnafu)
+        Ok(Character::rank_by_similarity(
+            self.all_characters().await?,
+            &name.into(),
+        ))
     }
 
-    /// Returns up to 25 characters, sorted by the most commonly used ones.
+    /// Returns up to 25 visible characters, sorted by the most commonly used ones.
     pub async fn characters_by_usage(&self) -> Result<Vec<Character>, DatabaseError> {
-        self.0
-            .query(BY_USAGE)
-            .await
-            .context(GetSnafu)?
-            .take(0)
-            .context(GetSnafu)
+        let mut characters: Vec<Character> = self
+            .all_characters()
+            .await?
+            .into_iter()
+            .filter(Character::is_visible)
+            .collect();
+        characters.sort_by(|left, right| {
+            right.conversations_had().cmp(&left.conversations_had())
+        });
+        characters.truncate(MAX_RESULTS);
+        Ok(characters)
     }
 
-    /// Returns up to 25 characters, sorted randomly.
+    /// Returns up to 25 visible characters, sorted randomly.
     pub async fn random_characters(&self) -> Result<Vec<Character>, DatabaseError> {
-        self.0
-            .query(RANDOM)
-            .await
-            .context(GetSnafu)?
-            .take(0)
-            .context(GetSnafu)
+        let mut characters: Vec<Character> = self
+            .all_characters()
+            .await?
+            .into_iter()
+            .filter(Character::is_visible)
+            .collect();
+        let mut rng = nanorand::tls_rng();
+        rng.shuffle(&mut characters);
+        characters.truncate(MAX_RESULTS);
+        Ok(characters)
     }
 
     /// Inserts a character.
-    pub async fn insert_character(
-        &self,
-        character: Character,
-    ) -> Result<Option<Character>, DatabaseError> {
-        self.0
-            .insert(character.id())
-            .content(character)
-            .await
-            .context(InsertSnafu)
+    pub async fn insert_character(&self, character: Character) -> Result<(), DatabaseError> {
+        let write = self.0.rw_transaction().context(InsertSnafu)?;
+        write.upsert(character).context(InsertSnafu)?;
+        write.commit().context(InsertSnafu)
     }
 
-    /// Deletes a character.
+    /// Soft-deletes a character by recording its deleter and the time of deletion.
     pub async fn delete_character<T: Into<UserId>>(
         &self,
-        id: &RecordId,
+        id: &str,
         deleted_by: T,
     ) -> Result<Option<Character>, DatabaseError> {
-        self.0
-            .update(id)
-            .merge(DeletedBy::from(deleted_by.into()))
-            .await
-            .context(DeleteSnafu)
+        let write = self.0.rw_transaction().context(DeleteSnafu)?;
+        let Some(mut character) = write
+            .get()
+            .primary::<Character>(id.to_owned())
+            .context(DeleteSnafu)?
+        else {
+            return Ok(None);
+        };
+        character.mark_deleted(deleted_by.into());
+        write.upsert(character.clone()).context(DeleteSnafu)?;
+        write.commit().context(DeleteSnafu)?;
+        Ok(Some(character))
     }
 
     /// Sets the `next_version` field on the given old character ID to point to the given new character ID.
     pub async fn supersede_character(
         &self,
-        new_id: RecordId,
-        old_id: &RecordId,
+        new_id: String,
+        old_id: &str,
     ) -> Result<Option<Character>, DatabaseError> {
-        self.0
-            .update(old_id)
-            .merge(NextVersion::from(new_id.clone()))
-            .await
+        let write = self.0.rw_transaction().context(UpdateSnafu)?;
+        let mut character = write
+            .get()
+            .primary::<Character>(old_id.to_owned())
             .context(UpdateSnafu)?
             .with_context(|| NoCharacterSnafu {
-                found: new_id.to_string(),
-                span: (0..new_id.to_string().len()),
-            })
+                found: new_id.clone(),
+                span: 0..new_id.len(),
+            })?;
+        character.set_next_version(new_id);
+        write.upsert(character.clone()).context(UpdateSnafu)?;
+        write.commit().context(UpdateSnafu)?;
+        Ok(Some(character))
     }
 
     /// Inserts a list of character pages.
     pub async fn insert_character_pages(
         &self,
         character_page: ViewCharacterPages,
-    ) -> Result<Option<ViewCharacterPages>, DatabaseError> {
-        self.0
-            .insert(character_page.id())
-            .content(character_page)
-            .await
-            .context(InsertSnafu)
+    ) -> Result<(), DatabaseError> {
+        let write = self.0.rw_transaction().context(InsertSnafu)?;
+        write.upsert(character_page).context(InsertSnafu)?;
+        write.commit().context(InsertSnafu)
     }
 
     /// Returns a chat history by its ID.
@@ -165,19 +184,17 @@ impl Database {
         &self,
         id: T,
     ) -> Result<Option<History>, DatabaseError> {
-        self.0
-            .select(RecordId::from(("history", id.into().to_string())))
-            .await
+        let read = self.0.r_transaction().context(GetSnafu)?;
+        read.get()
+            .primary(id.into().to_string())
             .context(GetSnafu)
     }
 
     /// Updates or inserts a chat history.
-    pub async fn upsert_history(&self, history: History) -> Result<Option<History>, DatabaseError> {
-        self.0
-            .upsert(history.id())
-            .content(history)
-            .await
-            .context(InsertSnafu)
+    pub async fn upsert_history(&self, history: History) -> Result<(), DatabaseError> {
+        let write = self.0.rw_transaction().context(InsertSnafu)?;
+        write.upsert(history).context(InsertSnafu)?;
+        write.commit().context(InsertSnafu)
     }
 
     /// Updates or inserts a user's emoji.
@@ -185,87 +202,110 @@ impl Database {
         &self,
         id: T,
         emoji: ReactionType,
-    ) -> Result<Option<UserEmoji>, DatabaseError> {
-        let user_id = id.into();
-        let user_emoji = UserEmoji { emoji, user_id };
-        self.0
-            .upsert(("user_emoji", user_id.to_string()))
-            .content(user_emoji)
-            .await
-            .context(InsertSnafu)
+    ) -> Result<(), DatabaseError> {
+        let user_emoji = UserEmoji {
+            emoji,
+            user_id: id.into().to_string(),
+        };
+        let write = self.0.rw_transaction().context(InsertSnafu)?;
+        write.upsert(user_emoji).context(InsertSnafu)?;
+        write.commit().context(InsertSnafu)
     }
 
     /// Returns all set user emoji.
     pub async fn user_emoji(&self) -> Result<Vec<UserEmoji>, DatabaseError> {
-        self.0.select("user_emoji").await.context(GetSnafu)
+        let read = self.0.r_transaction().context(GetSnafu)?;
+        read.scan()
+            .primary::<UserEmoji>()
+            .context(GetSnafu)?
+            .all()
+            .context(GetSnafu)?
+            .collect::<Result<Vec<UserEmoji>, NativeError>>()
+            .context(GetSnafu)
     }
 
     /// Updates or inserts the bot's AI model settings.
     pub async fn upsert_model_settings(
         &self,
         model_settings: ModelSettings,
-    ) -> Result<Option<ModelSettings>, DatabaseError> {
-        self.0
-            .upsert(("model_settings", "model_settings"))
-            .content(model_settings)
-            .await
-            .context(SetModelSettingsSnafu)
+    ) -> Result<(), DatabaseError> {
+        let stored = GlobalModelSettings {
+            id: SINGLETON_KEY.to_owned(),
+            settings: model_settings,
+        };
+        let write = self.0.rw_transaction().context(SetModelSettingsSnafu)?;
+        write.upsert(stored).context(SetModelSettingsSnafu)?;
+        write.commit().context(SetModelSettingsSnafu)
     }
 
     /// Sets a character's AI model settings override.
     pub async fn set_character_model_settings(
         &self,
-        id: &RecordId,
+        id: &str,
         model_settings: ModelSettings,
     ) -> Result<Option<Character>, DatabaseError> {
-        self.0
-            .update(id)
-            .merge(CharacterModelSettings { model_settings })
-            .await
-            .context(UpdateSnafu)
+        let write = self.0.rw_transaction().context(UpdateSnafu)?;
+        let Some(mut character) = write
+            .get()
+            .primary::<Character>(id.to_owned())
+            .context(UpdateSnafu)?
+        else {
+            return Ok(None);
+        };
+        character.set_model_settings(model_settings);
+        write.upsert(character.clone()).context(UpdateSnafu)?;
+        write.commit().context(UpdateSnafu)?;
+        Ok(Some(character))
     }
 
     /// Returns the bot's AI model settings.
     pub async fn model_settings(&self) -> ModelSettings {
-        self.0
-            .select(("model_settings", "model_settings"))
-            .await
-            .unwrap_or_default()
-            .unwrap_or_default()
+        let Ok(read) = self.0.r_transaction() else {
+            return ModelSettings::default();
+        };
+        read.get()
+            .primary::<GlobalModelSettings>(SINGLETON_KEY.to_owned())
+            .ok()
+            .flatten()
+            .map_or_else(ModelSettings::default, |stored| stored.settings)
     }
 
     /// Returns the bot's pin channel.
     pub async fn pins_channel(&self) -> ChannelId {
-        let pin_channel: PinChannel = self
-            .0
-            .select(("pins_channel_id", "pins_channel_id"))
-            .await
-            .unwrap_or_default()
-            .unwrap_or_default();
-        pin_channel.channel_id
+        let Ok(read) = self.0.r_transaction() else {
+            return ChannelId::default();
+        };
+        read.get()
+            .primary::<PinChannel>(SINGLETON_KEY.to_owned())
+            .ok()
+            .flatten()
+            .map_or_else(ChannelId::default, |pin_channel| pin_channel.channel_id)
     }
 
     /// Updates or inserts the bot's pin channel.
     pub async fn upsert_pin_channel(
         &self,
         channel_id: ChannelId,
-    ) -> Result<Option<ChannelId>, DatabaseError> {
-        self.0
-            .upsert(("pins_channel_id", "pins_channel_id"))
-            .content(PinChannel { channel_id })
-            .await
-            .context(SetPinsChannelSnafu)
-            .map(|option_channel| {
-                option_channel.map(|pin_channel: PinChannel| pin_channel.channel_id)
-            })
+    ) -> Result<ChannelId, DatabaseError> {
+        let pin_channel = PinChannel {
+            id: SINGLETON_KEY.to_owned(),
+            channel_id,
+        };
+        let write = self.0.rw_transaction().context(SetPinsChannelSnafu)?;
+        write.upsert(pin_channel).context(SetPinsChannelSnafu)?;
+        write.commit().context(SetPinsChannelSnafu)?;
+        Ok(channel_id)
     }
 
     /// Returns a user's display name by their Discord user ID.
     pub async fn substitute_name<T: Into<UserId>>(&self, user_id: T) -> String {
-        self.0
-            .select::<Option<UserName>>(("user_name", user_id.into().to_string()))
-            .await
-            .unwrap_or_default()
+        let Ok(read) = self.0.r_transaction() else {
+            return "User".to_owned();
+        };
+        read.get()
+            .primary::<UserName>(user_id.into().to_string())
+            .ok()
+            .flatten()
             .map_or_else(|| "User".to_owned(), |user| user.name)
     }
 
@@ -274,124 +314,87 @@ impl Database {
         &self,
         user_id: T,
         name: String,
-    ) -> Result<Option<UserName>, DatabaseError> {
-        let id = user_id.into();
-        let user_name = UserName { user_id: id, name };
-        self.0
-            .upsert(("user_name", id.to_string()))
-            .content(user_name)
-            .await
-            .context(InsertSnafu)
+    ) -> Result<(), DatabaseError> {
+        let user_name = UserName {
+            user_id: user_id.into().to_string(),
+            name,
+        };
+        let write = self.0.rw_transaction().context(InsertSnafu)?;
+        write.upsert(user_name).context(InsertSnafu)?;
+        write.commit().context(InsertSnafu)
     }
 }
 
-/// The Discord channel where pins should go.
-#[derive(Default, Serialize, Deserialize)]
+/// The Discord channel where pins should go, stored as a singleton.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[native_model(id = 4, version = 1, with = crate::codec::Json)]
+#[native_db]
 pub struct PinChannel {
+    /// The fixed singleton primary key.
+    #[primary_key]
+    id: String,
     /// The Discord channel's id.
     channel_id: ChannelId,
 }
 
-/// A user's display name and Discord user ID.
+/// The bot's AI model settings, stored as a singleton.
 #[derive(Debug, Serialize, Deserialize)]
+#[native_model(id = 5, version = 1, with = crate::codec::Json)]
+#[native_db]
+struct GlobalModelSettings {
+    /// The fixed singleton primary key.
+    #[primary_key]
+    id: String,
+    /// The model settings.
+    settings: ModelSettings,
+}
+
+/// A user's display name, keyed by their Discord user ID.
+#[derive(Debug, Serialize, Deserialize)]
+#[native_model(id = 6, version = 1, with = crate::codec::Json)]
+#[native_db]
 pub struct UserName {
+    /// The user's discord ID, used as the primary key.
+    #[primary_key]
+    pub user_id: String,
     /// The user's set display name.
     pub name: String,
-    /// The user's discord ID.
-    pub user_id: UserId,
 }
 
-// TODO: this should probably be a HashMap<UserId, ReactionType> instead
-/// A user's emoji and Discord user ID.
+/// A user's emoji, keyed by their Discord user ID.
 #[derive(Debug, Serialize, Deserialize)]
+#[native_model(id = 7, version = 1, with = crate::codec::Json)]
+#[native_db]
 pub struct UserEmoji {
+    /// The user's discord ID, used as the primary key.
+    #[primary_key]
+    pub user_id: String,
     /// The user's set emoji.
     pub emoji: ReactionType,
-    /// The user's discord ID.
-    pub user_id: UserId,
-}
-
-/// The timestamp of a deleted character and the Discord user ID of the user who deleted it.
-#[derive(Serialize)]
-struct DeletedBy {
-    /// The user's discord ID.
-    deleted_by: UserId,
-    /// The time the character was deleted.
-    deleted_at: Zoned,
-}
-
-/// The ID of the next version of a character.
-#[derive(Serialize)]
-struct NextVersion {
-    /// The new version's ID.
-    next_version: RecordId,
-}
-
-/// A character's AI model settings override.
-#[derive(Serialize)]
-struct CharacterModelSettings {
-    /// The model settings.
-    model_settings: ModelSettings,
-}
-
-impl From<UserId> for DeletedBy {
-    fn from(deleted_by: UserId) -> Self {
-        let deleted_at = Zoned::now();
-        Self {
-            deleted_by,
-            deleted_at,
-        }
-    }
-}
-
-impl From<RecordId> for NextVersion {
-    fn from(next_version: RecordId) -> Self {
-        Self { next_version }
-    }
 }
 
 /// All errors that can happen when interacting with the database.
 #[derive(Debug, Snafu, Diagnostic)]
 pub enum DatabaseError {
-    /// Connecting to a database failed.
-    #[snafu(display("Could not connect to the database"))]
+    /// Defining a database model failed.
+    #[snafu(display("Could not define a database model"))]
     #[diagnostic(
-        help("Make sure the database is running and available at the given address"),
+        help("This is a programming error: two models likely share a native_model id"),
+        code(database::define_model)
+    )]
+    DefineModel {
+        /// The source of the error.
+        source: NativeError,
+    },
+    /// Opening the database failed.
+    #[snafu(display("Could not open the database"))]
+    #[diagnostic(
+        help("Make sure the database file is accessible and not corrupted"),
         code(database::connect)
     )]
     Connect {
         /// The source of the error.
-        source: surrealdb::Error,
-        /// The address that was tried.
-        #[source_code]
-        found: String,
-        /// The part that was wrong (in practice, the entire address is selected).
-        #[label]
-        span: SourceSpan,
-    },
-    /// Signing in to a remote database failed.
-    #[snafu(display("Could not sign in to the database"))]
-    #[diagnostic(
-        help("Make sure the database has the correct username and password set"),
-        code(database::sign_in)
-    )]
-    SignIn {
-        /// The source of the error.
-        source: surrealdb::Error,
-    },
-    /// Using a namespace or database failed.
-    #[snafu(display("Could not use the namespace {namespace} or database {database}"))]
-    #[diagnostic(
-        help("Make sure the database has the given namespace or database"),
-        code(database::use_namespace_database)
-    )]
-    UseNamespaceDatabase {
-        /// The source of the error.
-        source: surrealdb::Error,
-        /// The namespace that was tried.
-        namespace: String,
-        /// The database that was tried.
-        database: String,
+        source: NativeError,
     },
     /// Getting a record failed.
     #[snafu(display("Kunde inte hämta från databasen: {source}"))]
@@ -401,7 +404,7 @@ pub enum DatabaseError {
     )]
     Get {
         /// The source of the error.
-        source: surrealdb::Error,
+        source: NativeError,
     },
     /// Inserting a record failed.
     #[snafu(display("Kunde inte infoga i databasen: {source}"))]
@@ -411,7 +414,7 @@ pub enum DatabaseError {
     )]
     Insert {
         /// The source of the error.
-        source: surrealdb::Error,
+        source: NativeError,
     },
     /// Deleting a record failed.
     #[snafu(display("Kunde inte ta bort från databasen: {source}"))]
@@ -421,7 +424,7 @@ pub enum DatabaseError {
     )]
     Delete {
         /// The source of the error.
-        source: surrealdb::Error,
+        source: NativeError,
     },
     /// Updating a record failed.
     #[snafu(display("Kunde inte uppdatera databasen: {source}"))]
@@ -431,7 +434,7 @@ pub enum DatabaseError {
     )]
     Update {
         /// The source of the error.
-        source: surrealdb::Error,
+        source: NativeError,
     },
     /// No character by the given ID was found.
     #[snafu(display("Ingen sådan karaktär hittades i databasen: {found}"))]
@@ -455,7 +458,7 @@ pub enum DatabaseError {
     )]
     SetModelSettings {
         /// The source of the error.
-        source: surrealdb::Error,
+        source: NativeError,
     },
     /// Setting the bot's pin Discord channel failed.
     #[snafu(display("Kunde inte spara kanal för pins: {source}"))]
@@ -465,74 +468,6 @@ pub enum DatabaseError {
     )]
     SetPinsChannel {
         /// The source of the error.
-        source: surrealdb::Error,
+        source: NativeError,
     },
 }
-
-/// `SurrealQL` query returning up to 25 characters, sorted by the similarity of the names to the input.
-///
-/// It uses normalized damerau levenshtein distance.
-const MOST_SIMILAR_TO: &str = "
-LET $names = SELECT
-    *,
-    string::distance::normalized_damerau_levenshtein(name, $input) AS similarity
-FROM
-    character
-WHERE
-    deleted_at IS NONE
-    AND next_version IS NONE
-    AND nickname IS NONE
-;
-
-let $nicknames = SELECT
-    *,
-    math::max([
-        string::distance::normalized_damerau_levenshtein(name, $input),
-        string::distance::normalized_damerau_levenshtein(nickname, $input)
-    ]) AS similarity
-FROM
-    character
-WHERE
-    deleted_at IS NONE
-    AND next_version IS NONE
-    AND nickname IS not(NONE)
-;
-
-RETURN (
-    SELECT
-        *
-    FROM
-        array::concat($names, $nicknames)
-    ORDER BY
-        similarity DESC,
-        conversations_had DESC
-    LIMIT 25
-);
-";
-
-/// `SurrealQL` query returning up to 25 characters, sorted randomly.
-const RANDOM: &str = "
-SELECT
-    *
-FROM
-    character
-WHERE
-    deleted_at IS NONE
-    AND next_version IS NONE
-ORDER BY
-    rand()
-LIMIT 25
-";
-
-/// `SurrealQL` query returning up to 25 characters, sorted by how commonly they're used.
-const BY_USAGE: &str = "
-SELECT
-    *
-FROM
-    character
-WHERE
-    deleted_at IS NONE
-    AND next_version IS NONE
-ORDER BY
-    conversations_had DESC;
-";

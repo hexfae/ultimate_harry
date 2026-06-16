@@ -17,7 +17,6 @@ use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
 use serenity::{all::ComponentInteractionDataKind, futures::StreamExt as _};
 use snafu::ResultExt as _;
 use std::time::Instant;
-use surrealdb::RecordId;
 use tokio::time::{MissedTickBehavior, interval};
 
 /// Respond to the history of this message as the given character.
@@ -34,12 +33,9 @@ pub async fn character(
     let Some(selected_char_id) = values.first() else {
         return Ok(());
     };
+    let character_id: &str = selected_char_id;
 
-    let Ok(selected_record_id) = selected_char_id.parse::<RecordId>() else {
-        return Ok(());
-    };
-
-    let Some(new_character) = db.character(&selected_record_id).await? else {
+    let Some(new_character) = db.character(character_id).await? else {
         return Ok(());
     };
 

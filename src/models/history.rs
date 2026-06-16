@@ -3,6 +3,8 @@
 use alloc::borrow::Cow;
 use bon::Builder;
 use core::time::Duration;
+use native_db::{ToKey as _, native_db};
+use native_model::{Model as _, native_model};
 use nonempty::NonEmpty;
 use poise::CreateReply;
 use serde::{Deserialize, Serialize};
@@ -18,7 +20,6 @@ use serenity::{
     },
     small_fixed_array::FixedString,
 };
-use surrealdb::RecordId;
 
 use crate::{
     constants::{CHARACTER_LIMIT, EDIT, NEXT, PIN, PREVIOUS, REDO, UNDO},
@@ -54,10 +55,16 @@ const EMPTY_AVATAR: &str = "https://upload.wikimedia.org/wikipedia/commons/c/ca/
 
 /// A log of messages between the user and a character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
+#[native_model(id = 2, version = 1, with = crate::codec::Json)]
+#[native_db]
 pub struct History {
+    /// The Discord Message ID of this history, used as the primary key.
+    #[primary_key]
+    #[builder(with = |id: MessageId| id.to_string())]
+    id: String,
     /// The ulid ID of the currently responding character.
-    #[builder(with = |id: &RecordId| id.to_owned())]
-    character: RecordId,
+    #[builder(with = |id: &str| id.to_owned())]
+    character: String,
     /// The current responses the user can pick between by "swiping" (pressing next/previous).
     choices: NonEmpty<Message>,
     /// The index of the current response the user has chosen.
@@ -69,11 +76,8 @@ pub struct History {
     /// This is used to create embeds while streaming a response.
     ///
     /// Defaults to true, since if a history is saved, it has finished.
-    #[serde(skip_serializing, default = "default_true")]
+    #[serde(skip, default = "default_true")]
     has_finished: bool,
-    /// The Discord Message ID of this history.
-    #[builder(with = |id: MessageId| RecordId::from(("history", id.to_string())))]
-    id: RecordId,
     /// The previous messages, the history of the chat.
     previous: NonEmpty<Message>,
 }
@@ -173,13 +177,13 @@ impl History {
 
     /// Returns the Discord message ID of this history.
     #[must_use]
-    pub const fn id(&self) -> &RecordId {
+    pub fn id(&self) -> &str {
         &self.id
     }
 
     /// Sets the Discord message ID of this history.
     pub fn set_id<M: Into<MessageId>>(&mut self, id: M) {
-        self.id = RecordId::from(("history", id.into().to_string()));
+        self.id = id.into().to_string();
     }
 
     /// Returns the last message in the history.
@@ -190,12 +194,12 @@ impl History {
 
     /// Returns the character ID of the currently responding character.
     #[must_use]
-    pub const fn character(&self) -> &RecordId {
+    pub fn character(&self) -> &str {
         &self.character
     }
 
     /// Sets the character ID of the currently responding character.
-    pub fn set_character(&mut self, character: RecordId) {
+    pub fn set_character(&mut self, character: String) {
         self.character = character;
     }
 
@@ -640,7 +644,7 @@ fn create_buttons<'a>(
                     options: characters
                         .iter()
                         .map(|char| {
-                            CreateSelectMenuOption::new(char.to_string(), char.id().to_string())
+                            CreateSelectMenuOption::new(char.to_string(), char.id().to_owned())
                         })
                         .collect(),
                 },

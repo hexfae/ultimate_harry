@@ -23,7 +23,6 @@ use poise::{
 };
 use serenity::all::ReactionType;
 use snafu::ResultExt as _;
-use surrealdb::RecordId;
 use tokio::time::sleep;
 
 /// The 4 buttons that are visible on a character deletion embed.
@@ -242,7 +241,7 @@ async fn ask_for_confirmation(
 async fn delete_confirmed(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
-    id: &RecordId,
+    id: &str,
 ) -> AppResult {
     ctx.data().db.delete_character(id, ctx.author()).await?;
 

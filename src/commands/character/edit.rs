@@ -223,7 +223,7 @@ async fn edit_confirmed(
         return Ok(());
     };
 
-    let old_id = character.id().clone();
+    let old_id = character.id().to_owned();
 
     character.edit_from_modals(ctx.author(), modal, second_modal);
     let character_name = character.to_string();
