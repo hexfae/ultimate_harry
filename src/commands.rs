@@ -17,7 +17,14 @@ pub use pin_channel::pin_channel;
 use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse};
 use tracing::warn;
 
-use crate::{Context, models::character::Character};
+use crate::{Context, app_state::AppState, error::AppError, models::character::Character};
+
+/// Returns the full list of the bot's slash commands.
+///
+/// Declared once here so framework setup and per-guild registration cannot drift apart.
+pub fn commands() -> Vec<poise::Command<AppState, AppError>> {
+    vec![character(), chat(), emoji(), model(), pin_channel(), name()]
+}
 
 /// Returns an auto completion response from characters found in the database, sorted by similarity to the input.
 pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {

@@ -16,7 +16,7 @@ mod traits;
 
 use crate::{
     app_state::AppState,
-    commands::{character, chat, emoji, model, name, pin_channel},
+    commands::commands,
     error::AppError,
     events::{EventHandler, on_error},
 };
@@ -59,11 +59,9 @@ async fn main() -> Result<()> {
 
     let app_state = AppState::new().await?;
 
-    let commands = vec![character(), chat(), emoji(), model(), pin_channel(), name()];
-
     let framework = Framework::builder()
         .options(FrameworkOptions {
-            commands,
+            commands: commands(),
             on_error: |error| {
                 Box::pin(async {
                     if let Err(why) = on_error(error).await {

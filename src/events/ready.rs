@@ -1,10 +1,6 @@
 //! The ready event handler for when the bot connects to Discord.
 
-use crate::{
-    AppResult,
-    commands::{character, chat, emoji, model, name, pin_channel},
-    error::RegisterCommandSnafu,
-};
+use crate::{AppResult, commands::commands, error::RegisterCommandSnafu};
 use core::time::Duration;
 use nanorand::{Rng as _, WyRand};
 use poise::{
@@ -28,7 +24,7 @@ use tracing::info;
 pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> AppResult {
     info!("ready");
     let ctx_clone = ctx.clone();
-    let commands = vec![character(), chat(), emoji(), model(), pin_channel(), name()];
+    let commands = commands();
     for guild in &data_about_bot.guilds {
         register_in_guild(&ctx_clone.http, &commands, guild.id)
             .await
