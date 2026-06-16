@@ -345,14 +345,23 @@ impl Database {
 
     /// Returns the bot's AI model settings.
     pub async fn model_settings(&self) -> ModelSettings {
-        let Ok(read) = self.0.r_transaction() else {
-            return ModelSettings::default();
+        let read = match self.0.r_transaction() {
+            Ok(read) => read,
+            Err(why) => {
+                warn!("failed to read model settings, using defaults: {why}");
+                return ModelSettings::default();
+            }
         };
-        read.get()
+        match read
+            .get()
             .primary::<GlobalModelSettings>(SINGLETON_KEY.to_owned())
-            .ok()
-            .flatten()
-            .map_or_else(ModelSettings::default, |stored| stored.settings)
+        {
+            Ok(stored) => stored.map_or_else(ModelSettings::default, |found| found.settings),
+            Err(why) => {
+                warn!("failed to read model settings, using defaults: {why}");
+                ModelSettings::default()
+            }
+        }
     }
 
     /// Returns the character's own model settings, falling back to the
@@ -366,14 +375,22 @@ impl Database {
 
     /// Returns the bot's pin channel.
     pub async fn pins_channel(&self) -> ChannelId {
-        let Ok(read) = self.0.r_transaction() else {
-            return ChannelId::default();
+        let read = match self.0.r_transaction() {
+            Ok(read) => read,
+            Err(why) => {
+                warn!("failed to read pin channel, using default: {why}");
+                return ChannelId::default();
+            }
         };
-        read.get()
-            .primary::<PinChannel>(SINGLETON_KEY.to_owned())
-            .ok()
-            .flatten()
-            .map_or_else(ChannelId::default, |pin_channel| pin_channel.channel_id)
+        match read.get().primary::<PinChannel>(SINGLETON_KEY.to_owned()) {
+            Ok(pin_channel) => {
+                pin_channel.map_or_else(ChannelId::default, |found| found.channel_id)
+            }
+            Err(why) => {
+                warn!("failed to read pin channel, using default: {why}");
+                ChannelId::default()
+            }
+        }
     }
 
     /// Updates or inserts the bot's pin channel.
@@ -393,14 +410,20 @@ impl Database {
 
     /// Returns a user's display name by their Discord user ID.
     pub async fn substitute_name<T: Into<UserId>>(&self, user_id: T) -> String {
-        let Ok(read) = self.0.r_transaction() else {
-            return "User".to_owned();
+        let read = match self.0.r_transaction() {
+            Ok(read) => read,
+            Err(why) => {
+                warn!("failed to read substitute name, using default: {why}");
+                return "User".to_owned();
+            }
         };
-        read.get()
-            .primary::<UserName>(user_id.into().to_string())
-            .ok()
-            .flatten()
-            .map_or_else(|| "User".to_owned(), |user| user.name)
+        match read.get().primary::<UserName>(user_id.into().to_string()) {
+            Ok(user) => user.map_or_else(|| "User".to_owned(), |found| found.name),
+            Err(why) => {
+                warn!("failed to read substitute name, using default: {why}");
+                "User".to_owned()
+            }
+        }
     }
 
     /// Updates or inserts a user's display name by their Discord user ID.
