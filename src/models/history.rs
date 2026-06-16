@@ -218,7 +218,7 @@ impl History {
     ///
     /// Callers must ensure this is not invoked on the last choice; advancing off
     /// the end is handled separately as a swipe-to-generate.
-    pub fn next(&mut self) {
+    pub const fn next(&mut self) {
         self.current = self.current.saturating_add(1);
     }
 
