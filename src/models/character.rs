@@ -451,61 +451,65 @@ impl Character {
         footer_text: F,
         db: &Database,
     ) -> CreateEmbed<'static> {
+        // resolve everything that borrows `self` before moving fields out of it
+        let title = self.to_string();
+        let conversations = self.formatted_conversations_had(db).await;
+        let creator_name = db.substitute_name(self.creator).await;
+        let editor_name = match &self.latest_editor {
+            Some(editor_id) => Some(db.substitute_name(editor_id).await),
+            None => None,
+        };
+        let created = self.created_at.strftime(GOOD_DATE_FORMAT).to_string();
+        let edited = self
+            .edited_at
+            .as_ref()
+            .map(|time| time.strftime(GOOD_DATE_FORMAT).to_string());
+
         let mut embed = CreateEmbed::new()
-            .title(self.to_string())
-            .field("Hälsning", self.greeting.clone(), true)
-            .field(
-                "Konversationer",
-                self.formatted_conversations_had(db).await,
-                true,
-            )
+            .title(title)
+            .field("Hälsning", self.greeting, true)
+            .field("Konversationer", conversations, true)
             .field("Version", self.version.saturating_add(1).to_string(), true);
 
-        if let Some(nickname) = self.nickname.clone() {
+        if let Some(nickname) = self.nickname {
             embed = embed.field("Smeknamn", nickname, true);
         }
 
-        if let Some(personality) = self.personality.clone() {
+        if let Some(personality) = self.personality {
             embed = embed.field("Personlighet", personality, true);
         }
 
-        if let Some(prompt) = self.prompt.clone() {
+        if let Some(prompt) = self.prompt {
             embed = embed.field("Prompt", prompt, true);
         }
 
-        if let Some(system_prompt) = self.system_prompt.clone() {
+        if let Some(system_prompt) = self.system_prompt {
             embed = embed.field("System Prompt", system_prompt, true);
         }
 
-        if let Some(scenario) = self.scenario.clone() {
+        if let Some(scenario) = self.scenario {
             embed = embed.field("Scenario", scenario, true);
         }
 
-        embed = embed.field("Skapare", db.substitute_name(self.creator).await, true);
+        embed = embed.field("Skapare", creator_name, true);
 
-        if let Some(editor_id) = &self.latest_editor {
-            let name = db.substitute_name(editor_id).await;
+        if let Some(name) = editor_name {
             embed = embed.field("Redigerare", name, true);
         }
 
-        embed = embed.field(
-            "Skapad",
-            self.created_at.strftime(GOOD_DATE_FORMAT).to_string(),
-            false,
-        );
-        if let Some(time) = &self.edited_at {
-            let edited = time.strftime(GOOD_DATE_FORMAT).to_string();
-            embed = embed.field("Redigerad", edited, false);
+        embed = embed.field("Skapad", created, false);
+        if let Some(edited_text) = edited {
+            embed = embed.field("Redigerad", edited_text, false);
         }
         embed = embed
-            .field("ID", self.id.clone(), false)
+            .field("ID", self.id, false)
             .footer(CreateEmbedFooter::new(footer_text.into()));
 
-        if let Some(avatar) = self.avatar.clone() {
+        if let Some(avatar) = self.avatar {
             embed = embed.thumbnail(avatar);
         }
-        if let Some(color) = &self.color {
-            embed = embed.color(*color);
+        if let Some(color) = self.color {
+            embed = embed.color(color);
         }
         if let Some(description) = self.description {
             embed = embed.description(description);
