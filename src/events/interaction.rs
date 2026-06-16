@@ -4,11 +4,9 @@ mod character;
 mod edit;
 mod next;
 mod pin;
-mod previous;
-mod redo;
-mod undo;
+mod swipe;
 
-use crate::{AppResult, database::Database};
+use crate::{AppResult, database::Database, models::history::History};
 use core::fmt::{self, Display, Formatter};
 use miette::{Diagnostic, Result, SourceSpan};
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
@@ -18,9 +16,7 @@ use character::character;
 use edit::edit;
 use next::next;
 use pin::pin;
-use previous::previous;
-use redo::redo;
-use undo::undo;
+use swipe::swipe;
 
 /// An interaction that happened on Ultimate Harry.
 #[derive(Debug)]
@@ -85,11 +81,11 @@ pub async fn component(
     let (id, kind) = (ultimate_interaction.id, ultimate_interaction.kind);
 
     match kind {
-        InteractionKind::Previous => previous(ctx, interaction, id, db).await?,
+        InteractionKind::Previous => swipe(ctx, interaction, id, db, History::previous).await?,
         InteractionKind::Next => next(ctx, interaction, id, db).await?,
         InteractionKind::Edit => edit(ctx, interaction, id, db).await?,
-        InteractionKind::Undo => undo(ctx, interaction, id, db).await?,
-        InteractionKind::Redo => redo(ctx, interaction, id, db).await?,
+        InteractionKind::Undo => swipe(ctx, interaction, id, db, History::undo).await?,
+        InteractionKind::Redo => swipe(ctx, interaction, id, db, History::redo).await?,
         InteractionKind::Pin => pin(ctx, interaction, id, db).await?,
         InteractionKind::Character => character(ctx, interaction, id, db).await?,
         _ => {} // handled elsewhere
