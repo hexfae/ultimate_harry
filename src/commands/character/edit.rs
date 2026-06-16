@@ -54,7 +54,7 @@ pub async fn edit(
             let conversations_had = character.conversations_had();
             let footer_text = format!(
                 "{}/{pages} | {conversations_had} konversationer{similarity}",
-                index.saturating_sub(1)
+                index.saturating_add(1)
             );
             (character, footer_text)
         })
