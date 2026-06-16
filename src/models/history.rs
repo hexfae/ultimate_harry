@@ -578,8 +578,9 @@ impl History {
             .into()
         };
 
-        // content must contain at least 1 character, but we want it to remain visually empty
-        let text = if content.is_empty() { " " } else { content };
+        // discord rejects a whitespace-only text display, so fall back to a
+        // visible placeholder when there is no content
+        let text = if content.is_empty() { "…" } else { content };
         let (first, second) = match text.split_once('\n') {
             Some((first, second)) => (first, Some(second)),
             None => (text, None),
