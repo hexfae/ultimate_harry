@@ -58,7 +58,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         character: &character,
         message: &mut bot_message,
         db,
-        options: options.clone(),
+        options: &options,
     };
     let total = stream_into(&requester, &context, None, now, &mut sink).await?;
 

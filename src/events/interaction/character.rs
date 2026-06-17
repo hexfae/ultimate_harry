@@ -80,7 +80,7 @@ pub async fn character(
         character: &new_character,
         message: &mut response_message,
         db,
-        options: options.clone(),
+        options: &options,
     };
     let total = stream_into(&requester, &context, Some(prompt), now, &mut sink).await?;
 

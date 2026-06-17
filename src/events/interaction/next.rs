@@ -50,7 +50,7 @@ pub async fn next(
             interaction,
             id,
             db,
-            options: options.clone(),
+            options: &options,
         };
         let total = stream_into(&requester, &context, None, now, &mut sink).await?;
 
