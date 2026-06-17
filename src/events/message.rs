@@ -15,6 +15,7 @@ use poise::serenity_prelude::{Context, Message};
 use serenity::all::MessageId;
 use snafu::ResultExt as _;
 use std::time::Instant;
+use tracing::warn;
 
 /// Handle a new message being sent.
 pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> AppResult {
@@ -134,6 +135,11 @@ pub async fn history_and_character_of_replied_to(
         return Ok(None);
     };
     let Some(character) = db.character(history.character()).await? else {
+        warn!(
+            "history {} references a missing character {}",
+            history.id(),
+            history.character()
+        );
         return Ok(None);
     };
     Ok(Some((history, character)))
@@ -148,6 +154,11 @@ pub async fn history_and_character_of(
         return Ok(None);
     };
     let Some(character) = db.character(history.character()).await? else {
+        warn!(
+            "history {} references a missing character {}",
+            history.id(),
+            history.character()
+        );
         return Ok(None);
     };
     Ok(Some((history, character)))
