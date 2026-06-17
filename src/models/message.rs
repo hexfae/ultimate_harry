@@ -296,34 +296,43 @@ impl From<(Character, String, Duration)> for Message {
     }
 }
 
+/// Splits `text` into one [`Part`] per line, taking each line's role from its
+/// `name: ` prefix (`ai` maps to assistant, `system` to system, anything else to
+/// the user), or attributing the whole line to `author` when it has no prefix.
+/// Every line is [`Role::Assistant`] when `from_bot` is set.
+fn parts_from_lines(text: &str, author: &str, from_bot: bool) -> Vec<Part> {
+    text.lines()
+        .map(|line| {
+            let (name, content) = if let Some((name, _)) = line.split_once(": ") {
+                (name.to_owned(), line.to_owned())
+            } else {
+                (author.to_owned(), format!("{author}: {line}"))
+            };
+            let role = if from_bot || name.to_lowercase() == "ai" {
+                Role::Assistant
+            } else if name.to_lowercase() == "system" {
+                Role::System
+            } else {
+                Role::User
+            };
+            Part::builder()
+                .name(name)
+                .content(content)
+                .role(role)
+                .build()
+        })
+        .collect()
+}
+
 impl From<(&DiscordMessage, String)> for Message {
     fn from((message, author): (&DiscordMessage, String)) -> Self {
-        let parts = message
-            .content
-            .lines()
-            .map(|line| {
-                let (name, content) = if let Some((name, _)) = line.split_once(": ") {
-                    (name.to_owned(), line.to_owned())
-                } else {
-                    (author.clone(), format!("{author}: {line}"))
-                };
-                let role = if message.author.bot() || name.to_lowercase() == "ai" {
-                    Role::Assistant
-                } else if name.to_lowercase() == "system" {
-                    Role::System
-                } else {
-                    Role::User
-                };
-                Part::builder()
-                    .name(name)
-                    .content(content)
-                    .role(role)
-                    .build()
-            })
-            .collect::<Vec<Part>>();
         Self::builder()
             .id(message.id)
-            .parts(parts)
+            .parts(parts_from_lines(
+                &message.content,
+                &author,
+                message.author.bot(),
+            ))
             .attachments(&message.attachments)
             .build()
     }
@@ -354,7 +363,7 @@ impl From<(String, String, Role)> for Parts {
 /// Tests for message revision navigation and conversion.
 #[cfg(test)]
 mod tests {
-    use super::{Message, Part, Parts, Role};
+    use super::{Message, Part, Parts, Role, parts_from_lines};
     use rig::message::Message as RigMessage;
 
     /// Builds a system message edited twice, leaving two revisions on top of the original.
@@ -480,6 +489,93 @@ mod tests {
         assert!(
             empty.head().content().is_empty(),
             "an empty part list falls back to a blank part"
+        );
+    }
+
+    /// A prefixed line keeps its whole text as content and reads its role from the prefix.
+    #[test]
+    fn prefixed_lines_take_their_role_from_the_name() {
+        let parts = parts_from_lines("system: be terse\nai: sure\nAlice: hi", "Bob", false);
+        assert_eq!(parts.len(), 3, "one part per line");
+
+        let first = parts.first();
+        assert_eq!(
+            first.map(|part| part.name.as_str()),
+            Some("system"),
+            "the prefix becomes the name"
+        );
+        assert_eq!(
+            first.map(|part| part.content.as_str()),
+            Some("system: be terse"),
+            "the whole prefixed line is kept as content"
+        );
+        assert!(
+            matches!(first.map(|part| part.role), Some(Role::System)),
+            "a system prefix maps to the system role"
+        );
+        assert!(
+            matches!(parts.get(1).map(|part| part.role), Some(Role::Assistant)),
+            "an ai prefix maps to the assistant role"
+        );
+        assert!(
+            matches!(parts.get(2).map(|part| part.role), Some(Role::User)),
+            "any other prefix maps to the user role"
+        );
+    }
+
+    /// An unprefixed line is attributed to the author and prefixed with their name.
+    #[test]
+    fn unprefixed_lines_are_attributed_to_the_author() {
+        let parts = parts_from_lines("hello", "Bob", false);
+        assert_eq!(parts.len(), 1, "a single line yields a single part");
+
+        let first = parts.first();
+        assert_eq!(
+            first.map(|part| part.name.as_str()),
+            Some("Bob"),
+            "the author becomes the name"
+        );
+        assert_eq!(
+            first.map(|part| part.content.as_str()),
+            Some("Bob: hello"),
+            "the author name is prefixed onto the content"
+        );
+        assert!(
+            matches!(first.map(|part| part.role), Some(Role::User)),
+            "an author line defaults to the user role"
+        );
+    }
+
+    /// A bot author forces every line to the assistant role regardless of any prefix.
+    #[test]
+    fn bot_author_forces_the_assistant_role() {
+        let parts = parts_from_lines("system: still assistant\nplain line", "Harry", true);
+        assert!(
+            parts.iter().all(|part| matches!(part.role, Role::Assistant)),
+            "every line from a bot author is an assistant part"
+        );
+    }
+
+    /// A mid-line ": " is still parsed as a prefix, splitting name from the kept content.
+    #[test]
+    fn a_mid_line_colon_is_parsed_as_a_prefix() {
+        let parts = parts_from_lines("I said: hi", "Bob", false);
+        assert_eq!(parts.len(), 1, "a single line yields a single part");
+
+        let first = parts.first();
+        assert_eq!(
+            first.map(|part| part.name.as_str()),
+            Some("I said"),
+            "the text before the first colon-space becomes the name"
+        );
+        assert_eq!(
+            first.map(|part| part.content.as_str()),
+            Some("I said: hi"),
+            "the whole line is still kept as content"
+        );
+        assert!(
+            matches!(first.map(|part| part.role), Some(Role::User)),
+            "an unrecognized prefix defaults to the user role"
         );
     }
 }
