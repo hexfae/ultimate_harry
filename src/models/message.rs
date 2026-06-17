@@ -361,10 +361,11 @@ impl From<(String, String, Role)> for Parts {
     }
 }
 
-/// Tests for message revision navigation.
+/// Tests for message revision navigation and conversion.
 #[cfg(test)]
 mod tests {
-    use super::Message;
+    use super::{Message, Part, Parts, Role};
+    use rig::message::Message as RigMessage;
 
     /// Builds a system message edited twice, leaving two revisions on top of the original.
     fn message_with_two_edits() -> Message {
@@ -435,5 +436,60 @@ mod tests {
         assert_eq!(message.revision(), 1, "redo steps forward one revision");
         message.redo();
         assert_eq!(message.revision(), 2, "redo reaches the newest revision");
+    }
+
+    /// Each part's role maps to the matching rig message variant.
+    #[test]
+    fn rig_messages_map_each_part_role() {
+        let message = Message::builder()
+            .parts(vec![
+                Part::builder()
+                    .name("System".to_owned())
+                    .content("sys".to_owned())
+                    .role(Role::System)
+                    .build(),
+                Part::builder()
+                    .name("Bot".to_owned())
+                    .content("reply".to_owned())
+                    .role(Role::Assistant)
+                    .build(),
+                Part::builder()
+                    .name("Alice".to_owned())
+                    .content("hi".to_owned())
+                    .role(Role::User)
+                    .build(),
+            ])
+            .build();
+        let rig_messages = message.to_rig_messages();
+        assert_eq!(rig_messages.len(), 3, "each part maps to one rig message");
+        assert!(
+            matches!(rig_messages.first(), Some(RigMessage::System { .. })),
+            "a system part maps to a system message"
+        );
+        assert!(
+            matches!(rig_messages.get(1), Some(RigMessage::Assistant { .. })),
+            "an assistant part maps to an assistant message"
+        );
+        assert!(
+            matches!(rig_messages.get(2), Some(RigMessage::User { .. })),
+            "a user part maps to a user message"
+        );
+    }
+
+    /// A single-part conversion keeps the content, while an empty list falls back to a blank part.
+    #[test]
+    fn parts_conversions_preserve_content_or_blank() {
+        let single: Parts = ("Alice".to_owned(), "hi".to_owned(), Role::User).into();
+        assert_eq!(
+            single.head().content(),
+            "hi",
+            "a single-part conversion keeps the content"
+        );
+
+        let empty: Parts = Vec::<Part>::new().into();
+        assert!(
+            empty.head().content().is_empty(),
+            "an empty part list falls back to a blank part"
+        );
     }
 }
