@@ -12,8 +12,9 @@ use crate::{
     models::{character::Character, history::History},
 };
 use poise::serenity_prelude::{Context, Message};
-use serenity::all::MessageId;
+use serenity::all::{MessageId, ReactionType};
 use snafu::ResultExt as _;
+use alloc::collections::BTreeMap;
 use std::time::Instant;
 use tracing::warn;
 
@@ -85,11 +86,16 @@ async fn react_to_mentions_and_replies(
     new_message: &Message,
     db: &Database,
 ) -> AppResult {
-    let all_emoji = db.user_emoji().await?;
+    let all_emoji: BTreeMap<String, ReactionType> = db
+        .user_emoji()
+        .await?
+        .into_iter()
+        .map(|user_emoji| (user_emoji.user_id, user_emoji.emoji))
+        .collect();
     if new_message.mention_everyone() {
-        for user_emoji in &all_emoji {
+        for emoji in all_emoji.values() {
             new_message
-                .react(&ctx.http, user_emoji.emoji.clone())
+                .react(&ctx.http, emoji.clone())
                 .await
                 .context(ReactSnafu)?;
         }
@@ -99,22 +105,17 @@ async fn react_to_mentions_and_replies(
         return Ok(());
     }
     if let Some(ref replied_to) = new_message.referenced_message
-        && let Some(user_emoji) = all_emoji
-            .iter()
-            .find(|emoji| emoji.user_id == replied_to.author.id.to_string())
+        && let Some(emoji) = all_emoji.get(&replied_to.author.id.to_string())
     {
         new_message
-            .react(&ctx.http, user_emoji.emoji.clone())
+            .react(&ctx.http, emoji.clone())
             .await
             .context(ReactSnafu)?;
     }
     for mention in &new_message.mentions {
-        if let Some(user_emoji) = all_emoji
-            .iter()
-            .find(|emoji| emoji.user_id == mention.id.to_string())
-        {
+        if let Some(emoji) = all_emoji.get(&mention.id.to_string()) {
             new_message
-                .react(&ctx.http, user_emoji.emoji.clone())
+                .react(&ctx.http, emoji.clone())
                 .await
                 .context(ReactSnafu)?;
         }
