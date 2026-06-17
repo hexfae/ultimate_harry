@@ -42,20 +42,17 @@ use native_model::{Model as _, native_model};
 use nonempty::NonEmpty;
 use poise::CreateReply;
 use serde::{Deserialize, Serialize};
-use serenity::{
-    all::{
-        ButtonStyle, CreateActionRow, CreateAllowedMentions, CreateButton, CreateComponent,
-        CreateContainer, CreateContainerComponent, CreateEmbed, CreateEmbedFooter,
-        CreateInteractionResponse, CreateInteractionResponseMessage, CreateMessage, CreateSection,
-        CreateSectionAccessory, CreateSectionComponent, CreateSelectMenu, CreateSelectMenuKind,
-        CreateSelectMenuOption, CreateTextDisplay, CreateThumbnail, CreateUnfurledMediaItem,
-        EditInteractionResponse, EditMessage, Message as DiscordMessage, MessageFlags, MessageId,
-        ReactionType, UserId,
-    },
-    small_fixed_array::FixedString,
+use serenity::all::{
+    CreateActionRow, CreateAllowedMentions, CreateComponent, CreateContainer,
+    CreateContainerComponent, CreateEmbed, CreateEmbedFooter, CreateInteractionResponse,
+    CreateInteractionResponseMessage, CreateMessage, CreateSection, CreateSectionAccessory,
+    CreateSectionComponent, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption,
+    CreateTextDisplay, CreateThumbnail, CreateUnfurledMediaItem, EditInteractionResponse,
+    EditMessage, Message as DiscordMessage, MessageFlags, MessageId, UserId,
 };
 
 use crate::{
+    components::emoji_button,
     constants::{CHARACTER_LIMIT, EDIT, NEXT, PIN, PREVIOUS, REDO, UNDO},
     database::Database,
     events::interaction::InteractionKind,
@@ -685,16 +682,16 @@ fn create_buttons<'a>(
     let mut components = vec![
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
             vec![
-                create_button(prev_msg_id, PREVIOUS, !finished || !previous),
-                create_button(next_msg_id, NEXT, !finished),
-                create_button(edit_msg_id, EDIT, !finished),
-                create_button(undo_id, UNDO, !edit),
-                create_button(redo_id, REDO, !edit),
+                emoji_button(prev_msg_id, PREVIOUS).disabled(!finished || !previous),
+                emoji_button(next_msg_id, NEXT).disabled(!finished),
+                emoji_button(edit_msg_id, EDIT).disabled(!finished),
+                emoji_button(undo_id, UNDO).disabled(!edit),
+                emoji_button(redo_id, REDO).disabled(!edit),
             ]
             .into(),
         )),
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
-            vec![create_button(pin_id, PIN, !finished)].into(),
+            vec![emoji_button(pin_id, PIN).disabled(!finished)].into(),
         )),
     ];
     if !options.is_empty() {
@@ -716,14 +713,6 @@ fn create_buttons<'a>(
         ));
     }
     components.into()
-}
-
-/// Creates a single button component.
-fn create_button(custom_id: String, emoji: &str, disabled: bool) -> CreateButton<'_> {
-    CreateButton::new(custom_id)
-        .disabled(disabled)
-        .style(ButtonStyle::Secondary)
-        .emoji(ReactionType::Unicode(FixedString::from_str_trunc(emoji)))
 }
 
 /// Creates a new [`History`] from a character, message ID, and user ID.

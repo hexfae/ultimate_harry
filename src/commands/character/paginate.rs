@@ -10,6 +10,7 @@
 
 use crate::{
     AppResult, Context,
+    components::emoji_button,
     constants::{CANCEL, NEXT, PREVIOUS},
     error::{
         DeleteMessageSnafu, DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu,
@@ -26,9 +27,8 @@ use nonempty::NonEmpty;
 use poise::{
     CreateReply, ReplyHandle,
     serenity_prelude::{
-        ButtonStyle, ComponentInteraction, ComponentInteractionCollector, CreateActionRow,
-        CreateButton, CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage,
-        ReactionType,
+        ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateComponent,
+        CreateInteractionResponse, CreateInteractionResponseMessage,
         small_fixed_array::{FixedArray, FixedString},
     },
 };
@@ -247,13 +247,6 @@ fn create_buttons(
         buttons.into(),
     ))]
     .into()
-}
-
-/// Builds a secondary-style button with the given custom ID and unicode emoji.
-fn emoji_button(custom_id: String, emoji: &'static str) -> CreateButton<'static> {
-    CreateButton::new(custom_id)
-        .emoji(ReactionType::Unicode(FixedString::from_static_trunc(emoji)))
-        .style(ButtonStyle::Secondary)
 }
 
 /// Sends a cancellation message in response to `interaction`, then deletes it 5 seconds later.
