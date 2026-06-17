@@ -88,7 +88,7 @@ pub async fn component(
         InteractionKind::Redo => swipe(ctx, interaction, id, db, History::redo).await?,
         InteractionKind::Pin => pin(ctx, interaction, id, db).await?,
         InteractionKind::Character => character(ctx, interaction, id, db).await?,
-        _ => {} // handled elsewhere
+        InteractionKind::Confirm | InteractionKind::Cancel => {}
     }
     Ok(())
 }
