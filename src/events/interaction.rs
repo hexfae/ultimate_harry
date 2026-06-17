@@ -122,6 +122,15 @@ impl InteractionKind {
             Self::Cancel => "canc",
         }
     }
+
+    /// Builds the component `custom_id` (`<message_id><4-char tag>`) for this
+    /// kind on the message with `into_id`, the inverse of the decode in
+    /// [`Interaction::try_from`].
+    #[must_use]
+    pub fn custom_id<T: Into<u64>>(&self, into_id: T) -> String {
+        let id: u64 = into_id.into();
+        format!("{id}{self}")
+    }
 }
 
 impl Display for InteractionKind {

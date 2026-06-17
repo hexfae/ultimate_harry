@@ -674,13 +674,13 @@ fn create_buttons<'a>(
     edit: bool,
     options: &[CharacterOption],
 ) -> Cow<'a, [CreateContainerComponent<'a>]> {
-    let prev_msg_id = format!("{id}{}", InteractionKind::Previous);
-    let next_msg_id = format!("{id}{}", InteractionKind::Next);
-    let edit_msg_id = format!("{id}{}", InteractionKind::Edit);
-    let undo_id = format!("{id}{}", InteractionKind::Undo);
-    let redo_id = format!("{id}{}", InteractionKind::Redo);
-    let pin_id = format!("{id}{}", InteractionKind::Pin);
-    let char_id = format!("{id}{}", InteractionKind::Character);
+    let prev_msg_id = InteractionKind::Previous.custom_id(id);
+    let next_msg_id = InteractionKind::Next.custom_id(id);
+    let edit_msg_id = InteractionKind::Edit.custom_id(id);
+    let undo_id = InteractionKind::Undo.custom_id(id);
+    let redo_id = InteractionKind::Redo.custom_id(id);
+    let pin_id = InteractionKind::Pin.custom_id(id);
+    let char_id = InteractionKind::Character.custom_id(id);
 
     let mut components = vec![
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(

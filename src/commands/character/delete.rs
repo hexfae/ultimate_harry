@@ -40,7 +40,7 @@ async fn confirm_deletion(
     interaction: ComponentInteraction,
     character: Character,
 ) -> AppResult {
-    let confirm_id = format!("{}{}", ctx.id(), InteractionKind::Confirm);
+    let confirm_id = InteractionKind::Confirm.custom_id(ctx.id());
 
     let Some(response) = ask_for_confirmation(ctx, interaction).await? else {
         return Ok(());
@@ -65,8 +65,8 @@ async fn ask_for_confirmation(
         .context(SendResponseSnafu)?;
 
     let id = ctx.id();
-    let confirm_id = format!("{id}{}", InteractionKind::Confirm);
-    let cancel_id = format!("{id}{}", InteractionKind::Cancel);
+    let confirm_id = InteractionKind::Confirm.custom_id(id);
+    let cancel_id = InteractionKind::Cancel.custom_id(id);
 
     Ok(ComponentInteractionCollector::new(ctx.serenity_context())
         .author_id(ctx.author().id)

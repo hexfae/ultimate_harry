@@ -553,9 +553,9 @@ fn validate_url(maybe_url: Option<String>) -> Option<String> {
 
 /// Creates confirmation buttons with "confirm" and "cancel" actions.
 fn create_confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
-    let id = into_id.into();
-    let confirm_id = format!("{id}{}", InteractionKind::Confirm);
-    let cancel_id = format!("{id}{}", InteractionKind::Cancel);
+    let id: u64 = into_id.into();
+    let confirm_id = InteractionKind::Confirm.custom_id(id);
+    let cancel_id = InteractionKind::Cancel.custom_id(id);
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         vec![
             CreateButton::new(confirm_id)

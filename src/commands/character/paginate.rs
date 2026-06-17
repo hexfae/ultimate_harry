@@ -236,16 +236,13 @@ fn create_buttons(
 ) -> Cow<'static, [CreateComponent<'static>]> {
     let mut buttons = Vec::new();
     if let Some(emoji) = action_emoji {
-        buttons.push(emoji_button(
-            format!("{id}{}", InteractionKind::Confirm),
-            emoji,
-        ));
-        buttons.push(emoji_button(format!("{id}{}", InteractionKind::Cancel), CANCEL));
+        buttons.push(emoji_button(InteractionKind::Confirm.custom_id(id), emoji));
+        buttons.push(emoji_button(InteractionKind::Cancel.custom_id(id), CANCEL));
     }
     buttons.push(
-        emoji_button(format!("{id}{}", InteractionKind::Previous), PREVIOUS).disabled(nav_disabled),
+        emoji_button(InteractionKind::Previous.custom_id(id), PREVIOUS).disabled(nav_disabled),
     );
-    buttons.push(emoji_button(format!("{id}{}", InteractionKind::Next), NEXT).disabled(nav_disabled));
+    buttons.push(emoji_button(InteractionKind::Next.custom_id(id), NEXT).disabled(nav_disabled));
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         buttons.into(),
     ))]
