@@ -36,6 +36,23 @@ use crate::{
 /// See [`jiff::fmt::strtime`] for formatting details.
 const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %T | %F";
 
+/// Discord's per-field value limit for embeds; longer values are rejected.
+const FIELD_VALUE_LIMIT: usize = 1024;
+
+/// Truncates a character field to Discord's embed field value limit, cutting on
+/// a character boundary and appending an ellipsis when anything was removed.
+fn truncate_field(value: String) -> String {
+    if value.chars().count() <= FIELD_VALUE_LIMIT {
+        return value;
+    }
+    let mut truncated: String = value
+        .chars()
+        .take(FIELD_VALUE_LIMIT.saturating_sub(1))
+        .collect();
+    truncated.push('…');
+    truncated
+}
+
 /// A character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 #[native_model(id = 1, version = 1, with = crate::codec::Json)]
@@ -479,28 +496,28 @@ impl Character {
 
         let mut embed = CreateEmbed::new()
             .title(title)
-            .field("Hälsning", self.greeting, true)
+            .field("Hälsning", truncate_field(self.greeting), true)
             .field("Konversationer", conversations, true)
             .field("Version", self.version.saturating_add(1).to_string(), true);
 
         if let Some(nickname) = self.nickname {
-            embed = embed.field("Smeknamn", nickname, true);
+            embed = embed.field("Smeknamn", truncate_field(nickname), true);
         }
 
         if let Some(personality) = self.personality {
-            embed = embed.field("Personlighet", personality, true);
+            embed = embed.field("Personlighet", truncate_field(personality), true);
         }
 
         if let Some(prompt) = self.prompt {
-            embed = embed.field("Prompt", prompt, true);
+            embed = embed.field("Prompt", truncate_field(prompt), true);
         }
 
         if let Some(system_prompt) = self.system_prompt {
-            embed = embed.field("System Prompt", system_prompt, true);
+            embed = embed.field("System Prompt", truncate_field(system_prompt), true);
         }
 
         if let Some(scenario) = self.scenario {
-            embed = embed.field("Scenario", scenario, true);
+            embed = embed.field("Scenario", truncate_field(scenario), true);
         }
 
         embed = embed.field("Skapare", creator_name, true);
