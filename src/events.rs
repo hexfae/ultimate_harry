@@ -36,7 +36,12 @@ impl EventHandlerTrait for EventHandler {
                 data.tasks.clone().spawn(async move {
                     let state: Arc<AppState> = reply_ctx.data();
                     if let Err(why) = message::message(&reply_ctx, &user_message, &state.db).await {
-                        error!("in message handler: {why:?}");
+                        error!(
+                            message_id = %user_message.id,
+                            channel_id = %user_message.channel_id,
+                            user_id = %user_message.author.id,
+                            "in message handler: {why:?}"
+                        );
                     }
                 });
             }
@@ -49,7 +54,13 @@ impl EventHandlerTrait for EventHandler {
                 data.tasks.clone().spawn(async move {
                     let state: Arc<AppState> = reply_ctx.data();
                     if let Err(why) = interaction::component(&reply_ctx, &pressed, &state.db).await {
-                        error!("in interaction handler: {why:?}");
+                        error!(
+                            custom_id = %pressed.data.custom_id,
+                            message_id = %pressed.message.id,
+                            channel_id = %pressed.message.channel_id,
+                            user_id = %pressed.user.id,
+                            "in interaction handler: {why:?}"
+                        );
                     }
                 });
             }
