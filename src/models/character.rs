@@ -361,6 +361,12 @@ impl Character {
         self.model_settings.clone()
     }
 
+    /// Returns whether the character has its own model settings override.
+    #[must_use]
+    pub const fn has_model_settings(&self) -> bool {
+        self.model_settings.is_some()
+    }
+
     /// Sets the character's model settings override.
     pub fn set_model_settings(&mut self, model_settings: ModelSettings) {
         self.model_settings = Some(model_settings);

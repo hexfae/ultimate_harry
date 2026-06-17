@@ -45,6 +45,20 @@ pub struct ModelSettings {
 }
 
 impl ModelSettings {
+    /// Returns a Swedish summary of these settings, reporting only whether an API key is set.
+    #[must_use]
+    pub fn summary(&self) -> String {
+        let api_key = if self.api_key.is_empty() {
+            "inte inställd"
+        } else {
+            "inställd"
+        };
+        format!(
+            "modell: {}\ntemperatur: {}\napi-nyckel: {api_key}",
+            self.model, self.temperature
+        )
+    }
+
     /// Overrides any field for which a new value is supplied, leaving the rest untouched.
     pub fn apply_overrides(
         &mut self,

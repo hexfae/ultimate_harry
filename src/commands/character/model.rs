@@ -34,6 +34,17 @@ pub async fn model(
     };
 
     let mut model_settings = db.resolved_model_settings(character).await;
+    if model.is_none() && api_key.is_none() && temperature.is_none() {
+        let scope = if character.has_model_settings() {
+            "egna inställningar"
+        } else {
+            "ärvda globala inställningar"
+        };
+        ctx.say_ephemeral(format!("{}\n*({scope})*", model_settings.summary()))
+            .await
+            .context(SendMessageSnafu)?;
+        return Ok(());
+    }
     model_settings.apply_overrides(model, api_key, temperature);
     db.set_character_model_settings(character.id(), model_settings)
         .await?;

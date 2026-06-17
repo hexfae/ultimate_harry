@@ -18,6 +18,12 @@ pub async fn model(
     temperature: Option<f32>,
 ) -> AppResult {
     let mut model_settings = ctx.data().db.model_settings().await;
+    if model.is_none() && api_key.is_none() && temperature.is_none() {
+        ctx.say_ephemeral(model_settings.summary())
+            .await
+            .context(SendMessageSnafu)?;
+        return Ok(());
+    }
     model_settings.apply_overrides(model, api_key, temperature);
     ctx.data().db.upsert_model_settings(model_settings).await?;
     ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
