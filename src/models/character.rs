@@ -15,7 +15,7 @@ use poise::serenity_prelude::{
 use native_db::{ToKey as _, native_db};
 use native_model::{Model as _, native_model};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use alloc::collections::{BTreeMap, BTreeSet};
 use tracing::warn;
 use ulid::Ulid;
 use url::Url;
@@ -107,8 +107,12 @@ pub struct Character {
     /// enforced.
     emoji: Option<String>,
     /// The Discord user IDs of anyone who has ever edited the character, if any.
+    ///
+    /// A `BTreeSet` (not a `HashSet`) so the JSON serialization is deterministic:
+    /// `native_db` re-encodes the stored record on every update and rejects the
+    /// write if the bytes differ from what is on disk.
     #[builder(default)]
-    all_editors: HashSet<UserId>,
+    all_editors: BTreeSet<UserId>,
     /// The Discord user ID of the latest person to edit the character, if any.
     latest_editor: Option<UserId>,
     /// If Some, the Discord user ID of the character's deleter.
@@ -129,8 +133,12 @@ pub struct Character {
     /// The number of conversations the character has had with a user.
     ///
     /// This means the amount of times this character has been "spawned".
+    ///
+    /// A `BTreeMap` (not a `HashMap`) so the JSON serialization is deterministic:
+    /// `native_db` re-encodes the stored record on every update and rejects the
+    /// write if the bytes differ from what is on disk.
     #[builder(default)]
-    conversations_had_with_user: HashMap<UserId, u32>,
+    conversations_had_with_user: BTreeMap<UserId, u32>,
     /// The number of conversations the character has had.
     ///
     /// This means the amount of times this character has been "spawned".
