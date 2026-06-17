@@ -283,9 +283,11 @@ pub async fn stream_into<S: ReplySink>(
                             complete = false;
                             break 'attempts;
                         }
-                        sink.placeholder(start.elapsed()).await?;
-                    } else {
-                        sink.progress(total.clone(), start.elapsed()).await?;
+                        if let Err(why) = sink.placeholder(start.elapsed()).await {
+                            warn!("failed to render placeholder, continuing: {why}");
+                        }
+                    } else if let Err(why) = sink.progress(total.clone(), start.elapsed()).await {
+                        warn!("failed to render progress, continuing: {why}");
                     }
                 }
             }
