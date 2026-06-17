@@ -262,11 +262,16 @@ pub async fn stream_into<S: ReplySink>(
                     };
                     match item {
                         Some(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta))) => {
+                            total += delta.text();
                             if total.len() >= CHARACTER_LIMIT {
                                 warn!("reply reached the character limit, truncating");
+                                let mut cut = CHARACTER_LIMIT;
+                                while cut > 0 && !total.is_char_boundary(cut) {
+                                    cut = cut.saturating_sub(1);
+                                }
+                                total.truncate(cut);
                                 break 'attempts;
                             }
-                            total += delta.text();
                         }
                         Some(MultiTurnStreamItem::FinalResponse(final_response)) => {
                             output_tokens = final_response.usage().output_tokens;
