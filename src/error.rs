@@ -90,15 +90,6 @@ pub enum AppError {
         #[snafu(implicit)]
         location: Location,
     },
-    /// Reacting to a message failed.
-    #[snafu(display("Kunde inte reagera på meddelande"))]
-    React {
-        /// The source of the error.
-        source: serenity::Error,
-        /// The location of the error.
-        #[snafu(implicit)]
-        location: Location,
-    },
     /// Registering a command failed.
     #[snafu(display("Kunde inte registrera kommando i servern"))]
     RegisterCommand {
@@ -156,7 +147,6 @@ impl Diagnostic for AppError {
             Self::SendMessage { location, .. } => ("send_message", location),
             Self::EditMessage { location, .. } => ("edit_message", location),
             Self::RetrieveMessage { location, .. } => ("retrieve_message", location),
-            Self::React { location, .. } => ("react", location),
             Self::DeleteMessage { location, .. } => ("delete_message", location),
             Self::SendResponse { location, .. } => ("send_response", location),
             Self::EditResponse { location, .. } => ("edit_response", location),
@@ -183,7 +173,7 @@ impl Diagnostic for AppError {
             Self::Database { source } => source.help(),
             Self::UnknownInteraction { source } => source.help(),
             Self::SendMessage { .. } => Some(Box::new("Meddelandet kan ha varit för långt")),
-            Self::EditMessage { .. } | Self::RetrieveMessage { .. } | Self::React { .. } => {
+            Self::EditMessage { .. } | Self::RetrieveMessage { .. } => {
                 Some(Box::new("Meddelandet kan vara borta"))
             }
             Self::DeleteMessage { .. } => Some(Box::new("Meddelandet kan redan vara borta")),

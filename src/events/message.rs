@@ -6,7 +6,7 @@
 use crate::{
     AppResult,
     database::Database,
-    error::{ReactSnafu, SendMessageSnafu},
+    error::SendMessageSnafu,
     events::streaming::{MessageSink, ReplySink as _, stream_into},
     llm::LlmManager,
     models::{character::Character, history::History},
@@ -81,10 +81,7 @@ async fn react_to_mentions_and_replies(
         .collect();
     if new_message.mention_everyone() {
         for emoji in all_emoji.values() {
-            new_message
-                .react(&ctx.http, emoji.clone())
-                .await
-                .context(ReactSnafu)?;
+            react(ctx, new_message, emoji.clone()).await;
         }
         return Ok(());
     }
@@ -94,20 +91,22 @@ async fn react_to_mentions_and_replies(
     if let Some(ref replied_to) = new_message.referenced_message
         && let Some(emoji) = all_emoji.get(&replied_to.author.id.to_string())
     {
-        new_message
-            .react(&ctx.http, emoji.clone())
-            .await
-            .context(ReactSnafu)?;
+        react(ctx, new_message, emoji.clone()).await;
     }
     for mention in &new_message.mentions {
         if let Some(emoji) = all_emoji.get(&mention.id.to_string()) {
-            new_message
-                .react(&ctx.http, emoji.clone())
-                .await
-                .context(ReactSnafu)?;
+            react(ctx, new_message, emoji.clone()).await;
         }
     }
     Ok(())
+}
+
+/// Reacts to a message with an emoji, logging instead of failing so a missed
+/// reaction never aborts the surrounding reply pipeline.
+async fn react(ctx: &Context, message: &Message, emoji: ReactionType) {
+    if let Err(why) = message.react(&ctx.http, emoji).await {
+        warn!(message_id = %message.id, "failed to react: {why}");
+    }
 }
 
 /// Returns the history and character associated with the message that the given message replied to,
