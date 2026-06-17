@@ -360,3 +360,80 @@ impl From<(String, String, Role)> for Parts {
         ))
     }
 }
+
+/// Tests for message revision navigation.
+#[cfg(test)]
+mod tests {
+    use super::Message;
+
+    /// Builds a system message edited twice, leaving two revisions on top of the original.
+    fn message_with_two_edits() -> Message {
+        let mut message = Message::new_system("original");
+        message.edit("Bot", "first", None::<u64>);
+        message.edit("Bot", "second", None::<u64>);
+        message
+    }
+
+    /// Editing records each revision and leaves the cursor on the newest one.
+    #[test]
+    fn edits_advance_to_the_newest_revision() {
+        let message = message_with_two_edits();
+        assert_eq!(
+            message.revisions_count(),
+            2,
+            "two edits create two revisions"
+        );
+        assert_eq!(
+            message.revision(),
+            2,
+            "editing moves the cursor to the newest revision"
+        );
+        assert_eq!(
+            message.chosen_revision().head().content(),
+            "second",
+            "the newest revision holds the latest content"
+        );
+    }
+
+    /// `undo` cycles backward through revisions and wraps to the newest at the original.
+    #[test]
+    fn undo_cycles_backward_and_wraps() {
+        let mut message = message_with_two_edits();
+        message.undo();
+        assert_eq!(message.revision(), 1, "undo steps back one revision");
+        assert_eq!(
+            message.chosen_revision().head().content(),
+            "first",
+            "revision one holds the first edit"
+        );
+        message.undo();
+        assert_eq!(message.revision(), 0, "undo reaches the original message");
+        assert_eq!(
+            message.chosen_revision().head().content(),
+            "original",
+            "revision zero holds the original content"
+        );
+        message.undo();
+        assert_eq!(
+            message.revision(),
+            2,
+            "undo from the original wraps to the newest revision"
+        );
+    }
+
+    /// `redo` cycles forward through revisions and wraps to the original at the newest.
+    #[test]
+    fn redo_cycles_forward_and_wraps() {
+        let mut message = message_with_two_edits();
+        message.redo();
+        assert_eq!(
+            message.revision(),
+            0,
+            "redo from the newest revision wraps to the original"
+        );
+        message.redo();
+        assert_eq!(message.revision(), 1, "redo steps forward one revision");
+        message.redo();
+        assert_eq!(message.revision(), 2, "redo reaches the newest revision");
+    }
+}
