@@ -329,16 +329,6 @@ impl From<(&DiscordMessage, String)> for Message {
     }
 }
 
-impl From<&DiscordMessage> for Role {
-    fn from(input: &DiscordMessage) -> Self {
-        if input.content.to_lowercase().starts_with("system:") {
-            Self::System
-        } else {
-            Self::User
-        }
-    }
-}
-
 impl From<Vec<Part>> for Parts {
     fn from(parts: Vec<Part>) -> Self {
         let Some(nonempty) = NonEmpty::from_vec(parts) else {
