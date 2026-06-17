@@ -4,11 +4,9 @@ use crate::{
     AppResult,
     database::Database,
     error::SendResponseSnafu,
-    events::{
-        message::history_and_character_of,
-        streaming::{InteractionSink, ReplySink as _, stream_into},
-    },
+    events::streaming::{InteractionSink, ReplySink as _, stream_into},
     llm::LlmManager,
+    models::{character::Character, history::History},
 };
 use core::time::Duration;
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
@@ -21,11 +19,9 @@ pub async fn next(
     interaction: &ComponentInteraction,
     id: MessageId,
     db: &Database,
+    mut history: History,
+    character: Character,
 ) -> AppResult {
-    let Some((mut history, character)) = history_and_character_of(id, db).await? else {
-        return Ok(());
-    };
-
     let options = db.character_menu_options().await?;
 
     if history.is_on_last_choice() {

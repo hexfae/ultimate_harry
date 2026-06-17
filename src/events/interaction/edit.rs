@@ -4,8 +4,7 @@ use crate::{
     AppResult,
     database::Database,
     error::{SendResponseSnafu, ShowModalSnafu},
-    events::message::history_and_character_of,
-    models::modals::EditMessageModal,
+    models::{character::Character, history::History, modals::EditMessageModal},
     traits::ShowModal as _,
 };
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
@@ -17,11 +16,9 @@ pub async fn edit(
     interaction: &ComponentInteraction,
     id: MessageId,
     db: &Database,
+    mut history: History,
+    character: Character,
 ) -> AppResult {
-    let Some((mut history, character)) = history_and_character_of(id, db).await? else {
-        return Ok(());
-    };
-
     let Some(modal): Option<EditMessageModal> = ctx
         .show_modal(interaction.to_owned())
         .await

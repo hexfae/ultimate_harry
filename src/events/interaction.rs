@@ -6,13 +6,16 @@ mod next;
 mod pin;
 mod swipe;
 
-use crate::{AppResult, database::Database, models::history::History};
+use crate::{
+    AppResult, database::Database, events::message::history_and_character_of,
+    models::history::History,
+};
 use core::fmt::{self, Display, Formatter};
 use miette::{Diagnostic, Result, SourceSpan};
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use snafu::Snafu;
 
-use character::character;
+use character::character as character_fn;
 use edit::edit;
 use next::next;
 use pin::pin;
@@ -80,14 +83,28 @@ pub async fn component(
 
     let (id, kind) = (ultimate_interaction.id, ultimate_interaction.kind);
 
+    if matches!(kind, InteractionKind::Confirm | InteractionKind::Cancel) {
+        return Ok(());
+    }
+
+    let Some((history, character)) = history_and_character_of(id, db).await? else {
+        return Ok(());
+    };
+
     match kind {
-        InteractionKind::Previous => swipe(ctx, interaction, id, db, History::previous).await?,
-        InteractionKind::Next => next(ctx, interaction, id, db).await?,
-        InteractionKind::Edit => edit(ctx, interaction, id, db).await?,
-        InteractionKind::Undo => swipe(ctx, interaction, id, db, History::undo).await?,
-        InteractionKind::Redo => swipe(ctx, interaction, id, db, History::redo).await?,
-        InteractionKind::Pin => pin(ctx, interaction, id, db).await?,
-        InteractionKind::Character => character(ctx, interaction, id, db).await?,
+        InteractionKind::Previous => {
+            swipe(ctx, interaction, id, db, history, character, History::previous).await?;
+        }
+        InteractionKind::Next => next(ctx, interaction, id, db, history, character).await?,
+        InteractionKind::Edit => edit(ctx, interaction, id, db, history, character).await?,
+        InteractionKind::Undo => {
+            swipe(ctx, interaction, id, db, history, character, History::undo).await?;
+        }
+        InteractionKind::Redo => {
+            swipe(ctx, interaction, id, db, history, character, History::redo).await?;
+        }
+        InteractionKind::Pin => pin(ctx, interaction, db, history, character).await?,
+        InteractionKind::Character => character_fn(ctx, interaction, db, history).await?,
         InteractionKind::Confirm | InteractionKind::Cancel => {}
     }
     Ok(())

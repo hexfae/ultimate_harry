@@ -4,16 +4,11 @@ use crate::{
     AppResult,
     database::Database,
     error::{SendMessageSnafu, SendResponseSnafu},
-    events::{
-        message::history_and_character_of,
-        streaming::{MessageSink, ReplySink as _, stream_into},
-    },
+    events::streaming::{MessageSink, ReplySink as _, stream_into},
     llm::LlmManager,
-    models::message::Message,
+    models::{history::History, message::Message},
 };
-use poise::serenity_prelude::{
-    ComponentInteraction, Context, CreateInteractionResponse, MessageId,
-};
+use poise::serenity_prelude::{ComponentInteraction, Context, CreateInteractionResponse};
 use serenity::all::ComponentInteractionDataKind;
 use snafu::ResultExt as _;
 use std::time::Instant;
@@ -22,8 +17,8 @@ use std::time::Instant;
 pub async fn character(
     ctx: &Context,
     interaction: &ComponentInteraction,
-    id: MessageId,
     db: &Database,
+    mut history: History,
 ) -> AppResult {
     let ComponentInteractionDataKind::StringSelect { ref values } = interaction.data.kind else {
         return Ok(());
@@ -35,10 +30,6 @@ pub async fn character(
     let character_id: &str = selected_char_id;
 
     let Some(new_character) = db.character(character_id).await? else {
-        return Ok(());
-    };
-
-    let Some((mut history, _old_character)) = history_and_character_of(id, db).await? else {
         return Ok(());
     };
 

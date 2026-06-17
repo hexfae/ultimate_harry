@@ -4,8 +4,8 @@ use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use snafu::ResultExt as _;
 
 use crate::{
-    AppResult, database::Database, error::SendResponseSnafu,
-    events::message::history_and_character_of, models::history::History,
+    AppResult, database::Database, error::SendResponseSnafu, models::character::Character,
+    models::history::History,
 };
 
 /// Apply `mutate` to the history of this message, then re-render it.
@@ -17,12 +17,10 @@ pub async fn swipe<Mutate: FnOnce(&mut History)>(
     interaction: &ComponentInteraction,
     id: MessageId,
     db: &Database,
+    mut history: History,
+    character: Character,
     mutate: Mutate,
 ) -> AppResult {
-    let Some((mut history, character)) = history_and_character_of(id, db).await? else {
-        return Ok(());
-    };
-
     mutate(&mut history);
 
     let options = db.character_menu_options().await?;

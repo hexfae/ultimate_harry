@@ -4,11 +4,10 @@ use crate::{
     AppResult,
     database::Database,
     error::{SendMessageSnafu, SendResponseSnafu},
-    events::message::history_and_character_of,
+    models::{character::Character, history::History},
 };
 use serenity::all::{
     ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
-    MessageId,
 };
 use snafu::ResultExt as _;
 
@@ -16,13 +15,10 @@ use snafu::ResultExt as _;
 pub async fn pin(
     ctx: &Context,
     interaction: &ComponentInteraction,
-    id: MessageId,
     db: &Database,
+    history: History,
+    character: Character,
 ) -> AppResult {
-    let Some((history, character)) = history_and_character_of(id, db).await? else {
-        return Ok(());
-    };
-
     let reply = history
         .into_bare_response(&character, interaction.message.link().to_string(), db)
         .await;
