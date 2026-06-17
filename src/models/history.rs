@@ -812,4 +812,85 @@ mod tests {
             "the only choice is also the last choice"
         );
     }
+
+    /// `into_stored` emits ID lists plus pending-then-choice messages, and `hydrate` rebuilds
+    /// the in-memory history from them unchanged.
+    #[test]
+    fn into_stored_then_hydrate_preserves_history() {
+        let choice_one = Message::new_system("choice one");
+        let choice_two = Message::new_system("choice two");
+        let pending_one = Message::new_user("Alice", "hello");
+        let choice_ids = vec![choice_one.id().to_owned(), choice_two.id().to_owned()];
+        let choice_two_id = choice_two.id().to_owned();
+        let pending_id = pending_one.id().to_owned();
+        let previous_ids = vec!["prev-a".to_owned(), "prev-b".to_owned()];
+
+        let mut choices = NonEmpty::new(choice_one.clone());
+        choices.push(choice_two.clone());
+        let mut hydrate_choices = NonEmpty::new(choice_one);
+        hydrate_choices.push(choice_two);
+
+        let history = History::builder()
+            .id(MessageId::new(42))
+            .character("character-id")
+            .choices(choices)
+            .current(1_usize)
+            .previous(previous_ids.clone())
+            .pending(vec![pending_one])
+            .build();
+
+        let (stored, messages) = history.into_stored();
+        assert_eq!(stored.id, "42", "the message ID is preserved as the key");
+        assert_eq!(
+            stored.character, "character-id",
+            "the character ID is preserved"
+        );
+        assert_eq!(
+            stored.choices, choice_ids,
+            "stored choices are the choice IDs in order"
+        );
+        assert_eq!(
+            stored.previous, previous_ids,
+            "stored previous are the context IDs in order"
+        );
+        assert_eq!(stored.current, 1, "the chosen index is preserved");
+
+        let message_ids = messages
+            .iter()
+            .map(|message| message.id().to_owned())
+            .collect::<Vec<String>>();
+        let mut expected_ids = vec![pending_id];
+        expected_ids.extend(choice_ids.iter().cloned());
+        assert_eq!(
+            message_ids, expected_ids,
+            "into_stored writes pending messages first, then the choices"
+        );
+
+        let hydrated = History::hydrate(stored, hydrate_choices);
+        assert_eq!(hydrated.id(), "42", "hydrate restores the message ID");
+        assert_eq!(
+            hydrated.character(),
+            "character-id",
+            "hydrate restores the character ID"
+        );
+        assert_eq!(
+            hydrated.current_choice(),
+            1,
+            "hydrate restores the chosen index"
+        );
+        assert_eq!(
+            hydrated.previous_ids(),
+            previous_ids.as_slice(),
+            "hydrate restores the context IDs"
+        );
+        assert!(
+            hydrated.pending().is_empty(),
+            "a freshly hydrated history has nothing pending"
+        );
+        assert_eq!(
+            hydrated.chosen_message().id(),
+            choice_two_id.as_str(),
+            "the chosen index points at the second choice"
+        );
+    }
 }
