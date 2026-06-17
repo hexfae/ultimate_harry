@@ -50,12 +50,18 @@ pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> AppResult {
                 url: None,
             }));
             sleep(Duration::from_mins(1)).await;
-            let new_kills: u32 = rng.generate_range(0..=1010);
-            let new_assists: u32 = rng.generate_range(0..=1020);
-            let new_deaths: u32 = rng.generate_range(0..=1040);
-            kills = kills.saturating_add(new_kills) / 1000;
-            assists = assists.saturating_add(new_assists) / 1000;
-            deaths = deaths.saturating_add(new_deaths) / 1000;
+            // small per-minute chance to tick each stat up (1% kills, 2%
+            // assists, 4% deaths), so harry slowly accrues a mediocre
+            // scoreline over a long match
+            if rng.generate_range(0..=99_u32) < 1 {
+                kills = kills.saturating_add(1);
+            }
+            if rng.generate_range(0..=99_u32) < 2 {
+                assists = assists.saturating_add(1);
+            }
+            if rng.generate_range(0..=99_u32) < 4 {
+                deaths = deaths.saturating_add(1);
+            }
         }
     });
     Ok(())
