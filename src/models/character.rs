@@ -597,3 +597,95 @@ fn create_confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'stati
         .into(),
     ))]
 }
+
+/// Tests for character similarity ranking.
+#[cfg(test)]
+mod tests {
+    use super::Character;
+    use serenity::all::UserId;
+
+    /// Builds a minimal visible character with the given ID and name.
+    fn basic_character(id: &str, name: &str) -> Character {
+        Character::builder()
+            .id(id.to_owned())
+            .name(name)
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .build()
+    }
+
+    /// Returns the index of the character with the given ID in the ranked list.
+    fn position_of(ranked: &[Character], id: &str) -> Option<usize> {
+        ranked.iter().position(|character| character.id() == id)
+    }
+
+    /// Ranking filters deleted and superseded characters, orders by similarity (honoring the
+    /// nickname), and breaks ties by number of conversations had.
+    #[test]
+    fn ranks_visible_characters_by_similarity_and_conversations() {
+        let exact = basic_character("id-exact", "Banana");
+        let close = basic_character("id-close", "Bananas");
+        let nickname = Character::builder()
+            .id("id-nickname".to_owned())
+            .name("Xyzzy")
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .nickname("Banan".to_owned())
+            .build();
+        let far = basic_character("id-far", "Zzzzzz");
+
+        let mut deleted = basic_character("id-deleted", "Banana");
+        deleted.mark_deleted(UserId::new(2));
+        let mut superseded = basic_character("id-superseded", "Banana");
+        superseded.set_next_version("id-exact".to_owned());
+
+        let tie_high = Character::builder()
+            .id("id-tie-high".to_owned())
+            .name("Tie")
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .conversations_had(9_u32)
+            .build();
+        let tie_low = Character::builder()
+            .id("id-tie-low".to_owned())
+            .name("Tie")
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .conversations_had(1_u32)
+            .build();
+
+        let ranked = Character::rank_by_similarity(
+            vec![
+                exact, close, nickname, far, deleted, superseded, tie_high, tie_low,
+            ],
+            "Banana",
+        );
+
+        assert_eq!(
+            ranked.len(),
+            6,
+            "deleted and superseded characters are filtered out"
+        );
+        assert!(
+            position_of(&ranked, "id-deleted").is_none(),
+            "a deleted character never appears in the ranking"
+        );
+        assert!(
+            position_of(&ranked, "id-superseded").is_none(),
+            "a superseded character never appears in the ranking"
+        );
+        assert_eq!(
+            ranked.first().map(Character::name),
+            Some("Banana"),
+            "the exact name match ranks first"
+        );
+        assert!(
+            position_of(&ranked, "id-nickname") < position_of(&ranked, "id-far"),
+            "a close nickname outranks a dissimilar name"
+        );
+        assert!(
+            position_of(&ranked, "id-tie-high") < position_of(&ranked, "id-tie-low"),
+            "equal similarity breaks ties toward more conversations"
+        );
+    }
+}
