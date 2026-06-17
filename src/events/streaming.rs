@@ -26,6 +26,7 @@ use serenity::futures::StreamExt as _;
 use snafu::ResultExt as _;
 use std::time::Instant;
 use tokio::time::{MissedTickBehavior, interval};
+use tracing::{debug, warn};
 
 /// How many times to re-request the LLM when it returns an empty completion.
 const MAX_ATTEMPTS: u32 = 3;
@@ -147,6 +148,10 @@ impl ReplySink for InteractionSink<'_> {
 /// While the reply is empty the sink renders a placeholder; once tokens arrive
 /// it renders the growing reply. Empty completions are re-requested up to
 /// [`MAX_ATTEMPTS`] times; `start` measures the silence window across attempts.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "the select loop, retry/timeout/limit handling and their logging are one cohesive flow that the module deliberately keeps together"
+)]
 pub async fn stream_into<S: ReplySink>(
     requester: &LlmManager,
     context: &[ChatMessage],
@@ -168,6 +173,7 @@ pub async fn stream_into<S: ReplySink>(
                     match result.transpose().context(StreamingSnafu)? {
                         Some(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta))) => {
                             if total.len() >= CHARACTER_LIMIT {
+                                warn!("reply reached the character limit, truncating");
                                 break 'attempts;
                             }
                             total += delta.text();
@@ -179,6 +185,7 @@ pub async fn stream_into<S: ReplySink>(
                 _ = interval.tick() => {
                     if total.is_empty() {
                         if start.elapsed() >= RESPONSE_TIMEOUT {
+                            warn!("no first token within the response timeout, giving up");
                             total += TIMEOUT_MESSAGE;
                             break 'attempts;
                         }
@@ -196,9 +203,11 @@ pub async fn stream_into<S: ReplySink>(
             break 'attempts;
         }
         if attempt >= MAX_ATTEMPTS {
+            warn!("llm returned empty completions after {attempt} attempts, giving up");
             total += GAVE_UP_MESSAGE;
             break 'attempts;
         }
+        debug!("llm returned an empty completion, retrying (attempt {attempt})");
     }
 
     Ok(total)
