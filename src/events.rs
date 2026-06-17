@@ -25,7 +25,9 @@ impl EventHandlerTrait for EventHandler {
         let data: Arc<AppState> = ctx.data();
         match event {
             FullEvent::Ready { data_about_bot, .. } => {
-                drop(ready::ready(ctx, data_about_bot).await);
+                if let Err(why) = ready::ready(ctx, data_about_bot).await {
+                    error!("in ready handler: {why:?}");
+                }
             }
             // chat replies and interactions stream an LLM response and only
             // persist the resulting `History` once finished, so run them under
