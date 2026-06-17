@@ -214,8 +214,7 @@ impl History {
             .current
             .saturating_add(self.choices.len())
             .saturating_sub(1)
-            .checked_rem(self.choices.len())
-            .unwrap_or_default();
+            .strict_rem(self.choices.len());
     }
 
     /// Shows the next choice by cycling the current index forward.

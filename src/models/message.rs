@@ -211,23 +211,21 @@ impl Message {
     /// Undoes an edit by cycling to the previous revision.
     ///
     /// If already at the original message, cycles to the last revision.
-    pub fn undo(&mut self) {
+    pub const fn undo(&mut self) {
         self.revision = self
             .revision
             .saturating_add(self.revisions_count())
-            .checked_rem(self.revisions_count().saturating_add(1))
-            .unwrap_or_default();
+            .strict_rem(self.revisions_count().saturating_add(1));
     }
 
     /// Redoes an edit by cycling to the next revision.
     ///
     /// If already at the last revision, cycles to the original message.
-    pub fn redo(&mut self) {
+    pub const fn redo(&mut self) {
         self.revision = self
             .revision
             .saturating_add(1)
-            .checked_rem(self.revisions_count().saturating_add(1))
-            .unwrap_or_default();
+            .strict_rem(self.revisions_count().saturating_add(1));
     }
 
     /// Returns the time it took for this message to generate, if it originates from an LLM.
