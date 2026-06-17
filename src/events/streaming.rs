@@ -55,6 +55,9 @@ pub trait ReplySink {
     /// Store `total` as the current reply and render it after `elapsed`.
     fn progress(&mut self, total: String, elapsed: Duration)
     -> impl Future<Output = AppResult> + Send;
+
+    /// Store `total` as the finished reply, persist it, and render it once more.
+    fn finalize(self, total: String, elapsed: Duration) -> impl Future<Output = AppResult> + Send;
 }
 
 /// Renders a streamed reply onto a sent [`Message`] (new replies and hand-offs).
@@ -88,6 +91,23 @@ impl ReplySink for MessageSink<'_> {
     async fn progress(&mut self, total: String, elapsed: Duration) -> AppResult {
         self.history
             .set_choices((self.character.clone(), total, elapsed));
+        let edit = self
+            .history
+            .to_edit_response(self.character, &*self.message, self.db, self.options)
+            .await;
+        self.message
+            .edit(self.ctx, edit)
+            .await
+            .context(EditMessageSnafu)?;
+        Ok(())
+    }
+
+    async fn finalize(self, total: String, elapsed: Duration) -> AppResult {
+        self.history
+            .set_choices((self.character.clone(), total, elapsed));
+        self.history.set_id(&*self.message);
+        self.history.set_finished(true);
+        self.db.upsert_history(self.history.clone()).await?;
         let edit = self
             .history
             .to_edit_response(self.character, &*self.message, self.db, self.options)
@@ -133,6 +153,22 @@ impl ReplySink for InteractionSink<'_> {
     async fn progress(&mut self, total: String, elapsed: Duration) -> AppResult {
         self.history
             .update_current_choice((self.character.clone(), total, elapsed));
+        let edit = self
+            .history
+            .to_edit_interaction(self.character, self.id, self.db, self.options)
+            .await;
+        self.interaction
+            .edit_response(&self.ctx.http, edit)
+            .await
+            .context(EditResponseSnafu)?;
+        Ok(())
+    }
+
+    async fn finalize(self, total: String, elapsed: Duration) -> AppResult {
+        self.history
+            .update_current_choice((self.character.clone(), total, elapsed));
+        self.history.set_finished(true);
+        self.db.upsert_history(self.history.clone()).await?;
         let edit = self
             .history
             .to_edit_interaction(self.character, self.id, self.db, self.options)

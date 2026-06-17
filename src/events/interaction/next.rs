@@ -6,7 +6,7 @@ use crate::{
     error::SendResponseSnafu,
     events::{
         message::history_and_character_of,
-        streaming::{InteractionSink, stream_into},
+        streaming::{InteractionSink, ReplySink as _, stream_into},
     },
     llm::LlmManager,
 };
@@ -53,19 +53,7 @@ pub async fn next(
             options: &options,
         };
         let total = stream_into(&requester, &context, None, now, &mut sink).await?;
-
-        // update the pre-allocated choice with the final content.
-        history.update_current_choice((character.clone(), total, now.elapsed()));
-        history.set_finished(true);
-
-        let response = history
-            .to_edit_interaction(&character, id, db, &options)
-            .await;
-
-        interaction
-            .edit_response(&ctx.http, response)
-            .await
-            .context(SendResponseSnafu)?;
+        sink.finalize(total, now.elapsed()).await?;
     } else {
         history.next();
 
@@ -75,9 +63,9 @@ pub async fn next(
             .create_response(&ctx.http, response)
             .await
             .context(SendResponseSnafu)?;
-    }
 
-    db.upsert_history(history).await?;
+        db.upsert_history(history).await?;
+    }
 
     Ok(())
 }

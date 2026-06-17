@@ -3,10 +3,10 @@
 use crate::{
     AppResult,
     database::Database,
-    error::{EditMessageSnafu, SendMessageSnafu, SendResponseSnafu},
+    error::{SendMessageSnafu, SendResponseSnafu},
     events::{
         message::history_and_character_of,
-        streaming::{MessageSink, stream_into},
+        streaming::{MessageSink, ReplySink as _, stream_into},
     },
     llm::LlmManager,
     models::message::Message,
@@ -83,20 +83,7 @@ pub async fn character(
         options: &options,
     };
     let total = stream_into(&requester, &context, Some(prompt), now, &mut sink).await?;
-
-    history.set_choices((new_character.clone(), total, now.elapsed()));
-    history.set_id(&response_message);
-    history.set_finished(true);
-    db.upsert_history(history.clone()).await?;
-
-    let edit = history
-        .to_edit_response(&new_character, &response_message, db, &options)
-        .await;
-
-    response_message
-        .edit(ctx, edit)
-        .await
-        .context(EditMessageSnafu)?;
+    sink.finalize(total, now.elapsed()).await?;
 
     Ok(())
 }

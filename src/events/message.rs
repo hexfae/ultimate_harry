@@ -6,8 +6,8 @@
 use crate::{
     AppResult,
     database::Database,
-    error::{EditMessageSnafu, ReactSnafu, SendMessageSnafu},
-    events::streaming::{MessageSink, stream_into},
+    error::{ReactSnafu, SendMessageSnafu},
+    events::streaming::{MessageSink, ReplySink as _, stream_into},
     llm::LlmManager,
     models::{character::Character, history::History},
 };
@@ -62,20 +62,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         options: &options,
     };
     let total = stream_into(&requester, &context, None, now, &mut sink).await?;
-
-    history.set_choices((character.clone(), total, now.elapsed()));
-    history.set_id(&bot_message);
-    history.set_finished(true);
-    db.upsert_history(history.clone()).await?;
-
-    let edit = history
-        .to_edit_response(&character, &bot_message, db, &options)
-        .await;
-
-    bot_message
-        .edit(ctx, edit)
-        .await
-        .context(EditMessageSnafu)?;
+    sink.finalize(total, now.elapsed()).await?;
 
     Ok(())
 }
