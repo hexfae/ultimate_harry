@@ -303,7 +303,7 @@ impl History {
 
     /// Resets the choices, removing all but the first choice, and resets the current index to 0.
     pub fn reset_choices(&mut self) {
-        self.choices.tail.truncate(0);
+        self.choices.tail.clear();
         self.current = 0;
     }
 

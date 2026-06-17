@@ -15,7 +15,7 @@ use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use snafu::ResultExt as _;
 use std::time::Instant;
 
-/// Show the next reply to this message or a generate a new one.
+/// Show the next reply to this message or generate a new one.
 pub async fn next(
     ctx: &Context,
     interaction: &ComponentInteraction,
