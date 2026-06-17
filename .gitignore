@@ -1,4 +1,6 @@
 /target
+# nix-direnv cache
+/.direnv
 # native_db embedded database (and any migration in/out copies)
 /harry_database*.db
 # old SurrealKV database (pre-migration) and any pulled copy
