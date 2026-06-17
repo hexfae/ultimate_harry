@@ -153,30 +153,38 @@ impl TryFrom<&str> for InteractionKind {
     }
 }
 
-impl TryFrom<&ComponentInteraction> for Interaction {
-    type Error = UnknownInteraction;
-
-    fn try_from(interaction: &ComponentInteraction) -> Result<Self, Self::Error> {
-        let custom_id = interaction.data.custom_id.to_string();
+impl Interaction {
+    /// Parses a component `custom_id` (`<message_id><4-char tag>`) into an interaction, the
+    /// inverse of [`InteractionKind::custom_id`].
+    fn parse(custom_id: &str) -> Result<Self, UnknownInteraction> {
         let (str_id, str_kind) = custom_id
             .split_at_checked(custom_id.len().saturating_sub(4))
             .ok_or_else(|| UnknownInteraction {
-                custom_id: custom_id.clone(),
+                custom_id: custom_id.to_owned(),
                 span: (0..custom_id.len()).into(),
             })?;
         let id = MessageId::from(str_id.parse::<u64>().map_err(|_why| UnknownInteraction {
             custom_id: str_id.to_owned(),
-            span: (0..str_id.to_owned().len()).into(),
+            span: (0..str_id.len()).into(),
         })?);
         let kind = str_kind.try_into()?;
         Ok(Self { id, kind })
     }
 }
 
+impl TryFrom<&ComponentInteraction> for Interaction {
+    type Error = UnknownInteraction;
+
+    fn try_from(interaction: &ComponentInteraction) -> Result<Self, Self::Error> {
+        Self::parse(&interaction.data.custom_id)
+    }
+}
+
 /// Tests for the tag encoding shared by every component `custom_id`.
 #[cfg(test)]
 mod tests {
-    use super::InteractionKind;
+    use super::{Interaction, InteractionKind};
+    use serenity::all::MessageId;
 
     /// Each kind's tag must be 4 characters and parse back to the same kind.
     #[test]
@@ -191,5 +199,56 @@ mod tests {
                 "tag {tag:?} did not round-trip to its kind"
             );
         }
+    }
+
+    /// A well-formed `custom_id` splits into the leading message ID and the trailing kind tag.
+    #[test]
+    fn custom_id_splits_into_message_id_and_kind() {
+        let previous = Interaction::parse("123456prev");
+        assert!(previous.is_ok(), "a well-formed custom_id should parse");
+        if let Ok(interaction) = previous {
+            assert_eq!(
+                interaction.id,
+                MessageId::new(123_456),
+                "the leading digits decode to the message ID"
+            );
+            assert_eq!(
+                interaction.kind,
+                InteractionKind::Previous,
+                "the trailing tag decodes to its kind"
+            );
+        }
+
+        let character = Interaction::parse("789char");
+        assert!(character.is_ok(), "a shorter message ID should still parse");
+        if let Ok(interaction) = character {
+            assert_eq!(
+                interaction.id,
+                MessageId::new(789),
+                "a shorter ID still decodes correctly"
+            );
+            assert_eq!(
+                interaction.kind,
+                InteractionKind::Character,
+                "the char tag decodes to the character kind"
+            );
+        }
+    }
+
+    /// Malformed `custom_id`s (empty ID, non-numeric ID, unknown tag) are rejected.
+    #[test]
+    fn malformed_custom_ids_are_rejected() {
+        assert!(
+            Interaction::parse("prev").is_err(),
+            "a custom_id with no message ID is rejected"
+        );
+        assert!(
+            Interaction::parse("abcedit").is_err(),
+            "a non-numeric message ID is rejected"
+        );
+        assert!(
+            Interaction::parse("123456zzzz").is_err(),
+            "an unknown trailing tag is rejected"
+        );
     }
 }
