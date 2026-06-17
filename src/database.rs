@@ -342,28 +342,8 @@ impl Database {
         id: &str,
         user: UserId,
     ) -> Result<(), DatabaseError> {
-        let write = self.0.rw_transaction().context(UpdateSnafu)?;
-        let Some(mut character) = write
-            .get()
-            .primary::<Character>(id.to_owned())
-            .context(UpdateSnafu)?
-        else {
-            warn!("tried to record a spawn for a missing character: {id}");
-            return Ok(());
-        };
-        while let Some(next_id) = character.next_version().map(str::to_owned) {
-            let Some(next) = write
-                .get()
-                .primary::<Character>(next_id)
-                .context(UpdateSnafu)?
-            else {
-                break;
-            };
-            character = next;
-        }
-        character.record_spawn(user);
-        write.upsert(character).context(UpdateSnafu)?;
-        write.commit().context(UpdateSnafu)
+        self.record_on_latest_version(id, "a spawn", |character| character.record_spawn(user))
+            .await
     }
 
     /// Records the words and tokens a character generated in a single reply.
@@ -378,13 +358,29 @@ impl Database {
         words: u32,
         tokens: u32,
     ) -> Result<(), DatabaseError> {
+        self.record_on_latest_version(id, "generation", |character| {
+            character.record_generation(words, tokens);
+        })
+        .await
+    }
+
+    /// Walks `id` to its latest version and applies `apply` to that character,
+    /// upserting the result in a single transaction. `label` names the stat for
+    /// the missing-character warning. Best-effort: warns and returns `Ok` if the
+    /// character is missing.
+    async fn record_on_latest_version(
+        &self,
+        id: &str,
+        label: &str,
+        apply: impl FnOnce(&mut Character),
+    ) -> Result<(), DatabaseError> {
         let write = self.0.rw_transaction().context(UpdateSnafu)?;
         let Some(mut character) = write
             .get()
             .primary::<Character>(id.to_owned())
             .context(UpdateSnafu)?
         else {
-            warn!("tried to record generation for a missing character: {id}");
+            warn!("tried to record {label} for a missing character: {id}");
             return Ok(());
         };
         while let Some(next_id) = character.next_version().map(str::to_owned) {
@@ -397,7 +393,7 @@ impl Database {
             };
             character = next;
         }
-        character.record_generation(words, tokens);
+        apply(&mut character);
         write.upsert(character).context(UpdateSnafu)?;
         write.commit().context(UpdateSnafu)
     }
