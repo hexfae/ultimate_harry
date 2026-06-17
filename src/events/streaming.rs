@@ -50,6 +50,9 @@ pub struct Reply {
     pub text: String,
     /// Output tokens the model reported, or `0` if the stream gave no final usage report.
     pub output_tokens: u64,
+    /// Whether this is a genuine model reply rather than a timeout/error/gave-up
+    /// sentinel; sentinel replies are not counted into generation stats.
+    pub complete: bool,
 }
 
 /// The Discord message a streamed reply is rendered into, tick by tick.
@@ -115,14 +118,17 @@ impl ReplySink for MessageSink<'_> {
     async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
         let words = u32::try_from(reply.text.split_whitespace().count()).unwrap_or(u32::MAX);
         let tokens = u32::try_from(reply.output_tokens).unwrap_or(u32::MAX);
+        let complete = reply.complete;
         self.history
             .set_choices((self.character.clone(), reply.text, elapsed));
         self.history.set_id(&*self.message);
         self.history.set_finished(true);
         self.db.upsert_history(self.history.clone()).await?;
-        self.db
-            .record_character_generation(self.character.id(), words, tokens)
-            .await?;
+        if complete {
+            self.db
+                .record_character_generation(self.character.id(), words, tokens)
+                .await?;
+        }
         let edit = self
             .history
             .to_edit_response(self.character, &*self.message, self.db, self.options)
@@ -182,13 +188,16 @@ impl ReplySink for InteractionSink<'_> {
     async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
         let words = u32::try_from(reply.text.split_whitespace().count()).unwrap_or(u32::MAX);
         let tokens = u32::try_from(reply.output_tokens).unwrap_or(u32::MAX);
+        let complete = reply.complete;
         self.history
             .update_current_choice((self.character.clone(), reply.text, elapsed));
         self.history.set_finished(true);
         self.db.upsert_history(self.history.clone()).await?;
-        self.db
-            .record_character_generation(self.character.id(), words, tokens)
-            .await?;
+        if complete {
+            self.db
+                .record_character_generation(self.character.id(), words, tokens)
+                .await?;
+        }
         let edit = self
             .history
             .to_edit_interaction(self.character, self.id, self.db, self.options)
@@ -202,7 +211,7 @@ impl ReplySink for InteractionSink<'_> {
 }
 
 /// Stream an LLM reply, ticking `sink` about once a second so the Discord
-/// message is edited in place, and return the accumulated reply text.
+/// message is edited in place, and return the accumulated [`Reply`].
 ///
 /// While the reply is empty the sink renders a placeholder; once tokens arrive
 /// it renders the growing reply. Empty completions are re-requested up to
@@ -221,6 +230,7 @@ pub async fn stream_into<S: ReplySink>(
     let mut total = String::new();
     let mut output_tokens: u64 = 0;
     let mut attempt: u32 = 0;
+    let mut complete = true;
     'attempts: loop {
         attempt = attempt.saturating_add(1);
         let mut stream = match requester.request_stream(context, prompt.clone()).await {
@@ -229,6 +239,7 @@ pub async fn stream_into<S: ReplySink>(
                 let why = AppError::from(source);
                 error!("failed to start the reply stream, giving up: {why:?}");
                 total += ERROR_MESSAGE;
+                complete = false;
                 break 'attempts;
             }
         };
@@ -244,6 +255,7 @@ pub async fn stream_into<S: ReplySink>(
                             error!("the reply stream errored, giving up: {why:?}");
                             if total.is_empty() {
                                 total += ERROR_MESSAGE;
+                                complete = false;
                             }
                             break 'attempts;
                         }
@@ -268,6 +280,7 @@ pub async fn stream_into<S: ReplySink>(
                         if start.elapsed() >= RESPONSE_TIMEOUT {
                             warn!("no first token within the response timeout, giving up");
                             total += TIMEOUT_MESSAGE;
+                            complete = false;
                             break 'attempts;
                         }
                         sink.placeholder(start.elapsed()).await?;
@@ -286,6 +299,7 @@ pub async fn stream_into<S: ReplySink>(
         if attempt >= MAX_ATTEMPTS {
             warn!("llm returned empty completions after {attempt} attempts, giving up");
             total += GAVE_UP_MESSAGE;
+            complete = false;
             break 'attempts;
         }
         debug!("llm returned an empty completion, retrying (attempt {attempt})");
@@ -294,5 +308,6 @@ pub async fn stream_into<S: ReplySink>(
     Ok(Reply {
         text: total,
         output_tokens,
+        complete,
     })
 }
