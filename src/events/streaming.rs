@@ -11,7 +11,7 @@ use crate::{
     AppResult,
     constants::CHARACTER_LIMIT,
     database::Database,
-    error::{EditMessageSnafu, EditResponseSnafu, StreamingSnafu},
+    error::{AppError, EditMessageSnafu, EditResponseSnafu, StreamingSnafu},
     llm::LlmManager,
     models::{
         character::{Character, CharacterOption},
@@ -26,7 +26,7 @@ use serenity::futures::StreamExt as _;
 use snafu::ResultExt as _;
 use std::time::Instant;
 use tokio::time::{MissedTickBehavior, interval};
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// How many times to re-request the LLM when it returns an empty completion.
 const MAX_ATTEMPTS: u32 = 3;
@@ -39,6 +39,9 @@ const TIMEOUT_MESSAGE: &str = "30 sekunder har gått utan ett svar. Jag ger upp.
 
 /// Reply shown when every attempt returned an empty completion.
 const GAVE_UP_MESSAGE: &str = "AI:n gav inget svar efter flera försök. Jag ger upp.";
+
+/// Reply shown when the request fails to start or the stream errors out.
+const ERROR_MESSAGE: &str = "Något gick fel när jag försökte svara. Försök igen senare.";
 
 /// The Discord message a streamed reply is rendered into, tick by tick.
 ///
@@ -163,14 +166,32 @@ pub async fn stream_into<S: ReplySink>(
     let mut attempt: u32 = 0;
     'attempts: loop {
         attempt = attempt.saturating_add(1);
-        let mut stream = requester.request_stream(context, prompt.clone()).await?;
+        let mut stream = match requester.request_stream(context, prompt.clone()).await {
+            Ok(stream) => stream,
+            Err(source) => {
+                let why = AppError::from(source);
+                error!("failed to start the reply stream, giving up: {why:?}");
+                total += ERROR_MESSAGE;
+                break 'attempts;
+            }
+        };
         let mut interval = interval(Duration::from_secs(1));
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
         loop {
             tokio::select! {
                 result = stream.next() => {
-                    match result.transpose().context(StreamingSnafu)? {
+                    let item = match result.transpose().context(StreamingSnafu) {
+                        Ok(item) => item,
+                        Err(why) => {
+                            error!("the reply stream errored, giving up: {why:?}");
+                            if total.is_empty() {
+                                total += ERROR_MESSAGE;
+                            }
+                            break 'attempts;
+                        }
+                    };
+                    match item {
                         Some(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta))) => {
                             if total.len() >= CHARACTER_LIMIT {
                                 warn!("reply reached the character limit, truncating");
