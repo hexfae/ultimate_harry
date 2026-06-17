@@ -17,6 +17,7 @@ use rig::{
 };
 use serde::{Deserialize, Serialize};
 use serenity::all::{Attachment, Message as DiscordMessage, MessageId, UserId};
+use tracing::warn;
 use ulid::Ulid;
 
 use crate::models::character::Character;
@@ -342,7 +343,11 @@ impl From<&DiscordMessage> for Role {
 
 impl From<Vec<Part>> for Parts {
     fn from(parts: Vec<Part>) -> Self {
-        Self(parts.try_into().unwrap_or_default())
+        let Some(nonempty) = NonEmpty::from_vec(parts) else {
+            warn!("constructed Parts from an empty list of parts, substituting a blank part");
+            return Self(NonEmpty::default());
+        };
+        Self(nonempty)
     }
 }
 
