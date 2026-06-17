@@ -732,3 +732,84 @@ impl From<(&Character, MessageId, UserId)> for History {
             .build()
     }
 }
+
+/// Tests for in-memory history navigation.
+#[cfg(test)]
+mod tests {
+    use super::History;
+    use crate::models::message::Message;
+    use nonempty::NonEmpty;
+    use serenity::all::MessageId;
+
+    /// Builds a history with `count` swipeable choices.
+    fn history_with_choices(count: usize) -> History {
+        let mut choices = NonEmpty::new(Message::new_system("choice"));
+        for _ in 1..count {
+            choices.push(Message::new_system("choice"));
+        }
+        History::builder()
+            .id(MessageId::new(1))
+            .character("character-id")
+            .choices(choices)
+            .build()
+    }
+
+    /// `previous` steps the current index backward and wraps past the first choice.
+    #[test]
+    fn previous_cycles_backward_and_wraps() {
+        let mut history = history_with_choices(3);
+        assert_eq!(
+            history.current_choice(),
+            0,
+            "a fresh history starts on the first choice"
+        );
+        history.previous();
+        assert_eq!(
+            history.current_choice(),
+            2,
+            "previous on the first choice wraps to the last"
+        );
+        history.previous();
+        assert_eq!(
+            history.current_choice(),
+            1,
+            "previous steps backward by one"
+        );
+        history.previous();
+        assert_eq!(
+            history.current_choice(),
+            0,
+            "previous returns to the first choice"
+        );
+    }
+
+    /// `is_on_last_choice` is true only when the current index is the final choice.
+    #[test]
+    fn last_choice_detected_at_the_end() {
+        let mut history = history_with_choices(3);
+        assert!(
+            !history.is_on_last_choice(),
+            "the first of three choices is not the last"
+        );
+        history.push_choice(Message::new_system("pushed"));
+        assert!(
+            history.is_on_last_choice(),
+            "a pushed choice becomes the current and last choice"
+        );
+        history.previous();
+        assert!(
+            !history.is_on_last_choice(),
+            "stepping back from the last choice is no longer last"
+        );
+    }
+
+    /// A single-choice history is always on its last (and only) choice.
+    #[test]
+    fn single_choice_is_always_last() {
+        let history = history_with_choices(1);
+        assert!(
+            history.is_on_last_choice(),
+            "the only choice is also the last choice"
+        );
+    }
+}
