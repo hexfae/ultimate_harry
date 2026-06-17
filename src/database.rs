@@ -8,7 +8,7 @@ use core::fmt::{Debug, Formatter, Result as FmtResult};
 use miette::{Diagnostic, SourceSpan};
 use nanorand::Rng as _;
 use native_db::{
-    Builder, Database as NativeDatabase, Models, ToKey as _, db_type::Error as NativeError,
+    Builder, Database as NativeDatabase, Models, ToInput, ToKey as _, db_type::Error as NativeError,
     native_db,
 };
 use native_model::{Model as _, native_model};
@@ -331,25 +331,40 @@ impl Database {
         Ok(Some(character))
     }
 
-    /// Returns the bot's AI model settings.
-    pub async fn model_settings(&self) -> ModelSettings {
+    /// Reads a singleton-style record by its primary key, returning a default
+    /// value (after logging a warning under `label`) on any transaction or
+    /// lookup failure.
+    fn read_or<T: ToInput, R>(
+        &self,
+        key: String,
+        label: &str,
+        default: impl Fn() -> R,
+        extract: impl FnOnce(T) -> R,
+    ) -> R {
         let read = match self.0.r_transaction() {
             Ok(read) => read,
             Err(why) => {
-                warn!("failed to read model settings, using defaults: {why}");
-                return ModelSettings::default();
+                warn!("failed to read {label}, using default: {why}");
+                return default();
             }
         };
-        match read
-            .get()
-            .primary::<GlobalModelSettings>(SINGLETON_KEY.to_owned())
-        {
-            Ok(stored) => stored.map_or_else(ModelSettings::default, |found| found.settings),
+        match read.get().primary::<T>(key) {
+            Ok(found) => found.map_or_else(&default, extract),
             Err(why) => {
-                warn!("failed to read model settings, using defaults: {why}");
-                ModelSettings::default()
+                warn!("failed to read {label}, using default: {why}");
+                default()
             }
         }
+    }
+
+    /// Returns the bot's AI model settings.
+    pub async fn model_settings(&self) -> ModelSettings {
+        self.read_or::<GlobalModelSettings, _>(
+            SINGLETON_KEY.to_owned(),
+            "model settings",
+            ModelSettings::default,
+            |found| found.settings,
+        )
     }
 
     /// Returns the character's own model settings, falling back to the
@@ -363,22 +378,12 @@ impl Database {
 
     /// Returns the bot's pin channel.
     pub async fn pins_channel(&self) -> ChannelId {
-        let read = match self.0.r_transaction() {
-            Ok(read) => read,
-            Err(why) => {
-                warn!("failed to read pin channel, using default: {why}");
-                return ChannelId::default();
-            }
-        };
-        match read.get().primary::<PinChannel>(SINGLETON_KEY.to_owned()) {
-            Ok(pin_channel) => {
-                pin_channel.map_or_else(ChannelId::default, |found| found.channel_id)
-            }
-            Err(why) => {
-                warn!("failed to read pin channel, using default: {why}");
-                ChannelId::default()
-            }
-        }
+        self.read_or::<PinChannel, _>(
+            SINGLETON_KEY.to_owned(),
+            "pin channel",
+            ChannelId::default,
+            |found| found.channel_id,
+        )
     }
 
     /// Updates or inserts the bot's pin channel.
@@ -398,20 +403,12 @@ impl Database {
 
     /// Returns a user's display name by their Discord user ID.
     pub async fn substitute_name<T: Into<UserId>>(&self, user_id: T) -> String {
-        let read = match self.0.r_transaction() {
-            Ok(read) => read,
-            Err(why) => {
-                warn!("failed to read substitute name, using default: {why}");
-                return "User".to_owned();
-            }
-        };
-        match read.get().primary::<UserName>(user_id.into().to_string()) {
-            Ok(user) => user.map_or_else(|| "User".to_owned(), |found| found.name),
-            Err(why) => {
-                warn!("failed to read substitute name, using default: {why}");
-                "User".to_owned()
-            }
-        }
+        self.read_or::<UserName, _>(
+            user_id.into().to_string(),
+            "substitute name",
+            || "User".to_owned(),
+            |found| found.name,
+        )
     }
 
     /// Updates or inserts a user's display name by their Discord user ID.
