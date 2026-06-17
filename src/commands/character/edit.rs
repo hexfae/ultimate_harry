@@ -23,6 +23,7 @@ use poise::{
 use snafu::ResultExt as _;
 use tokio::time::sleep;
 
+/// Ändrar en gubbe.
 #[poise::command(slash_command, rename = "ändra")]
 pub async fn edit(
     ctx: Context<'_>,

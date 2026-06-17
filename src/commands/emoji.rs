@@ -4,9 +4,12 @@ use crate::{AppResult, Context, error::SendMessageSnafu, traits::SayEphemeral as
 use poise::serenity_prelude::ReactionType;
 use snafu::ResultExt as _;
 
-/// The bot's Discord slash command for setting a user's emoji.
+/// Ställer in din emoji.
 #[poise::command(slash_command)]
-pub async fn emoji(ctx: Context<'_>, emoji: String) -> AppResult {
+pub async fn emoji(
+    ctx: Context<'_>,
+    #[description = "Emojin att använda"] emoji: String,
+) -> AppResult {
     let Ok(found_emoji) = ReactionType::try_from(emoji) else {
         ctx.say_ephemeral("Det där var ingen emoji… (eller så gick någonting fel!)")
             .await

@@ -14,6 +14,7 @@ use edit::edit;
 use model::model;
 use view::view;
 
+/// Hanterar gubbar.
 #[poise::command(
     slash_command,
     subcommands("create", "edit", "view", "delete", "model"),

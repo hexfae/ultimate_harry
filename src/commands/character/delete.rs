@@ -21,6 +21,7 @@ use poise::serenity_prelude::{
 use snafu::ResultExt as _;
 use tokio::time::sleep;
 
+/// Dödar en gubbe.
 #[poise::command(slash_command, rename = "döda")]
 pub async fn delete(
     ctx: Context<'_>,

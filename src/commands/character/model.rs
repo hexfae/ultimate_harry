@@ -6,7 +6,7 @@ use crate::{
 };
 use snafu::ResultExt as _;
 
-/// The bot's Discord slash command for setting various AI model settings for a specific character.
+/// Ställer in en gubbes AI-modellinställningar.
 #[poise::command(slash_command, rename = "modell")]
 pub async fn model(
     ctx: Context<'_>,
@@ -14,8 +14,14 @@ pub async fn model(
     #[description = "Gubbens namn"]
     #[autocomplete = autocomplete]
     name: String,
+    #[rename = "modell"]
+    #[description = "Modellen att använda"]
     model: Option<String>,
+    #[rename = "api-nyckel"]
+    #[description = "API-nyckeln att använda"]
     api_key: Option<String>,
+    #[rename = "temperatur"]
+    #[description = "Temperaturen (högre = mer slumpmässig)"]
     temperature: Option<f32>,
 ) -> AppResult {
     let db = &ctx.data().db;

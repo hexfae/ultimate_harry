@@ -4,8 +4,8 @@ use crate::{AppResult, Context, error::SendMessageSnafu, traits::SayEphemeral as
 use poise::serenity_prelude::UserId;
 use snafu::ResultExt as _;
 
-/// The bot's Discord slash command for setting a user's name.
-#[poise::command(slash_command)]
+/// Ställer in en användares namn.
+#[poise::command(slash_command, rename = "namn")]
 pub async fn name(
     ctx: Context<'_>,
     #[rename = "namn"]

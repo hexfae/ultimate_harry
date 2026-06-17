@@ -20,7 +20,7 @@ use poise::{
 use snafu::ResultExt as _;
 use tokio::time::sleep;
 
-/// The bot's Discord slash command for creating characters.
+/// Skapar en ny gubbe.
 #[poise::command(slash_command, rename = "skapa")]
 pub async fn create(ctx: ApplicationContext<'_>) -> AppResult {
     let Some(first_modal) = execute_modal(ctx, None, None)

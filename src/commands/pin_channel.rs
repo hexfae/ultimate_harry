@@ -4,8 +4,14 @@ use crate::{AppResult, Context, error::SendMessageSnafu, traits::SayEphemeral as
 use serenity::all::GuildChannel;
 use snafu::ResultExt as _;
 
-#[poise::command(slash_command)]
-pub async fn pin_channel(ctx: Context<'_>, channel: GuildChannel) -> AppResult {
+/// Ställer in kanalen där fästa meddelanden hamnar.
+#[poise::command(slash_command, rename = "fästkanal")]
+pub async fn pin_channel(
+    ctx: Context<'_>,
+    #[rename = "kanal"]
+    #[description = "Kanalen där fästa meddelanden ska hamna"]
+    channel: GuildChannel,
+) -> AppResult {
     ctx.data().db.upsert_pin_channel(channel.id).await?;
     ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
     Ok(())

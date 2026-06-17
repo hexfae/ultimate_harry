@@ -11,6 +11,7 @@ use crate::{
 use poise::serenity_prelude::MessageId;
 use snafu::ResultExt as _;
 
+/// Startar en chatt med en gubbe.
 #[poise::command(slash_command, rename = "prata")]
 pub async fn chat(
     ctx: Context<'_>,

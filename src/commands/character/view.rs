@@ -5,6 +5,7 @@ use crate::{
     commands::{autocomplete, character::paginate::browse},
 };
 
+/// Visar en gubbe.
 #[poise::command(slash_command, rename = "visa")]
 pub async fn view(
     ctx: Context<'_>,
