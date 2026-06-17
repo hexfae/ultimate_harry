@@ -118,18 +118,7 @@ pub async fn history_and_character_of_replied_to(
     let Some(replied_to) = message.referenced_message.as_deref() else {
         return Ok(None);
     };
-    let Some(history) = db.history(replied_to).await? else {
-        return Ok(None);
-    };
-    let Some(character) = db.character(history.character()).await? else {
-        warn!(
-            "history {} references a missing character {}",
-            history.id(),
-            history.character()
-        );
-        return Ok(None);
-    };
-    Ok(Some((history, character)))
+    history_and_character_of(replied_to.id, db).await
 }
 
 /// Returns the history and character associated with the given message, if it's a character reply.
