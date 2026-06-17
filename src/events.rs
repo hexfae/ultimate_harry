@@ -77,7 +77,11 @@ impl EventHandlerTrait for EventHandler {
 pub async fn on_error(framework_error: FrameworkError<'_, AppState, AppError>) -> Result<()> {
     if let FrameworkError::Command { error, ctx, .. } = framework_error {
         let report = format!("{:?}", Report::from(error));
-        error!("in command");
+        error!(
+            command = %ctx.command().qualified_name,
+            user_id = %ctx.author().id,
+            "in command"
+        );
         eprintln!("{report}");
         ctx.say(format!("```\n{}```", strip_str(report)))
             .await
