@@ -684,14 +684,17 @@ fn create_buttons<'a>(
             vec![
                 emoji_button(prev_msg_id, PREVIOUS).disabled(!finished || !previous),
                 emoji_button(next_msg_id, NEXT).disabled(!finished),
-                emoji_button(edit_msg_id, EDIT).disabled(!finished),
                 emoji_button(undo_id, UNDO).disabled(!edit),
                 emoji_button(redo_id, REDO).disabled(!edit),
             ]
             .into(),
         )),
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
-            vec![emoji_button(pin_id, PIN).disabled(!finished)].into(),
+            vec![
+                emoji_button(edit_msg_id, EDIT).disabled(!finished),
+                emoji_button(pin_id, PIN).disabled(!finished),
+            ]
+            .into(),
         )),
     ];
     if !options.is_empty() {
