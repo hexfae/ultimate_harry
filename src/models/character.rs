@@ -1,14 +1,13 @@
 //! The character model for Discord character chats.
 
 //! This module contains the `Character` struct which represents an AI character
-//! that users can chat with, as well as the `CharacterPages` struct for pagination
-//! of multiple character search results.
+//! that users can chat with.
 
 use bon::Builder;
 use core::fmt::{Display, Formatter, Result as FmtResult, Write as _};
 use jiff::Zoned;
 use poise::serenity_prelude::{
-    CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage, MessageId,
+    CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage,
     all::{
         ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, UserId,
     },
@@ -194,30 +193,6 @@ impl CharacterOption {
     pub fn id(&self) -> &str {
         &self.id
     }
-}
-
-/// A paginated view of multiple characters.
-///
-/// This is used when viewing characters, allowing the user to navigate
-/// between multiple character results using buttons.
-#[derive(Debug, Serialize, Deserialize, Builder)]
-#[native_model(id = 3, version = 1, with = crate::codec::Json)]
-#[native_db]
-pub struct ViewCharacterPages {
-    /// The Discord message ID of the character page message, used as the primary key.
-    #[primary_key]
-    #[builder(with = |id: MessageId| id.to_string())]
-    id: String,
-    /// The character IDs shown on this page.
-    #[builder(with = |cs: &[Character]| cs.iter().map(|character| character.id().to_owned()).collect())]
-    characters: Vec<String>,
-    /// The current page index being displayed.
-    #[builder(default)]
-    current_page: usize,
-    /// `Some` if the user entered a name when running the command.
-    ///
-    /// This is then used to display the similarity of the names.
-    name: Option<String>,
 }
 
 impl Character {
@@ -534,14 +509,6 @@ impl Character {
                 .content(content.into())
                 .components(buttons),
         )
-    }
-}
-
-impl ViewCharacterPages {
-    #[must_use]
-    /// Returns the Discord message ID of this character page.
-    pub fn id(&self) -> &str {
-        &self.id
     }
 }
 

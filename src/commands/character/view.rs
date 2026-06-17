@@ -2,23 +2,8 @@
 
 use crate::{
     AppResult, Context,
-    commands::autocomplete,
-    constants::{NEXT, PREVIOUS},
-    error::{RetrieveMessageSnafu, SendMessageSnafu},
-    events::interaction::InteractionKind,
-    models::character::{Character, ViewCharacterPages},
-    phrases::no_character,
-    traits::SayEphemeral as _,
+    commands::{autocomplete, character::paginate::browse},
 };
-use alloc::borrow::Cow;
-use poise::{
-    CreateReply,
-    serenity_prelude::{
-        ButtonStyle, CreateActionRow, CreateButton, CreateComponent, MessageId, ReactionType,
-        small_fixed_array::FixedString,
-    },
-};
-use snafu::ResultExt as _;
 
 #[poise::command(slash_command, rename = "visa")]
 pub async fn view(
@@ -29,80 +14,9 @@ pub async fn view(
     #[autocomplete = autocomplete]
     name: Option<String>,
 ) -> AppResult {
-    let characters: Vec<Character> = match name {
+    let characters = match name {
         Some(character_name) => ctx.data().db.characters_by_similarity(character_name).await,
         None => ctx.data().db.characters_by_usage().await,
     }?;
-
-    let Some(first) = characters.first() else {
-        ctx.say_ephemeral(no_character())
-            .await
-            .context(SendMessageSnafu)?;
-        return Ok(());
-    };
-
-    let footer_text = {
-        let pages = characters.len();
-        let conversations_had = first.conversations_had();
-        let similarity = first.similarity();
-        format!("1/{pages} | {conversations_had} konversationer{similarity}")
-    };
-
-    let id = send_message(ctx, first, footer_text, characters.len()).await?;
-
-    let character_pages = ViewCharacterPages::builder()
-        .id(id)
-        .characters(&characters)
-        .build();
-
-    ctx.data()
-        .db
-        .insert_character_pages(character_pages)
-        .await?;
-
-    Ok(())
-}
-
-/// Send the first message, containing the embed of a character and buttons for viewing others.
-async fn send_message<'a>(
-    ctx: Context<'a>,
-    character: &'a Character,
-    footer_text: String,
-    total_pages: usize,
-) -> AppResult<MessageId> {
-    let id = ctx.id();
-    let embed = character
-        .clone()
-        .into_embed_with_footer_text(footer_text, &ctx.data().db)
-        .await;
-    let buttons = create_buttons(id, total_pages);
-    let msg = ctx
-        .send(CreateReply::default().embed(embed).components(buttons))
-        .await
-        .context(SendMessageSnafu)?;
-    Ok(msg.message().await.context(RetrieveMessageSnafu)?.id)
-}
-
-/// Returns a component action row containing 2 buttons for viewing others.
-#[must_use]
-pub fn create_buttons(id: u64, total_pages: usize) -> Cow<'static, [CreateComponent<'static>]> {
-    let prev = format!("{id}{}", InteractionKind::Previous);
-    let next = format!("{id}{}", InteractionKind::Next);
-    let disabled = total_pages < 2;
-    vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
-        vec![
-            CreateButton::new(prev)
-                .disabled(disabled)
-                .style(ButtonStyle::Secondary)
-                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(
-                    PREVIOUS,
-                ))),
-            CreateButton::new(next)
-                .disabled(disabled)
-                .style(ButtonStyle::Secondary)
-                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(NEXT))),
-        ]
-        .into(),
-    ))]
-    .into()
+    browse(ctx, characters).await
 }

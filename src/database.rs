@@ -21,7 +21,7 @@ use tracing::warn;
 
 use crate::llm::ModelSettings;
 use crate::models::{
-    character::{Character, CharacterOption, ViewCharacterPages},
+    character::{Character, CharacterOption},
     history::{History, StoredHistory, scaffolding},
     message::Message,
 };
@@ -50,7 +50,6 @@ async fn models() -> Result<&'static Models, DatabaseError> {
     models.define::<Character>().context(DefineModelSnafu)?;
     models.define::<StoredHistory>().context(DefineModelSnafu)?;
     models.define::<Message>().context(DefineModelSnafu)?;
-    models.define::<ViewCharacterPages>().context(DefineModelSnafu)?;
     models.define::<GlobalModelSettings>().context(DefineModelSnafu)?;
     models.define::<PinChannel>().context(DefineModelSnafu)?;
     models.define::<UserName>().context(DefineModelSnafu)?;
@@ -187,16 +186,6 @@ impl Database {
         write.upsert(character.clone()).context(UpdateSnafu)?;
         write.commit().context(UpdateSnafu)?;
         Ok(Some(character))
-    }
-
-    /// Inserts a list of character pages.
-    pub async fn insert_character_pages(
-        &self,
-        character_page: ViewCharacterPages,
-    ) -> Result<(), DatabaseError> {
-        let write = self.0.rw_transaction().context(InsertSnafu)?;
-        write.upsert(character_page).context(InsertSnafu)?;
-        write.commit().context(InsertSnafu)
     }
 
     /// Returns a chat history by its ID, hydrating its choice messages from the message table.
