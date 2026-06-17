@@ -31,7 +31,7 @@ pub struct Interaction {
 #[derive(Debug, PartialEq, Eq)]
 #[expect(
     clippy::module_name_repetitions,
-    reason = "there is no better name for it"
+    reason = "this is the public name for an interaction's variants, so the module prefix disambiguates it at use sites"
 )]
 pub enum InteractionKind {
     /// Show the previous reply.
@@ -59,7 +59,7 @@ pub enum InteractionKind {
 #[snafu(display("Okänd interaktion: {custom_id}"))]
 #[expect(
     clippy::module_name_repetitions,
-    reason = "there is no better name for it"
+    reason = "this is the public error type for an unparseable interaction, so the module prefix disambiguates it at use sites"
 )]
 pub struct UnknownInteraction {
     /// The ID of the interaction.
