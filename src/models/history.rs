@@ -736,10 +736,15 @@ impl From<(&Character, MessageId, UserId)> for History {
 /// Tests for in-memory history navigation.
 #[cfg(test)]
 mod tests {
-    use super::History;
-    use crate::models::message::Message;
+    use super::{BEGIN_EXAMPLE_MESSAGES, BEGIN_MESSAGE, History, SYSTEM_MESSAGE, scaffolding};
+    use crate::models::{character::Character, message::Message};
     use nonempty::NonEmpty;
-    use serenity::all::MessageId;
+    use serenity::all::{MessageId, UserId};
+
+    /// Returns the content of a scaffolding message's first part.
+    fn first_part_content(message: &Message) -> &str {
+        message.chosen_revision().head().content()
+    }
 
     /// Builds a history with `count` swipeable choices.
     fn history_with_choices(count: usize) -> History {
@@ -891,6 +896,73 @@ mod tests {
             hydrated.chosen_message().id(),
             choice_two_id.as_str(),
             "the chosen index points at the second choice"
+        );
+    }
+
+    /// A character with no optional fields scaffolds to just the framing system message and the
+    /// begin-message marker.
+    #[test]
+    fn scaffolding_is_minimal_for_a_bare_character() {
+        let character = Character::builder()
+            .id("character-id".to_owned())
+            .name("Harry")
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .build();
+        let messages = scaffolding(&character);
+        assert_eq!(
+            messages.len(),
+            2,
+            "a bare character scaffolds to two system messages"
+        );
+        assert_eq!(
+            messages.first().map(first_part_content),
+            Some(SYSTEM_MESSAGE),
+            "the first scaffolding message frames the roleplay"
+        );
+        assert_eq!(
+            messages.last().map(first_part_content),
+            Some(BEGIN_MESSAGE),
+            "the last scaffolding message marks the start of the conversation"
+        );
+    }
+
+    /// Every optional field plus an example pair contributes its scaffolding messages in order.
+    #[test]
+    fn scaffolding_expands_with_optional_fields() {
+        let character = Character::builder()
+            .id("character-id".to_owned())
+            .name("Harry")
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .personality("personality".to_owned())
+            .prompt("prompt".to_owned())
+            .scenario("scenario".to_owned())
+            .system_prompt("system prompt".to_owned())
+            .example_messages(vec![(Some("hi".to_owned()), "hello".to_owned())])
+            .build();
+        let messages = scaffolding(&character);
+        assert_eq!(
+            messages.len(),
+            11,
+            "the framing, personality pair, prompt, scenario, example pair, system prompt and \
+             begin-message marker total eleven messages"
+        );
+        assert_eq!(
+            messages.first().map(first_part_content),
+            Some(SYSTEM_MESSAGE),
+            "the framing system message stays first"
+        );
+        assert_eq!(
+            messages.last().map(first_part_content),
+            Some(BEGIN_MESSAGE),
+            "the begin-message marker stays last"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| first_part_content(message) == BEGIN_EXAMPLE_MESSAGES),
+            "the example messages are introduced by their marker"
         );
     }
 }
