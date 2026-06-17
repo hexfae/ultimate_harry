@@ -52,8 +52,8 @@ pub async fn next(
             db,
             options: &options,
         };
-        let total = stream_into(&requester, &context, None, now, &mut sink).await?;
-        sink.finalize(total, now.elapsed()).await?;
+        let reply = stream_into(&requester, &context, None, now, &mut sink).await?;
+        sink.finalize(reply, now.elapsed()).await?;
     } else {
         history.next();
 

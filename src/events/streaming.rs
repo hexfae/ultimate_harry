@@ -43,6 +43,15 @@ const GAVE_UP_MESSAGE: &str = "AI:n gav inget svar efter flera försök. Jag ger
 /// Reply shown when the request fails to start or the stream errors out.
 const ERROR_MESSAGE: &str = "Något gick fel när jag försökte svara. Försök igen senare.";
 
+/// A finished streamed reply: the rendered text and the model's reported
+/// output-token count, used to record per-character generation stats.
+pub struct Reply {
+    /// The full reply text accumulated from the stream.
+    pub text: String,
+    /// Output tokens the model reported, or `0` if the stream gave no final usage report.
+    pub output_tokens: u64,
+}
+
 /// The Discord message a streamed reply is rendered into, tick by tick.
 ///
 /// [`stream_into`] calls [`placeholder`](ReplySink::placeholder) while the reply
@@ -56,8 +65,9 @@ pub trait ReplySink {
     fn progress(&mut self, total: String, elapsed: Duration)
     -> impl Future<Output = AppResult> + Send;
 
-    /// Store `total` as the finished reply, persist it, and render it once more.
-    fn finalize(self, total: String, elapsed: Duration) -> impl Future<Output = AppResult> + Send;
+    /// Store `reply` as the finished reply, persist it (along with the
+    /// character's generation stats), and render it once more.
+    fn finalize(self, reply: Reply, elapsed: Duration) -> impl Future<Output = AppResult> + Send;
 }
 
 /// Renders a streamed reply onto a sent [`Message`] (new replies and hand-offs).
@@ -102,12 +112,17 @@ impl ReplySink for MessageSink<'_> {
         Ok(())
     }
 
-    async fn finalize(self, total: String, elapsed: Duration) -> AppResult {
+    async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
+        let words = u32::try_from(reply.text.split_whitespace().count()).unwrap_or(u32::MAX);
+        let tokens = u32::try_from(reply.output_tokens).unwrap_or(u32::MAX);
         self.history
-            .set_choices((self.character.clone(), total, elapsed));
+            .set_choices((self.character.clone(), reply.text, elapsed));
         self.history.set_id(&*self.message);
         self.history.set_finished(true);
         self.db.upsert_history(self.history.clone()).await?;
+        self.db
+            .record_character_generation(self.character.id(), words, tokens)
+            .await?;
         let edit = self
             .history
             .to_edit_response(self.character, &*self.message, self.db, self.options)
@@ -164,11 +179,16 @@ impl ReplySink for InteractionSink<'_> {
         Ok(())
     }
 
-    async fn finalize(self, total: String, elapsed: Duration) -> AppResult {
+    async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
+        let words = u32::try_from(reply.text.split_whitespace().count()).unwrap_or(u32::MAX);
+        let tokens = u32::try_from(reply.output_tokens).unwrap_or(u32::MAX);
         self.history
-            .update_current_choice((self.character.clone(), total, elapsed));
+            .update_current_choice((self.character.clone(), reply.text, elapsed));
         self.history.set_finished(true);
         self.db.upsert_history(self.history.clone()).await?;
+        self.db
+            .record_character_generation(self.character.id(), words, tokens)
+            .await?;
         let edit = self
             .history
             .to_edit_interaction(self.character, self.id, self.db, self.options)
@@ -197,8 +217,9 @@ pub async fn stream_into<S: ReplySink>(
     prompt: Option<String>,
     start: Instant,
     sink: &mut S,
-) -> AppResult<String> {
+) -> AppResult<Reply> {
     let mut total = String::new();
+    let mut output_tokens: u64 = 0;
     let mut attempt: u32 = 0;
     'attempts: loop {
         attempt = attempt.saturating_add(1);
@@ -235,6 +256,9 @@ pub async fn stream_into<S: ReplySink>(
                             }
                             total += delta.text();
                         }
+                        Some(MultiTurnStreamItem::FinalResponse(final_response)) => {
+                            output_tokens = final_response.usage().output_tokens;
+                        }
                         Some(_) => {},
                         None => break,
                     }
@@ -267,5 +291,8 @@ pub async fn stream_into<S: ReplySink>(
         debug!("llm returned an empty completion, retrying (attempt {attempt})");
     }
 
-    Ok(total)
+    Ok(Reply {
+        text: total,
+        output_tokens,
+    })
 }

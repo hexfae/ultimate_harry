@@ -82,8 +82,11 @@ pub async fn character(
         db,
         options: &options,
     };
-    let total = stream_into(&requester, &context, Some(prompt), now, &mut sink).await?;
-    sink.finalize(total, now.elapsed()).await?;
+    let reply = stream_into(&requester, &context, Some(prompt), now, &mut sink).await?;
+    sink.finalize(reply, now.elapsed()).await?;
+
+    db.record_character_spawn(new_character.id(), interaction.user.id)
+        .await?;
 
     Ok(())
 }

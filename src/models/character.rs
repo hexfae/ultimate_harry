@@ -271,6 +271,12 @@ impl Character {
         self.deleted_at.is_none() && self.next_version.is_none()
     }
 
+    /// Returns the ID of the next version of this character, if it has been superseded.
+    #[must_use]
+    pub fn next_version(&self) -> Option<&str> {
+        self.next_version.as_deref()
+    }
+
     /// Filters out deleted and superseded characters, then returns up to 25 ranked by name
     /// (and nickname) similarity to the input, breaking ties by number of conversations had.
     ///
@@ -310,6 +316,23 @@ impl Character {
     #[must_use]
     pub const fn conversations_had(&self) -> u32 {
         self.conversations_had
+    }
+
+    /// Records that this character was spawned into a new conversation by the given user.
+    ///
+    /// Bumps the total and per-user conversation counts and refreshes the
+    /// latest-conversation timestamp.
+    pub fn record_spawn(&mut self, user: UserId) {
+        self.conversations_had = self.conversations_had.saturating_add(1);
+        let count = self.conversations_had_with_user.entry(user).or_default();
+        *count = count.saturating_add(1);
+        self.latest_conversation = Some(Zoned::now());
+    }
+
+    /// Records the words and tokens this character generated in a single reply.
+    pub const fn record_generation(&mut self, words: u32, tokens: u32) {
+        self.words_generated = self.words_generated.saturating_add(words);
+        self.tokens_generated = self.tokens_generated.saturating_add(tokens);
     }
 
     /// Returns a formatted string of conversation counts, grouped by user.

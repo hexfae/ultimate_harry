@@ -331,6 +331,77 @@ impl Database {
         Ok(Some(character))
     }
 
+    /// Records a character spawn (a new conversation) for the given user.
+    ///
+    /// The stats land on the character's latest version (walking the version
+    /// chain past any edits), so they carry across edits even when the
+    /// conversation is pinned to an older version. Best-effort: warns and
+    /// returns `Ok` if the character is missing.
+    pub async fn record_character_spawn(
+        &self,
+        id: &str,
+        user: UserId,
+    ) -> Result<(), DatabaseError> {
+        let write = self.0.rw_transaction().context(UpdateSnafu)?;
+        let Some(mut character) = write
+            .get()
+            .primary::<Character>(id.to_owned())
+            .context(UpdateSnafu)?
+        else {
+            warn!("tried to record a spawn for a missing character: {id}");
+            return Ok(());
+        };
+        while let Some(next_id) = character.next_version().map(str::to_owned) {
+            let Some(next) = write
+                .get()
+                .primary::<Character>(next_id)
+                .context(UpdateSnafu)?
+            else {
+                break;
+            };
+            character = next;
+        }
+        character.record_spawn(user);
+        write.upsert(character).context(UpdateSnafu)?;
+        write.commit().context(UpdateSnafu)
+    }
+
+    /// Records the words and tokens a character generated in a single reply.
+    ///
+    /// The stats land on the character's latest version (walking the version
+    /// chain past any edits), so they carry across edits even when the
+    /// conversation is pinned to an older version. Best-effort: warns and
+    /// returns `Ok` if the character is missing.
+    pub async fn record_character_generation(
+        &self,
+        id: &str,
+        words: u32,
+        tokens: u32,
+    ) -> Result<(), DatabaseError> {
+        let write = self.0.rw_transaction().context(UpdateSnafu)?;
+        let Some(mut character) = write
+            .get()
+            .primary::<Character>(id.to_owned())
+            .context(UpdateSnafu)?
+        else {
+            warn!("tried to record generation for a missing character: {id}");
+            return Ok(());
+        };
+        while let Some(next_id) = character.next_version().map(str::to_owned) {
+            let Some(next) = write
+                .get()
+                .primary::<Character>(next_id)
+                .context(UpdateSnafu)?
+            else {
+                break;
+            };
+            character = next;
+        }
+        character.record_generation(words, tokens);
+        write.upsert(character).context(UpdateSnafu)?;
+        write.commit().context(UpdateSnafu)
+    }
+
     /// Reads a singleton-style record by its primary key, returning a default
     /// value (after logging a warning under `label`) on any transaction or
     /// lookup failure.

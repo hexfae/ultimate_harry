@@ -61,8 +61,8 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         db,
         options: &options,
     };
-    let total = stream_into(&requester, &context, None, now, &mut sink).await?;
-    sink.finalize(total, now.elapsed()).await?;
+    let reply = stream_into(&requester, &context, None, now, &mut sink).await?;
+    sink.finalize(reply, now.elapsed()).await?;
 
     Ok(())
 }

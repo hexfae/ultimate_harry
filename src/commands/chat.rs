@@ -58,5 +58,8 @@ pub async fn chat(
     .context(EditMessageSnafu)?;
     db.upsert_history(history).await?;
 
+    db.record_character_spawn(character.id(), ctx.author().id)
+        .await?;
+
     Ok(())
 }
