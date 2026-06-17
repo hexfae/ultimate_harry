@@ -37,7 +37,7 @@ pub async fn chat(
     };
 
     let id = MessageId::new(1);
-    let mut history = History::from((character, id, ctx.author().id));
+    let mut history = History::from((character, id));
     history.set_finished(true);
 
     let options = db.character_menu_options().await?;

@@ -718,12 +718,12 @@ fn create_buttons<'a>(
     components.into()
 }
 
-/// Creates a new [`History`] from a character, message ID, and user ID.
+/// Creates a new [`History`] from a character and message ID.
 ///
 /// The conversation starts empty (the scaffolding is derived at request time); the greeting is
 /// the single initial choice.
-impl From<(&Character, MessageId, UserId)> for History {
-    fn from((character, id, _user_id): (&Character, MessageId, UserId)) -> Self {
+impl From<(&Character, MessageId)> for History {
+    fn from((character, id): (&Character, MessageId)) -> Self {
         let mut message = Message::new_system("");
         message.edit(character.name(), character.greeting(), None::<u64>);
         let choices = NonEmpty::new(message);
