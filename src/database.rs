@@ -296,6 +296,12 @@ impl Database {
 
     /// Updates or inserts a chat history, writing its choice and pending messages to the message
     /// table and storing the history as message-ID lists.
+    ///
+    /// Each handler loads its own [`History`], mutates it, and saves it here across a separate
+    /// transaction, so two near-simultaneous button presses on the same reply race and the last
+    /// write wins (a lost swipe/edit). This is accepted: there is no per-conversation lock or
+    /// version guard, because the bot serves a handful of users and the worst case is a single
+    /// dropped mutation, never corruption (every write is a whole, valid record).
     pub async fn upsert_history(&self, history: History) -> Result<(), DatabaseError> {
         let (stored, messages) = history.into_stored();
         let write = self.0.rw_transaction().context(InsertSnafu)?;
