@@ -75,6 +75,27 @@ impl Reply {
     }
 }
 
+/// Marks the history finished, persists it, and records the character's
+/// generation stats for a genuine (non-sentinel) reply. Shared by both sinks'
+/// finalize step; the caller stores the chosen reply (and, for a new message,
+/// its ID) first.
+async fn persist_reply(
+    db: &Database,
+    history: &mut History,
+    character: &Character,
+    counts: (u32, u32),
+    complete: bool,
+) -> AppResult {
+    history.set_finished(true);
+    db.upsert_history(history.clone()).await?;
+    if complete {
+        let (words, tokens) = counts;
+        db.record_character_generation(character.id(), words, tokens)
+            .await?;
+    }
+    Ok(())
+}
+
 /// The Discord message a streamed reply is rendered into, tick by tick.
 ///
 /// [`stream_into`] calls [`placeholder`](ReplySink::placeholder) while the reply
@@ -136,18 +157,12 @@ impl ReplySink for MessageSink<'_> {
     }
 
     async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
-        let (words, tokens) = reply.counts();
+        let counts = reply.counts();
         let complete = reply.complete;
         self.history
             .set_choices((self.character.clone(), reply.text, elapsed));
         self.history.set_id(&*self.message);
-        self.history.set_finished(true);
-        self.db.upsert_history(self.history.clone()).await?;
-        if complete {
-            self.db
-                .record_character_generation(self.character.id(), words, tokens)
-                .await?;
-        }
+        persist_reply(self.db, self.history, self.character, counts, complete).await?;
         let edit = self
             .history
             .to_edit_response(self.character, &*self.message, self.db, self.options)
@@ -205,17 +220,11 @@ impl ReplySink for InteractionSink<'_> {
     }
 
     async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
-        let (words, tokens) = reply.counts();
+        let counts = reply.counts();
         let complete = reply.complete;
         self.history
             .update_current_choice((self.character.clone(), reply.text, elapsed));
-        self.history.set_finished(true);
-        self.db.upsert_history(self.history.clone()).await?;
-        if complete {
-            self.db
-                .record_character_generation(self.character.id(), words, tokens)
-                .await?;
-        }
+        persist_reply(self.db, self.history, self.character, counts, complete).await?;
         let edit = self
             .history
             .to_edit_interaction(self.character, self.id, self.db, self.options)
