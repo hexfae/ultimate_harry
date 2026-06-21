@@ -14,6 +14,7 @@ mod llm;
 mod models;
 mod phrases;
 mod traits;
+mod util;
 
 use crate::{
     app_state::AppState,

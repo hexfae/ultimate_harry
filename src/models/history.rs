@@ -60,6 +60,7 @@ use crate::{
         character::{Character, CharacterOption},
         message::Message,
     },
+    util::wrapping_previous,
 };
 
 /// The system message that precedes every conversation.
@@ -207,11 +208,7 @@ impl History {
 
     /// Shows the previous choice by cycling the current index backward.
     pub fn previous(&mut self) {
-        self.current = self
-            .current
-            .saturating_add(self.choices.len())
-            .saturating_sub(1)
-            .strict_rem(self.choices.len());
+        self.current = wrapping_previous(self.current, self.choices.len());
     }
 
     /// Shows the next choice by cycling the current index forward.

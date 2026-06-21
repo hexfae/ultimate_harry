@@ -19,6 +19,7 @@ use crate::{
     models::character::Character,
     phrases::{cancelled, no_character},
     traits::{RespondToWith as _, SayEphemeral as _},
+    util::wrapping_previous,
 };
 use alloc::borrow::Cow;
 use core::future::Ready;
@@ -148,10 +149,7 @@ where
     while let Some(interaction) = create_collector(ctx, action_emoji.is_some()).await {
         match Interaction::try_from(&interaction)?.kind {
             InteractionKind::Previous => {
-                current_page = current_page
-                    .saturating_add(pages)
-                    .saturating_sub(1)
-                    .strict_rem(pages);
+                current_page = wrapping_previous(current_page, pages);
             }
             InteractionKind::Next => {
                 current_page = current_page.saturating_add(1).strict_rem(pages);
