@@ -3,6 +3,7 @@
 use crate::{
     AppResult, Context,
     commands::{autocomplete, character::paginate::paginate},
+    components::single_button_row,
     constants::EDIT,
     error::{DeleteResponseSnafu, EditResponseSnafu, ShowModalSnafu},
     models::{
@@ -15,8 +16,7 @@ use core::time::Duration;
 use poise::{
     Modal, execute_modal_on_component_interaction,
     serenity_prelude::{
-        ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateButton,
-        CreateComponent, EditInteractionResponse,
+        ComponentInteraction, ComponentInteractionCollector, EditInteractionResponse,
         small_fixed_array::{FixedArray, FixedString},
     },
 };
@@ -126,15 +126,13 @@ async fn send_first_tempting_button(
     interaction: ComponentInteraction,
 ) -> AppResult {
     let id = ctx.id().to_string();
-    let button = vec![CreateButton::new(id).label(click_me())].into();
-    let component = vec![CreateComponent::ActionRow(CreateActionRow::Buttons(button))];
     interaction
         .edit_response(
             ctx.http(),
             EditInteractionResponse::new()
                 .content(click_below())
                 .embeds(vec![])
-                .components(component),
+                .components(single_button_row(id, click_me())),
         )
         .await
         .context(EditResponseSnafu)

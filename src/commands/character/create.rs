@@ -2,6 +2,7 @@
 
 use crate::{
     AppResult, ApplicationContext, Context,
+    components::single_button_row,
     error::{DeleteMessageSnafu, SendMessageSnafu, ShowModalSnafu},
     models::character::Character,
     phrases::{click_below, click_me, created},
@@ -12,8 +13,7 @@ use core::time::Duration;
 use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal, execute_modal_on_component_interaction,
     serenity_prelude::{
-        ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateButton,
-        CreateComponent,
+        ComponentInteraction, ComponentInteractionCollector,
         small_fixed_array::{FixedArray, FixedString},
     },
 };
@@ -84,10 +84,7 @@ async fn show_modal_on_button_press<M: Modal>(
 /// Sends a message that attempts to tempt the user into pressing it.
 #[must_use]
 fn create_reply_with_tempting_button<'a>(id: impl Into<Cow<'a, str>>) -> CreateReply<'a> {
-    let button = vec![CreateButton::new(id).label(click_me())].into();
-    let component = vec![CreateComponent::ActionRow(CreateActionRow::Buttons(button))];
-
     CreateReply::default()
         .content(click_below())
-        .components(component)
+        .components(single_button_row(id, click_me()))
 }
