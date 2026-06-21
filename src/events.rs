@@ -6,10 +6,10 @@ pub mod message;
 pub mod ready;
 pub mod streaming;
 
-use crate::{app_state::AppState, error::AppError};
+use crate::{app_state::AppState, error::AppError, traits::SayEphemeral as _};
 use alloc::sync::Arc;
 use miette::{IntoDiagnostic as _, Report, Result};
-use poise::FrameworkError;
+use poise::{FrameworkError, builtins};
 use serenity::{
     all::{Context, EventHandler as EventHandlerTrait, FullEvent, Interaction},
     async_trait,
@@ -78,17 +78,24 @@ impl EventHandlerTrait for EventHandler {
     reason = "color printing is broken when logging with tracing"
 )]
 pub async fn on_error(framework_error: FrameworkError<'_, AppState, AppError>) -> Result<()> {
-    if let FrameworkError::Command { error, ctx, .. } = framework_error {
-        let report = format!("{:?}", Report::from(error));
-        error!(
-            command = %ctx.command().qualified_name,
-            user_id = %ctx.author().id,
-            "in command"
-        );
-        eprintln!("{report}");
-        ctx.say(format!("```\n{}```", strip_str(report)))
-            .await
-            .into_diagnostic()?;
+    match framework_error {
+        FrameworkError::Command { error, ctx, .. } => {
+            let report = format!("{:?}", Report::from(error));
+            error!(
+                command = %ctx.command().qualified_name,
+                user_id = %ctx.author().id,
+                "in command"
+            );
+            eprintln!("{report}");
+            ctx.say_ephemeral(format!("```\n{}```", strip_str(report)))
+                .await
+                .into_diagnostic()?;
+        }
+        other => {
+            if let Err(why) = builtins::on_error(other).await {
+                error!("while handling a framework error: {why}");
+            }
+        }
     }
     Ok(())
 }
