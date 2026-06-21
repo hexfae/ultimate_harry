@@ -55,6 +55,16 @@ pub struct Reply {
     pub complete: bool,
 }
 
+impl Reply {
+    /// Returns the reply's word and output-token counts, saturating at
+    /// [`u32::MAX`], for recording per-character generation stats.
+    fn counts(&self) -> (u32, u32) {
+        let words = u32::try_from(self.text.split_whitespace().count()).unwrap_or(u32::MAX);
+        let tokens = u32::try_from(self.output_tokens).unwrap_or(u32::MAX);
+        (words, tokens)
+    }
+}
+
 /// The Discord message a streamed reply is rendered into, tick by tick.
 ///
 /// [`stream_into`] calls [`placeholder`](ReplySink::placeholder) while the reply
@@ -116,8 +126,7 @@ impl ReplySink for MessageSink<'_> {
     }
 
     async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
-        let words = u32::try_from(reply.text.split_whitespace().count()).unwrap_or(u32::MAX);
-        let tokens = u32::try_from(reply.output_tokens).unwrap_or(u32::MAX);
+        let (words, tokens) = reply.counts();
         let complete = reply.complete;
         self.history
             .set_choices((self.character.clone(), reply.text, elapsed));
@@ -186,8 +195,7 @@ impl ReplySink for InteractionSink<'_> {
     }
 
     async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
-        let words = u32::try_from(reply.text.split_whitespace().count()).unwrap_or(u32::MAX);
-        let tokens = u32::try_from(reply.output_tokens).unwrap_or(u32::MAX);
+        let (words, tokens) = reply.counts();
         let complete = reply.complete;
         self.history
             .update_current_choice((self.character.clone(), reply.text, elapsed));
