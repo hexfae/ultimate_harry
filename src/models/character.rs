@@ -15,6 +15,7 @@ use poise::serenity_prelude::{
 use native_db::{ToKey as _, native_db};
 use native_model::{Model as _, native_model};
 use serde::{Deserialize, Serialize};
+use crate::constants::MAX_RESULTS;
 use alloc::collections::{BTreeMap, BTreeSet};
 use tracing::warn;
 use ulid::Ulid;
@@ -302,8 +303,8 @@ impl Character {
         self.next_version.as_deref()
     }
 
-    /// Filters out deleted and superseded characters, then returns up to 25 ranked by name
-    /// (and nickname) similarity to the input, breaking ties by number of conversations had.
+    /// Filters out deleted and superseded characters, then returns up to [`MAX_RESULTS`] ranked by
+    /// name (and nickname) similarity to the input, breaking ties by number of conversations had.
     ///
     /// This replaces the old `MOST_SIMILAR_TO` `SurrealQL` query and sets each returned
     /// character's `similarity` for display.
@@ -333,7 +334,7 @@ impl Character {
                 .total_cmp(&left_similarity)
                 .then_with(|| right.conversations_had.cmp(&left.conversations_had))
         });
-        ranked.truncate(25);
+        ranked.truncate(MAX_RESULTS);
         ranked
     }
 
@@ -626,7 +627,7 @@ fn create_confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'stati
 /// Tests for character similarity ranking.
 #[cfg(test)]
 mod tests {
-    use super::Character;
+    use super::{Character, MAX_RESULTS};
     use serenity::all::UserId;
 
     /// Builds a minimal visible character with the given ID and name.
@@ -711,6 +712,23 @@ mod tests {
         assert!(
             position_of(&ranked, "id-tie-high") < position_of(&ranked, "id-tie-low"),
             "equal similarity breaks ties toward more conversations"
+        );
+    }
+
+    /// `rank_by_similarity` caps its output at the shared `MAX_RESULTS`, matching the database
+    /// listing queries and Discord's 25-option select-menu limit.
+    #[test]
+    fn ranking_is_capped_at_max_results() {
+        let characters = (0..MAX_RESULTS.saturating_add(5))
+            .map(|index| basic_character(&format!("id-{index}"), "Banana"))
+            .collect();
+
+        let ranked = Character::rank_by_similarity(characters, "Banana");
+
+        assert_eq!(
+            ranked.len(),
+            MAX_RESULTS,
+            "the ranking never returns more than MAX_RESULTS characters"
         );
     }
 }

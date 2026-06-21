@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use tracing::warn;
 
+use crate::constants::MAX_RESULTS;
 use crate::llm::ModelSettings;
 use crate::models::{
     character::{Character, CharacterOption},
@@ -32,9 +33,6 @@ const DATABASE_PATH: &str = "harry_database.db";
 
 /// The fixed primary key used for singleton records (model settings, pin channel).
 const SINGLETON_KEY: &str = "global";
-
-/// The maximum number of characters returned by the listing queries.
-const MAX_RESULTS: usize = 25;
 
 /// Resolves a single message ID against an open read transaction, warning (and
 /// returning `None`) when the message is missing from the table.

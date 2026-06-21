@@ -22,3 +22,9 @@ pub const DELETE: &str = "🗑";
 /// This is slightly below 4000 (Discord's limit) because their count includes all text of all
 /// text displays on the embed/component, including e.g. the footer or the character's name.
 pub const CHARACTER_LIMIT: usize = 3900;
+
+/// The maximum number of characters returned by the listing/ranking queries.
+///
+/// Capped at Discord's hard limit of 25 options per select menu, so both the database listing
+/// queries and `Character::rank_by_similarity` must agree on this value.
+pub const MAX_RESULTS: usize = 25;
