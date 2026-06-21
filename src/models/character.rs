@@ -377,8 +377,8 @@ impl Character {
 
     /// Returns the character's model settings override, if any.
     #[must_use]
-    pub fn model_settings(&self) -> Option<ModelSettings> {
-        self.model_settings.clone()
+    pub const fn model_settings(&self) -> Option<&ModelSettings> {
+        self.model_settings.as_ref()
     }
 
     /// Returns whether the character has its own model settings override.

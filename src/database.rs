@@ -475,7 +475,7 @@ impl Database {
     /// bot's global settings only when the character has no override.
     pub async fn resolved_model_settings(&self, character: &Character) -> ModelSettings {
         match character.model_settings() {
-            Some(settings) => settings,
+            Some(settings) => settings.clone(),
             None => self.model_settings().await,
         }
     }
