@@ -54,10 +54,12 @@ pub async fn create(ctx: ApplicationContext<'_>) -> AppResult {
     Ok(())
 }
 
-/// Create a collector that listens for a button press with the context's id.
+/// Create a collector that listens for a button press from the command's author
+/// with the context's id.
 #[must_use]
 async fn create_collector(ctx: ApplicationContext<'_>) -> Option<ComponentInteraction> {
     ComponentInteractionCollector::new(ctx.serenity_context())
+        .author_id(ctx.author().id)
         .custom_ids(FixedArray::from_vec_trunc(vec![
             FixedString::from_string_trunc(ctx.id().to_string()),
         ]))
