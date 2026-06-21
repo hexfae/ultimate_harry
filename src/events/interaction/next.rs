@@ -1,5 +1,6 @@
 //! The button that shows the next reply of a message or generates a new one.
 
+use super::swipe::swipe;
 use crate::{
     AppResult,
     database::Database,
@@ -51,16 +52,7 @@ pub async fn next(
         let reply = stream_into(&requester, &context, None, now, &mut sink).await?;
         sink.finalize(reply, now.elapsed()).await?;
     } else {
-        history.next();
-
-        let response = history.to_interaction(&character, id, db, &options).await;
-
-        interaction
-            .create_response(&ctx.http, response)
-            .await
-            .context(SendResponseSnafu)?;
-
-        db.upsert_history(history).await?;
+        swipe(ctx, interaction, id, db, history, character, History::next).await?;
     }
 
     Ok(())
