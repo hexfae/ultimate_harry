@@ -3,13 +3,13 @@
 use crate::{
     AppResult, ApplicationContext, Context,
     components::single_button_row,
+    constants::TRANSIENT_LINGER,
     error::{DeleteMessageSnafu, SendMessageSnafu, ShowModalSnafu},
     models::character::Character,
     phrases::{click_below, click_me, created},
     traits::SayEphemeral as _,
 };
 use alloc::borrow::Cow;
-use core::time::Duration;
 use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal, execute_modal_on_component_interaction,
     serenity_prelude::{
@@ -43,7 +43,7 @@ pub async fn create(ctx: ApplicationContext<'_>) -> AppResult {
         .say_ephemeral(created(&character))
         .await
         .context(SendMessageSnafu)?;
-    sleep(Duration::from_secs(5)).await;
+    sleep(TRANSIENT_LINGER).await;
     success_message
         .delete(Context::Application(ctx))
         .await

@@ -6,14 +6,13 @@ use crate::{
         autocomplete,
         character::paginate::{notify_cancelled, paginate},
     },
-    constants::DELETE,
+    constants::{DELETE, TRANSIENT_LINGER},
     error::{DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
     events::interaction::InteractionKind,
     models::character::Character,
     phrases::{ask_delete, deleted},
     traits::RespondToWith as _,
 };
-use core::time::Duration;
 use poise::serenity_prelude::{
     ComponentInteraction, ComponentInteractionCollector,
     small_fixed_array::{FixedArray, FixedString},
@@ -87,7 +86,7 @@ async fn delete_confirmed(
     ctx.respond_to_with(&interaction, deleted())
         .await
         .context(SendMessageSnafu)?;
-    sleep(Duration::from_secs(5)).await;
+    sleep(TRANSIENT_LINGER).await;
     interaction
         .delete_response(ctx.http())
         .await

@@ -1,5 +1,7 @@
 //! A few constants used throughout the crate.
 
+use core::time::Duration;
+
 /// The emoji used for cancelling operations on characters.
 pub const CANCEL: &str = "❌";
 /// The emoji used for navigating backward in chats/character pages.
@@ -28,3 +30,6 @@ pub const CHARACTER_LIMIT: usize = 3900;
 /// Capped at Discord's hard limit of 25 options per select menu, so both the database listing
 /// queries and `Character::rank_by_similarity` must agree on this value.
 pub const MAX_RESULTS: usize = 25;
+
+/// How long a transient confirmation or notice message lingers before it is deleted.
+pub const TRANSIENT_LINGER: Duration = Duration::from_secs(5);

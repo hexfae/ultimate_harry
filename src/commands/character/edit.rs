@@ -4,7 +4,7 @@ use crate::{
     AppResult, Context,
     commands::{autocomplete, character::paginate::paginate},
     components::single_button_row,
-    constants::EDIT,
+    constants::{EDIT, TRANSIENT_LINGER},
     error::{DeleteResponseSnafu, EditResponseSnafu, ShowModalSnafu},
     models::{
         character::Character,
@@ -12,7 +12,6 @@ use crate::{
     },
     phrases::{click_below, click_me, edited},
 };
-use core::time::Duration;
 use poise::{
     Modal, execute_modal_on_component_interaction,
     serenity_prelude::{
@@ -73,7 +72,7 @@ async fn edit_confirmed(
         )
         .await
         .context(EditResponseSnafu)?;
-    sleep(Duration::from_secs(5)).await;
+    sleep(TRANSIENT_LINGER).await;
     interaction
         .delete_response(ctx.http())
         .await

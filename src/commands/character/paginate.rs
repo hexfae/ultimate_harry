@@ -11,7 +11,7 @@
 use crate::{
     AppResult, Context,
     components::emoji_button,
-    constants::{CANCEL, NEXT, PREVIOUS},
+    constants::{CANCEL, NEXT, PREVIOUS, TRANSIENT_LINGER},
     error::{
         DeleteMessageSnafu, DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu,
     },
@@ -23,7 +23,6 @@ use crate::{
 };
 use alloc::borrow::Cow;
 use core::future::Ready;
-use core::time::Duration;
 use nonempty::NonEmpty;
 use poise::{
     CreateReply, ReplyHandle,
@@ -115,7 +114,7 @@ async fn build_pages(
             .say_ephemeral(no_character())
             .await
             .context(SendMessageSnafu)?;
-        sleep(Duration::from_secs(5)).await;
+        sleep(TRANSIENT_LINGER).await;
         msg.delete(ctx).await.context(DeleteMessageSnafu)?;
         Ok(None)
     }
@@ -259,7 +258,7 @@ pub async fn notify_cancelled(ctx: Context<'_>, interaction: ComponentInteractio
     ctx.respond_to_with(&interaction, cancelled())
         .await
         .context(SendMessageSnafu)?;
-    sleep(Duration::from_secs(5)).await;
+    sleep(TRANSIENT_LINGER).await;
     interaction
         .delete_response(ctx.http())
         .await
