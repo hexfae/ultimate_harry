@@ -447,18 +447,7 @@ impl History {
             .into()
         };
 
-        let title = vec![CreateContainerComponent::Section(CreateSection::new(
-            vec![
-                CreateSectionComponent::TextDisplay(CreateTextDisplay::new(format!(
-                    "## {character}"
-                ))),
-                CreateSectionComponent::TextDisplay(CreateTextDisplay::new("…")),
-            ],
-            CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
-                character.avatar().unwrap_or(EMPTY_AVATAR),
-            ))),
-        ))]
-        .into();
+        let title = vec![character_title_section(character, "…")].into();
 
         let components = create_buttons(1, self.has_finished, has_previous, has_edit, options);
 
@@ -615,20 +604,7 @@ impl History {
             None => (text, None),
         };
 
-        let title = vec![CreateContainerComponent::Section(CreateSection::new(
-            vec![
-                CreateSectionComponent::TextDisplay(CreateTextDisplay::new(format!(
-                    "## {character}"
-                ))),
-                CreateSectionComponent::TextDisplay(CreateTextDisplay::new(first)),
-            ],
-            CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
-                character
-                    .avatar()
-                    .unwrap_or("https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png"),
-            ))),
-        ))]
-        .into();
+        let title = vec![character_title_section(character, first)].into();
 
         let components = create_buttons(
             id.into().into(),
@@ -661,6 +637,24 @@ impl History {
             .flags(MessageFlags::IS_COMPONENTS_V2)
             .components(container)
     }
+}
+
+/// Builds the title section of a history message: the character's name as a
+/// heading, `body` as the leading text, and the character's avatar (or a
+/// transparent placeholder) as the section thumbnail.
+fn character_title_section<'a>(
+    character: &'a Character,
+    body: &'a str,
+) -> CreateContainerComponent<'a> {
+    CreateContainerComponent::Section(CreateSection::new(
+        vec![
+            CreateSectionComponent::TextDisplay(CreateTextDisplay::new(format!("## {character}"))),
+            CreateSectionComponent::TextDisplay(CreateTextDisplay::new(body)),
+        ],
+        CreateSectionAccessory::Thumbnail(CreateThumbnail::new(CreateUnfurledMediaItem::new(
+            character.avatar().unwrap_or(EMPTY_AVATAR),
+        ))),
+    ))
 }
 
 /// Creates button components for the history message.
