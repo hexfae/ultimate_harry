@@ -5,6 +5,7 @@
 
 use bon::Builder;
 use core::fmt::{Display, Formatter, Result as FmtResult, Write as _};
+use tracing::warn;
 use jiff::Zoned;
 use poise::serenity_prelude::{
     CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage,
@@ -17,7 +18,6 @@ use native_model::{Model as _, native_model};
 use serde::{Deserialize, Serialize};
 use crate::constants::MAX_RESULTS;
 use alloc::collections::{BTreeMap, BTreeSet};
-use tracing::warn;
 use ulid::Ulid;
 use url::Url;
 
@@ -365,15 +365,9 @@ impl Character {
     #[must_use]
     pub async fn formatted_conversations_had(&self, db: &Database) -> String {
         let mut string = format!("Totalt: {}", self.conversations_had);
-        let mut user_ids = self.conversations_had_with_user.keys().collect::<Vec<_>>();
-        user_ids.sort_unstable();
-        for id in user_ids {
+        // a BTreeMap already iterates in sorted key order, so no separate sort is needed
+        for (id, count) in &self.conversations_had_with_user {
             let name = db.substitute_name(id).await;
-            let count = self
-                .conversations_had_with_user
-                .get(id)
-                .copied()
-                .unwrap_or_default();
             if let Err(why) = write!(string, "\nMed {name}: {count}") {
                 warn!("error while writing to string: {why}");
             }
