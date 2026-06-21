@@ -395,11 +395,14 @@ impl History {
     /// Rebuilds an in-memory history from its persisted form and its resolved choice messages.
     #[must_use]
     pub fn hydrate(stored: StoredHistory, choices: NonEmpty<Message>) -> Self {
+        // choices can be shorter than the stored list if some message records failed to resolve,
+        // so clamp the chosen index to what is actually available rather than dangling past the end
+        let current = stored.current.min(choices.len().saturating_sub(1));
         Self {
             id: stored.id,
             character: stored.character,
             choices,
-            current: stored.current,
+            current,
             has_finished: true,
             previous: stored.previous,
             pending: Vec::new(),
@@ -786,7 +789,9 @@ impl From<(&Character, MessageId)> for History {
 /// Tests for in-memory history navigation.
 #[cfg(test)]
 mod tests {
-    use super::{BEGIN_EXAMPLE_MESSAGES, BEGIN_MESSAGE, History, SYSTEM_MESSAGE, scaffolding};
+    use super::{
+        BEGIN_EXAMPLE_MESSAGES, BEGIN_MESSAGE, History, SYSTEM_MESSAGE, StoredHistory, scaffolding,
+    };
     use crate::models::{character::Character, message::Message};
     use core::time::Duration;
     use nonempty::NonEmpty;
@@ -966,6 +971,29 @@ mod tests {
             hydrated.chosen_message().id(),
             choice_two_id.as_str(),
             "the chosen index points at the second choice"
+        );
+    }
+
+    /// When some stored choices fail to resolve, the rehydrated choice list is shorter than the
+    /// stored `current` index, so hydrate must clamp it to the last available choice rather than
+    /// leaving it dangling past the end.
+    #[test]
+    fn hydrate_clamps_current_past_the_available_choices() {
+        let stored = StoredHistory {
+            id: "42".to_owned(),
+            character: "character-id".to_owned(),
+            previous: Vec::new(),
+            choices: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
+            current: 2,
+        };
+        let mut choices = NonEmpty::new(Message::new_system("only choice"));
+        choices.push(Message::new_system("second choice"));
+
+        let hydrated = History::hydrate(stored, choices);
+        assert_eq!(
+            hydrated.current_choice(),
+            1,
+            "current is clamped to the last resolvable choice, not the stored index"
         );
     }
 
