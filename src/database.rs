@@ -15,7 +15,7 @@ use native_model::{Model as _, native_model};
 use nonempty::NonEmpty;
 use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
-use snafu::{OptionExt as _, ResultExt as _, Snafu};
+use snafu::{IntoError, OptionExt as _, ResultExt as _, Snafu};
 use std::collections::HashMap;
 use tracing::warn;
 
@@ -157,24 +157,43 @@ impl Database {
         write.commit().context(InsertSnafu)
     }
 
+    /// Loads the character `id`, applies `apply`, and upserts it in a single
+    /// transaction, returning the mutated character. Returns `Ok(None)` if the
+    /// character is missing. `context` selects the error variant for any
+    /// transaction failure, so each caller keeps its own error message.
+    async fn mutate_character<C>(
+        &self,
+        id: &str,
+        context: C,
+        apply: impl FnOnce(&mut Character),
+    ) -> Result<Option<Character>, DatabaseError>
+    where
+        C: IntoError<DatabaseError, Source = NativeError> + Copy,
+    {
+        let write = self.0.rw_transaction().context(context)?;
+        let Some(mut character) = write
+            .get()
+            .primary::<Character>(id.to_owned())
+            .context(context)?
+        else {
+            return Ok(None);
+        };
+        apply(&mut character);
+        write.upsert(character.clone()).context(context)?;
+        write.commit().context(context)?;
+        Ok(Some(character))
+    }
+
     /// Soft-deletes a character by recording its deleter and the time of deletion.
     pub async fn delete_character<T: Into<UserId>>(
         &self,
         id: &str,
         deleted_by: T,
     ) -> Result<Option<Character>, DatabaseError> {
-        let write = self.0.rw_transaction().context(DeleteSnafu)?;
-        let Some(mut character) = write
-            .get()
-            .primary::<Character>(id.to_owned())
-            .context(DeleteSnafu)?
-        else {
-            return Ok(None);
-        };
-        character.mark_deleted(deleted_by.into());
-        write.upsert(character.clone()).context(DeleteSnafu)?;
-        write.commit().context(DeleteSnafu)?;
-        Ok(Some(character))
+        self.mutate_character(id, DeleteSnafu, |character| {
+            character.mark_deleted(deleted_by.into());
+        })
+        .await
     }
 
     /// Sets the `next_version` field on the given old character ID to point to the given new character ID.
@@ -183,19 +202,16 @@ impl Database {
         new_id: String,
         old_id: &str,
     ) -> Result<Option<Character>, DatabaseError> {
-        let write = self.0.rw_transaction().context(UpdateSnafu)?;
-        let mut character = write
-            .get()
-            .primary::<Character>(old_id.to_owned())
-            .context(UpdateSnafu)?
+        let superseded = self
+            .mutate_character(old_id, UpdateSnafu, |character| {
+                character.set_next_version(new_id);
+            })
+            .await?
             .with_context(|| NoCharacterSnafu {
                 found: old_id.to_owned(),
                 span: 0..old_id.len(),
             })?;
-        character.set_next_version(new_id);
-        write.upsert(character.clone()).context(UpdateSnafu)?;
-        write.commit().context(UpdateSnafu)?;
-        Ok(Some(character))
+        Ok(Some(superseded))
     }
 
     /// Returns a chat history by its ID, hydrating its choice messages from the message table.
@@ -327,18 +343,10 @@ impl Database {
         id: &str,
         model_settings: ModelSettings,
     ) -> Result<Option<Character>, DatabaseError> {
-        let write = self.0.rw_transaction().context(UpdateSnafu)?;
-        let Some(mut character) = write
-            .get()
-            .primary::<Character>(id.to_owned())
-            .context(UpdateSnafu)?
-        else {
-            return Ok(None);
-        };
-        character.set_model_settings(model_settings);
-        write.upsert(character.clone()).context(UpdateSnafu)?;
-        write.commit().context(UpdateSnafu)?;
-        Ok(Some(character))
+        self.mutate_character(id, UpdateSnafu, |character| {
+            character.set_model_settings(model_settings);
+        })
+        .await
     }
 
     /// Records a character spawn (a new conversation) for the given user.
