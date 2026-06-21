@@ -9,7 +9,7 @@ use miette::{Diagnostic, SourceSpan};
 use nanorand::Rng as _;
 use native_db::{
     Builder, Database as NativeDatabase, Models, ToInput, ToKey as _, db_type::Error as NativeError,
-    native_db,
+    native_db, transaction::RTransaction,
 };
 use native_model::{Model as _, native_model};
 use nonempty::NonEmpty;
@@ -34,6 +34,22 @@ const SINGLETON_KEY: &str = "global";
 
 /// The maximum number of characters returned by the listing queries.
 const MAX_RESULTS: usize = 25;
+
+/// Resolves a single message ID against an open read transaction, warning (and
+/// returning `None`) when the message is missing from the table.
+async fn resolve_message(
+    read: &RTransaction<'_>,
+    id: &str,
+) -> Result<Option<Message>, DatabaseError> {
+    let found = read
+        .get()
+        .primary::<Message>(id.to_owned())
+        .context(GetSnafu)?;
+    if found.is_none() {
+        warn!("history references a missing message: {id}");
+    }
+    Ok(found)
+}
 
 /// A newtype wrapper around a `native_db` database.
 pub struct Database(NativeDatabase<'static>);
@@ -240,14 +256,8 @@ impl Database {
         let read = self.0.r_transaction().context(GetSnafu)?;
         let mut messages = Vec::with_capacity(ids.len());
         for id in ids {
-            if let Some(message) = read
-                .get()
-                .primary::<Message>(id.clone())
-                .context(GetSnafu)?
-            {
+            if let Some(message) = resolve_message(&read, id).await? {
                 messages.push(message);
-            } else {
-                warn!("history references a missing message: {id}");
             }
         }
         Ok(messages)
@@ -273,12 +283,8 @@ impl Database {
         for id in history.previous_ids() {
             if let Some(message) = pending.get(id.as_str()) {
                 context.push((*message).clone());
-            } else if let Some(message) =
-                read.get().primary::<Message>(id.clone()).context(GetSnafu)?
-            {
+            } else if let Some(message) = resolve_message(&read, id).await? {
                 context.push(message);
-            } else {
-                warn!("history references a missing message: {id}");
             }
         }
         Ok(context)
