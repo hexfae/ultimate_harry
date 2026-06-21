@@ -67,6 +67,16 @@ impl Database {
         Ok(Self(db))
     }
 
+    /// Opens an ephemeral in-memory database for tests.
+    #[cfg(test)]
+    async fn in_memory() -> Result<Self, DatabaseError> {
+        let models = models().await?;
+        let db = Builder::new()
+            .create_in_memory(models)
+            .context(ConnectSnafu)?;
+        Ok(Self(db))
+    }
+
     /// Returns every character currently stored, regardless of visibility.
     async fn all_characters(&self) -> Result<Vec<Character>, DatabaseError> {
         let read = self.0.r_transaction().context(GetSnafu)?;
@@ -639,4 +649,285 @@ pub enum DatabaseError {
         /// The source of the error.
         source: NativeError,
     },
+}
+
+/// Characterization tests pinning the transaction methods that the
+/// load-mutate-upsert and message-resolution refactors touch. They run against
+/// an ephemeral in-memory database.
+#[cfg(test)]
+mod tests {
+    use super::Database;
+    use crate::llm::ModelSettings;
+    use crate::models::{
+        character::Character,
+        history::{History, scaffolding},
+        message::Message,
+    };
+    use nonempty::NonEmpty;
+    use serenity::all::{MessageId, UserId};
+
+    /// Builds a minimal visible character with the given ID and name.
+    fn character(id: &str, name: &str) -> Character {
+        Character::builder()
+            .id(id.to_owned())
+            .name(name)
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .build()
+    }
+
+    /// Inserts a character, asserting the write succeeds.
+    async fn insert(db: &Database, character: Character) {
+        assert!(
+            db.insert_character(character).await.is_ok(),
+            "inserting a character should succeed"
+        );
+    }
+
+    /// `delete_character` soft-deletes the character and returns it; the stored
+    /// record becomes invisible.
+    #[tokio::test]
+    async fn delete_character_soft_deletes_and_returns_the_character() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        insert(&db, character("char-id", "Harry")).await;
+
+        let deleted = db.delete_character("char-id", UserId::new(2)).await;
+        assert!(
+            deleted
+                .as_ref()
+                .is_ok_and(|found| found.as_ref().is_some_and(|record| !record.is_visible())),
+            "deleting returns the now-invisible character"
+        );
+
+        let stored = db.character("char-id").await.ok().flatten();
+        assert!(
+            stored.is_some_and(|record| !record.is_visible()),
+            "the stored character is left invisible"
+        );
+    }
+
+    /// Deleting a missing character returns `None` rather than erroring.
+    #[tokio::test]
+    async fn delete_character_returns_none_when_missing() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let deleted = db.delete_character("missing", UserId::new(2)).await;
+        assert!(
+            matches!(deleted, Ok(None)),
+            "deleting a missing character is a no-op returning None"
+        );
+    }
+
+    /// `supersede_character` links the old record to the new version's ID.
+    #[tokio::test]
+    async fn supersede_character_sets_the_next_version() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        insert(&db, character("old-id", "Harry")).await;
+
+        let superseded = db
+            .supersede_character("new-id".to_owned(), "old-id")
+            .await;
+        assert!(
+            superseded
+                .as_ref()
+                .is_ok_and(|found| found.as_ref().is_some_and(|record| record.next_version() == Some("new-id"))),
+            "superseding records the new version's ID on the old character"
+        );
+    }
+
+    /// Superseding a missing character is an error (unlike delete/model-settings,
+    /// which return None).
+    #[tokio::test]
+    async fn supersede_character_errors_when_missing() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let superseded = db
+            .supersede_character("new-id".to_owned(), "missing")
+            .await;
+        assert!(
+            superseded.is_err(),
+            "superseding a missing character errors"
+        );
+    }
+
+    /// `set_character_model_settings` records a per-character override and returns
+    /// the updated character; a missing character returns `None`.
+    #[tokio::test]
+    async fn set_character_model_settings_records_an_override() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        insert(&db, character("char-id", "Harry")).await;
+
+        let updated = db
+            .set_character_model_settings("char-id", ModelSettings::default())
+            .await;
+        assert!(
+            updated
+                .as_ref()
+                .is_ok_and(|found| found.as_ref().is_some_and(Character::has_model_settings)),
+            "setting model settings records the override and returns the character"
+        );
+
+        let missing = db
+            .set_character_model_settings("missing", ModelSettings::default())
+            .await;
+        assert!(
+            matches!(missing, Ok(None)),
+            "setting model settings on a missing character returns None"
+        );
+    }
+
+    /// `record_character_generation` applies stats to the latest version, walking
+    /// past an edit in the version chain.
+    #[tokio::test]
+    async fn record_character_generation_lands_on_the_latest_version() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let mut old = character("old-id", "Harry");
+        old.set_next_version("new-id".to_owned());
+        insert(&db, old).await;
+        insert(&db, character("new-id", "Harry")).await;
+
+        assert!(
+            db.record_character_generation("old-id", 3, 9).await.is_ok(),
+            "recording generation succeeds"
+        );
+
+        let latest = db.character("new-id").await.ok().flatten();
+        assert!(
+            latest.is_some_and(|record| record.conversations_had() == 0),
+            "generation stats land on the latest version, not the spawn count"
+        );
+        let original = db.character("old-id").await.ok().flatten();
+        assert!(
+            original.is_some(),
+            "the original version is left intact"
+        );
+    }
+
+    /// `messages` resolves IDs in order and silently skips any that are missing.
+    #[tokio::test]
+    async fn messages_resolve_in_order_and_skip_missing() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let first = Message::new_system("first");
+        let second = Message::new_system("second");
+        let (first_id, second_id) = (first.id().to_owned(), second.id().to_owned());
+
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("char-id")
+            .choices({
+                let mut choices = NonEmpty::new(first);
+                choices.push(second);
+                choices
+            })
+            .build();
+        assert!(
+            db.upsert_history(history).await.is_ok(),
+            "writing the messages should succeed"
+        );
+
+        let ids = vec![first_id.clone(), "missing".to_owned(), second_id.clone()];
+        let resolved = db.messages(&ids).await.unwrap_or_default();
+        let resolved_ids = resolved
+            .iter()
+            .map(|message| message.id().to_owned())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            resolved_ids,
+            vec![first_id, second_id],
+            "messages resolve in request order, skipping the missing ID"
+        );
+    }
+
+    /// `build_context` prefixes the character scaffolding, then resolves each
+    /// previous ID, preferring the in-memory pending buffer over the table and
+    /// skipping missing IDs.
+    #[tokio::test]
+    async fn build_context_prefixes_scaffolding_and_prefers_pending() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let character = character("char-id", "Harry");
+
+        let table_message = Message::new_user("Alice", "from the table");
+        let table_id = table_message.id().to_owned();
+        let choice = Message::new_system("greeting");
+        let table_history = History::builder()
+            .id(MessageId::new(1))
+            .character("char-id")
+            .choices(NonEmpty::new(choice))
+            .pending(vec![table_message])
+            .previous(vec![table_id.clone()])
+            .build();
+        assert!(
+            db.upsert_history(table_history).await.is_ok(),
+            "writing the table message should succeed"
+        );
+
+        let pending_message = Message::new_user("Bob", "from pending");
+        let pending_id = pending_message.id().to_owned();
+        let context_history = History::builder()
+            .id(MessageId::new(2))
+            .character("char-id")
+            .choices(NonEmpty::new(Message::new_system("greeting")))
+            .pending(vec![pending_message])
+            .previous(vec![pending_id.clone(), table_id.clone(), "missing".to_owned()])
+            .build();
+
+        let context = db
+            .build_context(&context_history, &character)
+            .await
+            .unwrap_or_default();
+        let scaffolding_len = scaffolding(&character).len();
+        assert_eq!(
+            context.len(),
+            scaffolding_len.saturating_add(2),
+            "context is scaffolding plus the two resolvable previous messages"
+        );
+        let tail_ids = context
+            .iter()
+            .skip(scaffolding_len)
+            .map(|message| message.id().to_owned())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            tail_ids,
+            vec![pending_id, table_id],
+            "the pending message is taken from memory, the other from the table, missing skipped"
+        );
+    }
 }
