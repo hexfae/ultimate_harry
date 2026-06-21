@@ -96,14 +96,19 @@ impl Database {
         ))
     }
 
-    /// Returns up to 25 visible characters, sorted by the most commonly used ones.
-    pub async fn characters_by_usage(&self) -> Result<Vec<Character>, DatabaseError> {
-        let mut characters: Vec<Character> = self
+    /// Returns every visible (not deleted, not superseded) character.
+    async fn visible_characters(&self) -> Result<Vec<Character>, DatabaseError> {
+        Ok(self
             .all_characters()
             .await?
             .into_iter()
             .filter(Character::is_visible)
-            .collect();
+            .collect())
+    }
+
+    /// Returns up to 25 visible characters, sorted by the most commonly used ones.
+    pub async fn characters_by_usage(&self) -> Result<Vec<Character>, DatabaseError> {
+        let mut characters = self.visible_characters().await?;
         characters.sort_by(|left, right| {
             right.conversations_had().cmp(&left.conversations_had())
         });
@@ -128,12 +133,7 @@ impl Database {
 
     /// Returns up to 25 visible characters, sorted randomly.
     pub async fn random_characters(&self) -> Result<Vec<Character>, DatabaseError> {
-        let mut characters: Vec<Character> = self
-            .all_characters()
-            .await?
-            .into_iter()
-            .filter(Character::is_visible)
-            .collect();
+        let mut characters = self.visible_characters().await?;
         let mut rng = nanorand::tls_rng();
         rng.shuffle(&mut characters);
         characters.truncate(MAX_RESULTS);
