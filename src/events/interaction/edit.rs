@@ -3,7 +3,7 @@
 use crate::{
     AppResult,
     database::Database,
-    error::{SendResponseSnafu, ShowModalSnafu},
+    error::{EditResponseSnafu, ShowModalSnafu},
     models::{character::Character, history::History, modals::EditMessageModal},
     traits::ShowModal as _,
 };
@@ -37,7 +37,7 @@ pub async fn edit(
     interaction
         .edit_response(&ctx.http, response)
         .await
-        .context(SendResponseSnafu)?;
+        .context(EditResponseSnafu)?;
 
     db.upsert_history(history).await?;
 
