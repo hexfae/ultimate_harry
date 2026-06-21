@@ -23,9 +23,8 @@ pub async fn next(
     mut history: History,
     character: Character,
 ) -> AppResult {
-    let options = db.character_menu_options().await?;
-
     if history.is_on_last_choice() {
+        let options = db.character_menu_options().await?;
         history.push_choice((character.clone(), String::new(), Duration::ZERO));
         history.set_finished(false);
 
