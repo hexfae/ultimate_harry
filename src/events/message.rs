@@ -7,12 +7,13 @@ use crate::{
     AppResult,
     database::Database,
     error::SendMessageSnafu,
+    events::lookup::history_and_character_of,
     events::streaming::{MessageSink, ReplySink as _, stream_into},
     llm::LlmManager,
     models::{character::Character, history::History},
 };
 use poise::serenity_prelude::{Context, Message};
-use serenity::all::{MessageId, ReactionType};
+use serenity::all::ReactionType;
 use snafu::ResultExt as _;
 use alloc::collections::BTreeMap;
 use std::time::Instant;
@@ -119,23 +120,4 @@ pub async fn history_and_character_of_replied_to(
         return Ok(None);
     };
     history_and_character_of(replied_to.id, db).await
-}
-
-/// Returns the history and character associated with the given message, if it's a character reply.
-pub async fn history_and_character_of(
-    message: MessageId,
-    db: &Database,
-) -> AppResult<Option<(History, Character)>> {
-    let Some(history) = db.history(message).await? else {
-        return Ok(None);
-    };
-    let Some(character) = db.character(history.character()).await? else {
-        warn!(
-            "history {} references a missing character {}",
-            history.id(),
-            history.character()
-        );
-        return Ok(None);
-    };
-    Ok(Some((history, character)))
 }

@@ -1,6 +1,7 @@
 //! The event handler and the Discord events it responds to.
 
 pub mod interaction;
+pub mod lookup;
 pub mod message;
 pub mod ready;
 pub mod streaming;

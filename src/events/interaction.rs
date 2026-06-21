@@ -7,7 +7,7 @@ mod pin;
 mod swipe;
 
 use crate::{
-    AppResult, database::Database, events::message::history_and_character_of,
+    AppResult, database::Database, events::lookup::history_and_character_of,
     models::history::History,
 };
 use core::fmt::{self, Display, Formatter};
