@@ -33,10 +33,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
     };
 
     let author = db.substitute_name(&user_message.author).await;
-    history.push(history.chosen_message().to_owned());
-    history.push((user_message, author));
-    history.reset_choices();
-    history.set_finished(false);
+    history.begin_new_turn((user_message, author));
 
     let options = db.character_menu_options().await?;
 

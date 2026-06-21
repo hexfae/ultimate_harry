@@ -326,6 +326,28 @@ impl History {
         }
     }
 
+    /// Begins a new reply turn: the chosen reply and the user message join the
+    /// context, the old swipeable choices are cleared, and the reply is marked
+    /// as not yet finished.
+    pub fn begin_new_turn<M: Into<Message>>(&mut self, user_message: M) {
+        self.push(self.chosen_message().to_owned());
+        self.push(user_message);
+        self.reset_choices();
+        self.set_finished(false);
+    }
+
+    /// Hands the conversation to another character: the chosen reply joins the
+    /// context, the old choices are cleared, the responding character switches,
+    /// the hand-off system message joins the context, and the reply is marked as
+    /// not yet finished.
+    pub fn begin_handoff<M: Into<Message>>(&mut self, character: String, system_message: M) {
+        self.push(self.chosen_message().to_owned());
+        self.reset_choices();
+        self.set_character(character);
+        self.push(system_message);
+        self.set_finished(false);
+    }
+
     /// Returns the IDs of the previous messages (the chat context), in order.
     #[must_use]
     pub fn previous_ids(&self) -> &[String] {
@@ -975,15 +997,11 @@ mod tests {
             2,
             "the history starts on a non-first choice to prove the reset"
         );
-        let chosen = history.chosen_message().to_owned();
-        let chosen_id = chosen.id().to_owned();
+        let chosen_id = history.chosen_message().id().to_owned();
         let user = Message::new_user("Alice", "hello");
         let user_id = user.id().to_owned();
 
-        history.push(chosen);
-        history.push(user);
-        history.reset_choices();
-        history.set_finished(false);
+        history.begin_new_turn(user);
 
         assert_eq!(
             history.choices_count(),
@@ -1019,14 +1037,10 @@ mod tests {
         let mut history = history_with_choices(3);
         history.previous();
         let chosen_id = history.chosen_message().id().to_owned();
-
-        history.push(history.chosen_message().to_owned());
-        history.reset_choices();
-        history.set_character("new-character-id".to_owned());
         let system = Message::new_user("System", "Svara nu som X.");
         let system_id = system.id().to_owned();
-        history.push(system);
-        history.set_finished(false);
+
+        history.begin_handoff("new-character-id".to_owned(), system);
 
         assert_eq!(
             history.character(),

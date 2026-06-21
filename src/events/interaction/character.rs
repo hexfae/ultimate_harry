@@ -33,14 +33,10 @@ pub async fn character(
         return Ok(());
     };
 
-    history.push(history.chosen_message().to_owned());
-    history.reset_choices();
-    history.set_character(new_character.id().to_owned());
-    history.push(Message::new_user(
-        "System",
-        format!("Svara nu som {new_character}."),
-    ));
-    history.set_finished(false);
+    history.begin_handoff(
+        new_character.id().to_owned(),
+        Message::new_user("System", format!("Svara nu som {new_character}.")),
+    );
 
     interaction
         .create_response(&ctx.http, CreateInteractionResponse::Acknowledge)
