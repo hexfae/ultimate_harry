@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
 use snafu::{IntoError, OptionExt as _, ResultExt as _, Snafu};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use tracing::warn;
 
 use crate::llm::ModelSettings;
@@ -60,8 +61,13 @@ impl Debug for Database {
     }
 }
 
-/// Builds the set of `native_db` models for every persisted type.
+/// Builds the set of `native_db` models for every persisted type, caching it so
+/// the set is defined once and shared across every database opened in the process.
 async fn models() -> Result<&'static Models, DatabaseError> {
+    static MODELS: OnceLock<Models> = OnceLock::new();
+    if let Some(models) = MODELS.get() {
+        return Ok(models);
+    }
     let mut models = Models::new();
     models.define::<Character>().context(DefineModelSnafu)?;
     models.define::<StoredHistory>().context(DefineModelSnafu)?;
@@ -70,7 +76,7 @@ async fn models() -> Result<&'static Models, DatabaseError> {
     models.define::<PinChannel>().context(DefineModelSnafu)?;
     models.define::<UserName>().context(DefineModelSnafu)?;
     models.define::<UserEmoji>().context(DefineModelSnafu)?;
-    Ok(Box::leak(Box::new(models)))
+    Ok(MODELS.get_or_init(|| models))
 }
 
 impl Database {
@@ -671,6 +677,7 @@ pub enum DatabaseError {
 #[cfg(test)]
 mod tests {
     use super::Database;
+    use core::ptr;
     use crate::llm::ModelSettings;
     use crate::models::{
         character::Character,
@@ -942,6 +949,25 @@ mod tests {
             tail_ids,
             vec![pending_id, table_id],
             "the pending message is taken from memory, the other from the table, missing skipped"
+        );
+    }
+
+    /// The model set is built once and shared: repeated calls return the same
+    /// reference rather than leaking a fresh allocation each time.
+    #[tokio::test]
+    async fn models_are_built_once_and_shared() {
+        let first_models = super::models().await;
+        let second_models = super::models().await;
+        assert!(
+            first_models.is_ok() && second_models.is_ok(),
+            "building the model set should succeed"
+        );
+        let (Ok(first_ref), Ok(second_ref)) = (first_models, second_models) else {
+            return;
+        };
+        assert!(
+            ptr::eq(first_ref, second_ref),
+            "repeated models() calls should return the same shared reference"
         );
     }
 }
