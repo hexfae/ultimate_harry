@@ -18,7 +18,7 @@ use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
 use snafu::{IntoError, OptionExt as _, ResultExt as _, Snafu};
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use tracing::warn;
+use tracing::{error, warn};
 
 use crate::constants::MAX_RESULTS;
 use crate::llm::ModelSettings;
@@ -426,9 +426,12 @@ impl Database {
         write.commit().context(UpdateSnafu)
     }
 
-    /// Reads a singleton-style record by its primary key, returning a default
-    /// value (after logging a warning under `label`) on any transaction or
-    /// lookup failure.
+    /// Reads a singleton-style record by its primary key, returning a default value rather than
+    /// blocking the bot.
+    ///
+    /// A legitimately absent record defaults silently; a genuine transaction or lookup *failure*
+    /// (corruption, lock contention) is logged at error level under `label`, since it would
+    /// otherwise surface downstream as a confusing unrelated error (e.g. an empty API key).
     fn read_or<T: ToInput, R>(
         &self,
         key: String,
@@ -439,14 +442,14 @@ impl Database {
         let read = match self.0.r_transaction() {
             Ok(read) => read,
             Err(why) => {
-                warn!("failed to read {label}, using default: {why}");
+                error!("failed to read {label}, using default: {why}");
                 return default();
             }
         };
         match read.get().primary::<T>(key) {
             Ok(found) => found.map_or_else(&default, extract),
             Err(why) => {
-                warn!("failed to read {label}, using default: {why}");
+                error!("failed to read {label}, using default: {why}");
                 default()
             }
         }
