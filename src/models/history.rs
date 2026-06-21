@@ -962,4 +962,95 @@ mod tests {
             "the example messages are introduced by their marker"
         );
     }
+
+    /// Pins the turn-begin sequence run by the message handler: pushing the
+    /// chosen reply and the user message into the context, clearing the old
+    /// choices, and marking the reply unfinished.
+    #[test]
+    fn begin_new_turn_extends_context_and_resets_choices() {
+        let mut history = history_with_choices(3);
+        history.previous();
+        assert_eq!(
+            history.current_choice(),
+            2,
+            "the history starts on a non-first choice to prove the reset"
+        );
+        let chosen = history.chosen_message().to_owned();
+        let chosen_id = chosen.id().to_owned();
+        let user = Message::new_user("Alice", "hello");
+        let user_id = user.id().to_owned();
+
+        history.push(chosen);
+        history.push(user);
+        history.reset_choices();
+        history.set_finished(false);
+
+        assert_eq!(
+            history.choices_count(),
+            1,
+            "the old swipeable choices are cleared down to one"
+        );
+        assert_eq!(
+            history.current_choice(),
+            0,
+            "the current index resets to the first choice"
+        );
+        assert_eq!(
+            history.previous_ids(),
+            [chosen_id, user_id].as_slice(),
+            "the chosen reply then the user message are appended to the context"
+        );
+        assert_eq!(
+            history.pending().len(),
+            2,
+            "both pushed messages are queued for persistence"
+        );
+        assert!(
+            !history.has_finished,
+            "the reply is marked as not yet finished"
+        );
+    }
+
+    /// Pins the hand-off sequence run by the character-select handler: pushing
+    /// the chosen reply, clearing choices, switching the responding character,
+    /// pushing the system prompt, and marking the reply unfinished.
+    #[test]
+    fn handoff_switches_character_and_resets_choices() {
+        let mut history = history_with_choices(3);
+        history.previous();
+        let chosen_id = history.chosen_message().id().to_owned();
+
+        history.push(history.chosen_message().to_owned());
+        history.reset_choices();
+        history.set_character("new-character-id".to_owned());
+        let system = Message::new_user("System", "Svara nu som X.");
+        let system_id = system.id().to_owned();
+        history.push(system);
+        history.set_finished(false);
+
+        assert_eq!(
+            history.character(),
+            "new-character-id",
+            "the responding character switches to the new one"
+        );
+        assert_eq!(
+            history.choices_count(),
+            1,
+            "the old swipeable choices are cleared down to one"
+        );
+        assert_eq!(
+            history.current_choice(),
+            0,
+            "the current index resets to the first choice"
+        );
+        assert_eq!(
+            history.previous_ids(),
+            [chosen_id, system_id].as_slice(),
+            "the chosen reply then the hand-off system prompt are appended to the context"
+        );
+        assert!(
+            !history.has_finished,
+            "the reply is marked as not yet finished"
+        );
+    }
 }
