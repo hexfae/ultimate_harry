@@ -77,13 +77,13 @@ async fn react_to_mentions_and_replies(
         .into_iter()
         .map(|user_emoji| (user_emoji.user_id, user_emoji.emoji))
         .collect();
+    if new_message.author.bot() {
+        return Ok(());
+    }
     if new_message.mention_everyone() {
         for emoji in all_emoji.values() {
             react(ctx, new_message, emoji.clone()).await;
         }
-        return Ok(());
-    }
-    if new_message.author.bot() {
         return Ok(());
     }
     if let Some(ref replied_to) = new_message.referenced_message
