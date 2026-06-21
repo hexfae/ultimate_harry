@@ -329,8 +329,19 @@ impl History {
     /// Begins a new reply turn: the chosen reply and the user message join the
     /// context, the old swipeable choices are cleared, and the reply is marked
     /// as not yet finished.
+    ///
+    /// An empty chosen reply (the "skip the greeting" choice) is omitted from the context so the
+    /// user message becomes the first turn, rather than injecting a blank turn.
     pub fn begin_new_turn<M: Into<Message>>(&mut self, user_message: M) {
-        self.push(self.chosen_message().to_owned());
+        if !self
+            .chosen_message()
+            .chosen_revision()
+            .head()
+            .content()
+            .is_empty()
+        {
+            self.push(self.chosen_message().to_owned());
+        }
         self.push(user_message);
         self.reset_choices();
         self.set_finished(false);
@@ -630,9 +641,13 @@ impl History {
             .into()
         };
 
-        // discord rejects a whitespace-only text display, so fall back to a
-        // visible placeholder when there is no content
-        let text = if content.is_empty() { "…" } else { content };
+        // discord rejects a whitespace-only text display; an empty finished choice is the
+        // "skip the greeting" swipe option, so show a hint explaining what selecting it does
+        let text = if content.is_empty() {
+            "(ingen hälsning, ditt meddelande blir det första)"
+        } else {
+            content
+        };
         let (first, second) = match text.split_once('\n') {
             Some((first, second)) => (first, Some(second)),
             None => (text, None),
@@ -748,13 +763,17 @@ fn create_buttons<'a>(
 
 /// Creates a new [`History`] from a character and message ID.
 ///
-/// The conversation starts empty (the scaffolding is derived at request time); the greeting is
-/// the single initial choice.
+/// The conversation starts empty (the scaffolding is derived at request time). Two swipe choices
+/// are seeded: the greeting (shown by default) and an empty "skip the greeting" choice, so the user
+/// can swipe to start the conversation with their own message first, leaving the character unprimed.
 impl From<(&Character, MessageId)> for History {
     fn from((character, id): (&Character, MessageId)) -> Self {
-        let mut message = Message::new_system("");
-        message.edit(character.name(), character.greeting(), None::<u64>);
-        let choices = NonEmpty::new(message);
+        let greeting = Message::new_assistant(character.greeting(), character);
+        let skip_greeting = Message::new_assistant("", character);
+        let choices = NonEmpty {
+            head: greeting,
+            tail: vec![skip_greeting],
+        };
 
         Self::builder()
             .choices(choices)
@@ -1097,6 +1116,82 @@ mod tests {
         assert!(
             !history.has_finished,
             "the reply is marked as not yet finished"
+        );
+    }
+
+    /// A fresh history seeds two swipe choices: the greeting (a clean,
+    /// unedited original shown by default) and an empty "skip the greeting" choice.
+    #[test]
+    fn fresh_history_seeds_a_greeting_and_skip_choice() {
+        let character = character();
+        let history = History::from((&character, MessageId::new(1)));
+        assert_eq!(
+            history.choices_count(),
+            2,
+            "the greeting and the skip-greeting choice are both seeded"
+        );
+        assert_eq!(
+            history.current_choice(),
+            0,
+            "the greeting is shown by default"
+        );
+        assert_eq!(
+            history.chosen_message().revisions_count(),
+            0,
+            "the greeting is a clean original, not a fabricated edit"
+        );
+    }
+
+    /// Keeping the greeting choice includes it in the LLM context.
+    #[test]
+    fn keeping_the_greeting_includes_it_in_context() {
+        let character = character();
+        let mut history = History::from((&character, MessageId::new(1)));
+        let greeting_id = history.chosen_message().id().to_owned();
+        let user = Message::new_user("Alice", "hello");
+        let user_id = user.id().to_owned();
+
+        history.begin_new_turn(user);
+
+        assert_eq!(
+            history.previous_ids(),
+            [greeting_id, user_id].as_slice(),
+            "the greeting then the user message form the context"
+        );
+        assert_eq!(
+            history.pending().len(),
+            2,
+            "both the greeting and the user message are queued"
+        );
+    }
+
+    /// Swiping to the empty skip choice omits the greeting from the LLM context,
+    /// so the user message becomes the first turn.
+    #[test]
+    fn skipping_the_greeting_omits_it_from_context() {
+        let character = character();
+        let mut history = History::from((&character, MessageId::new(1)));
+        let user = Message::new_user("Alice", "hello");
+        let user_id = user.id().to_owned();
+
+        history.previous();
+        assert_eq!(
+            history.current_choice(),
+            1,
+            "swiping back from the greeting lands on the skip choice"
+        );
+
+        history.begin_new_turn(user);
+
+        assert_eq!(
+            history.previous_ids(),
+            [user_id].as_slice(),
+            "the greeting is omitted; the user message is the first context turn"
+        );
+        assert_eq!(
+            history.pending().len(),
+            1,
+            "only the user message is queued"
         );
     }
 
