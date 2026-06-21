@@ -238,11 +238,13 @@ impl Message {
     #[must_use]
     pub fn to_rig_messages(&self) -> Vec<RigMessage> {
         let chosen = self.chosen_revision();
+        let last_user = chosen.0.iter().rposition(|part| matches!(part.role, Role::User));
 
         chosen
             .0
             .iter()
-            .map(|part| match part.role {
+            .enumerate()
+            .map(|(index, part)| match part.role {
                 Role::System => RigMessage::System {
                     content: part.content.clone(),
                 },
@@ -255,11 +257,13 @@ impl Message {
                 Role::User => {
                     let mut content = OneOrMany::one(UserContent::text(&part.content));
 
-                    for url in &self.attachments {
-                        if url.contains(PROBABLE_DISCORD_VOICE_RECORDING) {
-                            content.push(UserContent::audio_url(url, None));
-                        } else {
-                            content.push(UserContent::image_url(url, None, None));
+                    if Some(index) == last_user {
+                        for url in &self.attachments {
+                            if url.contains(PROBABLE_DISCORD_VOICE_RECORDING) {
+                                content.push(UserContent::audio_url(url, None));
+                            } else {
+                                content.push(UserContent::image_url(url, None, None));
+                            }
                         }
                     }
 
