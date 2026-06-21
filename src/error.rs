@@ -1,6 +1,5 @@
 //! Global error types for Ultimate Harry.
 
-use core::error::Error;
 use core::fmt::Display;
 use miette::Diagnostic;
 use rig::agent::StreamingError;
@@ -120,18 +119,6 @@ pub enum AppError {
         /// The source of the error.
         source: DatabaseError,
     },
-    /// Something else failed.
-    #[snafu(whatever, display("{message}"))]
-    Whatever {
-        /// The message of the error.
-        message: String,
-        /// The source of the error.
-        #[snafu(source(from(Box<dyn Error + Send + Sync>, Some)))]
-        source: Option<Box<dyn Error + Send + Sync>>,
-        /// The location of the error.
-        #[snafu(implicit)]
-        location: Location,
-    },
 }
 
 impl Diagnostic for AppError {
@@ -154,7 +141,6 @@ impl Diagnostic for AppError {
             Self::ShowModal { location, .. } => ("show_modal", location),
             Self::Streaming { location, .. } => ("streaming", location),
             Self::RegisterCommand { location, .. } => ("register_command", location),
-            Self::Whatever { location, .. } => ("whatever", location),
         };
 
         let file = loc.file().replace('\\', "/");
@@ -186,7 +172,7 @@ impl Diagnostic for AppError {
             Self::Llm { .. } | Self::Streaming { .. } => {
                 Some(Box::new("Förmodligen OpenRouter's fel, försök igen"))
             }
-            Self::RegisterCommand { .. } | Self::Whatever { .. } => Some(Box::new("¯\\_(ツ)_/¯")),
+            Self::RegisterCommand { .. } => Some(Box::new("¯\\_(ツ)_/¯")),
         }
     }
 }
