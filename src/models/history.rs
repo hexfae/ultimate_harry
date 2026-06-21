@@ -494,7 +494,6 @@ impl History {
     }
 
     /// Converts the history into a bare response reply with the chosen message content.
-    #[must_use]
     pub async fn into_bare_response(
         self,
         character: &Character,
