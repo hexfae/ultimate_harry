@@ -562,6 +562,52 @@ impl History {
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
+    /// Builds the footer line of a full response: the page counter, name
+    /// similarity, timing (or nothing when the reply was edited), reply length,
+    /// and edit/revision info. `editor_name` is the resolved display name of the
+    /// chosen reply's editor, present exactly when the reply was edited.
+    fn footer_text(
+        &self,
+        character: &Character,
+        content_len: usize,
+        editor_name: Option<&str>,
+    ) -> String {
+        let chosen = self.chosen_message();
+        let pages = format!("{}/{}", self.current.saturating_add(1), self.choices_count());
+
+        let elapsed = if editor_name.is_some() {
+            String::new()
+        } else {
+            chosen.time_taken().map_or_else(String::new, |elapsed| {
+                if self.has_finished {
+                    format!(" | tog {:.1}s", elapsed.as_secs_f64())
+                } else {
+                    format!(" | tar {:.1}s", elapsed.as_secs_f64())
+                }
+            })
+        };
+
+        let similarity = character.similarity();
+
+        let editor =
+            editor_name.map_or_else(String::new, |name| format!(" | redigerad av {name}"));
+
+        let edit_pages = if self.chosen_has_edit() {
+            format!(
+                " | {}/{}{}",
+                chosen.revision().saturating_add(1),
+                chosen.revisions_count().saturating_add(1),
+                editor
+            )
+        } else {
+            String::new()
+        };
+
+        let len = format!(" | {content_len}/{CHARACTER_LIMIT}");
+
+        format!("-# {pages}{similarity}{elapsed}{len}{edit_pages}")
+    }
+
     /// Converts the history to a full response with buttons and choices.
     pub async fn to_response<'a, M: Into<MessageId>>(
         &'a self,
@@ -572,46 +618,12 @@ impl History {
     ) -> CreateReply<'a> {
         let chosen = self.chosen_message();
         let content = chosen.chosen_revision().head().content();
+        let editor_name = match chosen.current_editor() {
+            Some(user_id) => Some(db.substitute_name(user_id).await),
+            None => None,
+        };
         let footer = {
-            let pages = format!(
-                "{}/{}",
-                self.current.saturating_add(1),
-                self.choices_count()
-            );
-
-            let elapsed = if chosen.current_editor().is_some() {
-                String::new()
-            } else {
-                chosen.time_taken().map_or_else(String::new, |elapsed| {
-                    if self.has_finished {
-                        format!(" | tog {:.1}s", elapsed.as_secs_f64())
-                    } else {
-                        format!(" | tar {:.1}s", elapsed.as_secs_f64())
-                    }
-                })
-            };
-
-            let similarity = character.similarity();
-
-            let editor = match chosen.current_editor() {
-                Some(user_id) => format!(" | redigerad av {}", db.substitute_name(user_id).await),
-                None => String::new(),
-            };
-
-            let edit_pages = if self.chosen_has_edit() {
-                format!(
-                    " | {}/{}{}",
-                    chosen.revision().saturating_add(1),
-                    chosen.revisions_count().saturating_add(1),
-                    editor
-                )
-            } else {
-                String::new()
-            };
-
-            let len = format!(" | {}/{CHARACTER_LIMIT}", content.len());
-
-            let footer = format!("-# {pages}{similarity}{elapsed}{len}{edit_pages}");
+            let footer = self.footer_text(character, content.len(), editor_name.as_deref());
             vec![CreateContainerComponent::TextDisplay(
                 CreateTextDisplay::new(footer),
             )]
@@ -757,8 +769,28 @@ impl From<(&Character, MessageId)> for History {
 mod tests {
     use super::{BEGIN_EXAMPLE_MESSAGES, BEGIN_MESSAGE, History, SYSTEM_MESSAGE, scaffolding};
     use crate::models::{character::Character, message::Message};
+    use core::time::Duration;
     use nonempty::NonEmpty;
     use serenity::all::{MessageId, UserId};
+
+    /// Builds a minimal character with no name-similarity score.
+    fn character() -> Character {
+        Character::builder()
+            .id("id".to_owned())
+            .name("Harry")
+            .greeting("hi")
+            .creator(UserId::new(1))
+            .build()
+    }
+
+    /// Builds a reply that reports `seconds` of generation time.
+    fn timed_choice(character: &Character, content: &str, seconds: f64) -> Message {
+        Message::from((
+            character.clone(),
+            content.to_owned(),
+            Duration::from_secs_f64(seconds),
+        ))
+    }
 
     /// Returns the content of a scaffolding message's first part.
     fn first_part_content(message: &Message) -> &str {
@@ -1065,6 +1097,76 @@ mod tests {
         assert!(
             !history.has_finished,
             "the reply is marked as not yet finished"
+        );
+    }
+
+    /// A finished, timed reply shows the page counter, "tog" timing, and length.
+    #[test]
+    fn footer_shows_pages_finished_time_and_length() {
+        let character = character();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(&character, "hello", 2.0)))
+            .build();
+        assert_eq!(
+            history.footer_text(&character, 5, None),
+            "-# 1/1 | tog 2.0s | 5/3900",
+            "a finished timed reply shows the tog timing and the length"
+        );
+    }
+
+    /// An unfinished reply shows "tar" timing instead of "tog".
+    #[test]
+    fn footer_shows_pending_time_when_unfinished() {
+        let character = character();
+        let mut history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(&character, "hello", 2.0)))
+            .build();
+        history.set_finished(false);
+        assert_eq!(
+            history.footer_text(&character, 5, None),
+            "-# 1/1 | tar 2.0s | 5/3900",
+            "an unfinished reply shows the tar timing"
+        );
+    }
+
+    /// An edited reply hides the timing and shows the editor and revision counter.
+    #[test]
+    fn footer_shows_editor_and_revision_for_an_edit() {
+        let character = character();
+        let mut choice = timed_choice(&character, "hello", 2.0);
+        choice.edit("Bob", "hello there", Some(UserId::new(7)));
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(choice))
+            .build();
+        assert_eq!(
+            history.footer_text(&character, 11, Some("Bob")),
+            "-# 1/1 | 11/3900 | 2/2 | redigerad av Bob",
+            "an edited reply hides timing and shows the editor and the revision pages"
+        );
+    }
+
+    /// The page counter tracks which choice is currently chosen.
+    #[test]
+    fn footer_page_counter_tracks_the_chosen_choice() {
+        let character = character();
+        let mut choices = NonEmpty::new(timed_choice(&character, "a", 1.0));
+        choices.push(timed_choice(&character, "b", 1.0));
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(choices)
+            .current(1_usize)
+            .build();
+        assert_eq!(
+            history.footer_text(&character, 1, None),
+            "-# 2/2 | tog 1.0s | 1/3900",
+            "the page counter shows the second of two choices"
         );
     }
 }
