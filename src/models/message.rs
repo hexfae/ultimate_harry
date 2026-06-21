@@ -312,9 +312,9 @@ fn parts_from_lines(text: &str, author: &str, from_bot: bool) -> Vec<Part> {
             } else {
                 (author.to_owned(), format!("{author}: {line}"))
             };
-            let role = if from_bot || name.to_lowercase() == "ai" {
+            let role = if from_bot || name.eq_ignore_ascii_case("ai") {
                 Role::Assistant
-            } else if name.to_lowercase() == "system" {
+            } else if name.eq_ignore_ascii_case("system") {
                 Role::System
             } else {
                 Role::User
