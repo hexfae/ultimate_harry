@@ -194,7 +194,9 @@ where
 }
 
 /// Creates a collector that listens for a paginator button press with the
-/// context's ID. `has_action` includes the Confirm/Cancel buttons.
+/// context's ID. `has_action` includes the Confirm/Cancel buttons. The
+/// paginator message is ephemeral, so only the command author can see and press
+/// these buttons; no author filter is needed.
 #[must_use]
 async fn create_collector(ctx: Context<'_>, has_action: bool) -> Option<ComponentInteraction> {
     let tags: &[&str] = if has_action { &BUTTONS } else { &NAV_BUTTONS };
@@ -220,9 +222,14 @@ async fn send_initial_embed<'a>(
         .into_embed_with_footer_text(footer_text, &ctx.data().db)
         .await;
     let buttons = create_buttons(id, action_emoji, nav_disabled);
-    ctx.send(CreateReply::default().embed(embed).components(buttons))
-        .await
-        .context(SendMessageSnafu)
+    ctx.send(
+        CreateReply::default()
+            .embed(embed)
+            .components(buttons)
+            .ephemeral(true),
+    )
+    .await
+    .context(SendMessageSnafu)
 }
 
 /// Returns a component action row for the paginator. With a `Some` `action_emoji`

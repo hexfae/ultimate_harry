@@ -54,12 +54,11 @@ pub async fn create(ctx: ApplicationContext<'_>) -> AppResult {
     Ok(())
 }
 
-/// Create a collector that listens for a button press from the command's author
-/// with the context's id.
+/// Create a collector that listens for a button press with the context's id.
+/// The tempting-button message is ephemeral, so only the author can press it.
 #[must_use]
 async fn create_collector(ctx: ApplicationContext<'_>) -> Option<ComponentInteraction> {
     ComponentInteractionCollector::new(ctx.serenity_context())
-        .author_id(ctx.author().id)
         .custom_ids(FixedArray::from_vec_trunc(vec![
             FixedString::from_string_trunc(ctx.id().to_string()),
         ]))
@@ -89,4 +88,5 @@ fn create_reply_with_tempting_button<'a>(id: impl Into<Cow<'a, str>>) -> CreateR
     CreateReply::default()
         .content(click_below())
         .components(single_button_row(id, click_me()))
+        .ephemeral(true)
 }

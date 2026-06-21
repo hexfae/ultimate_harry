@@ -91,16 +91,16 @@ async fn show_first_modal<M: Modal>(
         .context(ShowModalSnafu)
 }
 
-/// Sends a button that attempts to tempt the user into pressing it, then shows them a modal.
+/// Sends a button that attempts to tempt the user into pressing it, then shows
+/// them a modal. The tempting button rides on the ephemeral paginate message, so
+/// only the command author can see and press it; no author filter is needed.
 async fn show_second_modal<M: Modal>(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
 ) -> AppResult<Option<M>> {
     send_first_tempting_button(ctx, interaction).await?;
     let id = ctx.id().to_string();
-    let author = ctx.author().id;
     let collector = ComponentInteractionCollector::new(ctx.serenity_context())
-        .author_id(author)
         .custom_ids(FixedArray::from_vec_trunc(vec![
             FixedString::from_string_trunc(id.clone()),
         ]))

@@ -69,7 +69,6 @@ async fn ask_for_confirmation(
     let cancel_id = InteractionKind::Cancel.custom_id(id);
 
     Ok(ComponentInteractionCollector::new(ctx.serenity_context())
-        .author_id(ctx.author().id)
         .custom_ids(FixedArray::from_vec_trunc(vec![
             FixedString::from_string_trunc(confirm_id.clone()),
             FixedString::from_string_trunc(cancel_id.clone()),
