@@ -154,8 +154,8 @@ impl Message {
 
     /// Edits the message content, creating a new revision.
     ///
-    /// The current content is moved to a new revision and the message
-    /// content is replaced with the new content.
+    /// The new content is appended as a fresh revision and the cursor moves to it; revision 0
+    /// (the original content) is left untouched, so an undo can return to it.
     pub fn edit<A, C, E>(&mut self, author: A, content: C, editor: Option<E>)
     where
         A: Into<String>,
