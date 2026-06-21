@@ -5,7 +5,6 @@ use core::pin::Pin;
 use miette::Diagnostic;
 use rig::{
     agent::{AgentBuilder, MultiTurnStreamItem, StreamingError},
-    completion::PromptError,
     http_client::Error as RigError,
     message::Message,
     providers::openrouter::{Client, CompletionModel, streaming::StreamingCompletionResponse},
@@ -152,17 +151,5 @@ pub enum LlmError {
     BuildClient {
         /// The source of the error.
         source: RigError,
-    },
-    /// Failed to get a response from the AI.
-    #[snafu(display("Misslyckades med att få svar från AI: {source}"))]
-    #[diagnostic(
-        help(
-            "Prompten kan vara för långt eller innehålla ogiltiga tecken. Försök med ett kortare meddelande."
-        ),
-        code(llm::get_response)
-    )]
-    GetResponse {
-        /// The source of the error.
-        source: PromptError,
     },
 }
