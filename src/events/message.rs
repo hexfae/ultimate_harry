@@ -50,7 +50,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
     let requester = LlmManager::new(db.resolved_model_settings(&character).await);
 
     let mut context = db.build_context(&history, &character).await?;
-    let mode = resolve_attachments(db, &requester, &mut context).await;
+    let mode = resolve_attachments(db, &requester, &mut history, &mut context).await;
 
     let now = Instant::now();
     let mut sink = MessageSink {

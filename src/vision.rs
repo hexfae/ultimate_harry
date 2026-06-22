@@ -8,7 +8,10 @@ use tracing::warn;
 use crate::{
     database::Database,
     llm::LlmManager,
-    models::message::{AttachmentMode, DescribedAttachment, Message},
+    models::{
+        history::History,
+        message::{AttachmentMode, DescribedAttachment, Message},
+    },
 };
 
 /// Decides whether the active model receives images or text descriptions, describing and caching
@@ -19,6 +22,7 @@ use crate::{
 pub async fn resolve_attachments(
     db: &Database,
     requester: &LlmManager,
+    history: &mut History,
     context: &mut [Message],
 ) -> AttachmentMode {
     if !context.iter().any(Message::has_image_attachment) {
@@ -29,23 +33,29 @@ pub async fn resolve_attachments(
         Ok(false) => {}
         Err(why) => warn!("could not check vision support, describing images to be safe: {why}"),
     }
-    describe_and_cache(db, requester, context).await;
+    let described = describe_images(requester, context).await;
+    apply_and_cache(db, history, context, &described).await;
     AttachmentMode::Describe
 }
 
-/// Describes every undescribed image across `context`, merging the captions into the in-memory
-/// messages and caching them onto their stored records for future turns.
-async fn describe_and_cache(db: &Database, requester: &LlmManager, context: &mut [Message]) {
-    let described = describe_images(requester, context).await;
+/// Merges `described` into the in-memory `context`, into the history's pending messages (so a
+/// first-turn image is saved with the reply), and onto already-stored messages (for future turns).
+async fn apply_and_cache(
+    db: &Database,
+    history: &mut History,
+    context: &mut [Message],
+    described: &[DescribedAttachment],
+) {
     if described.is_empty() {
         return;
     }
     for message in context.iter_mut() {
-        message.add_descriptions(&described);
+        message.add_descriptions(described);
     }
+    history.apply_descriptions(described);
     for message in context.iter().filter(|message| message.has_image_attachment()) {
         if let Err(why) = db
-            .cache_attachment_descriptions(message.id(), &described)
+            .cache_attachment_descriptions(message.id(), described)
             .await
         {
             warn!("could not cache image descriptions: {why}");

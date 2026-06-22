@@ -58,7 +58,7 @@ use crate::{
     events::interaction::InteractionKind,
     models::{
         character::{Character, CharacterOption},
-        message::Message,
+        message::{DescribedAttachment, Message},
     },
     util::wrapping_previous,
 };
@@ -366,6 +366,18 @@ impl History {
     #[must_use]
     pub fn pending(&self) -> &[Message] {
         &self.pending
+    }
+
+    /// Merges image descriptions into the pending messages so they are saved with the turn.
+    ///
+    /// A pending message (the user's just-sent message) is not yet in the message table, so caching
+    /// onto the table is a no-op for it; applying here instead lets [`Self::into_stored`] persist the
+    /// description on the very first reply. Each message only takes descriptions for its own
+    /// attachments, so passing the whole set is safe.
+    pub fn apply_descriptions(&mut self, descriptions: &[DescribedAttachment]) {
+        for message in &mut self.pending {
+            message.add_descriptions(descriptions);
+        }
     }
 
     /// Converts the in-memory history into its persisted form plus the messages that must be
@@ -788,10 +800,44 @@ mod tests {
     use super::{
         BEGIN_EXAMPLE_MESSAGES, BEGIN_MESSAGE, History, SYSTEM_MESSAGE, StoredHistory, scaffolding,
     };
-    use crate::models::{character::Character, message::Message};
+    use crate::models::{
+        character::Character,
+        message::{DescribedAttachment, Message, Role},
+    };
     use core::time::Duration;
     use nonempty::NonEmpty;
     use serenity::all::{MessageId, UserId};
+
+    /// `apply_descriptions` reaches the pending messages, so a first-turn image description is
+    /// carried into the persisted turn rather than lost.
+    #[test]
+    fn apply_descriptions_reaches_pending_messages() {
+        let user = Message::builder()
+            .id(MessageId::new(5))
+            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .attachments(vec!["https://cdn/x.png".to_owned()])
+            .build();
+        let mut history = History::builder()
+            .id(MessageId::new(1))
+            .character("char")
+            .choices(NonEmpty::new(Message::new_system("greeting")))
+            .pending(vec![user])
+            .build();
+
+        history.apply_descriptions(&[DescribedAttachment {
+            url: "https://cdn/x.png".to_owned(),
+            description: "en bild".to_owned(),
+        }]);
+
+        assert_eq!(
+            history
+                .pending()
+                .first()
+                .and_then(|message| message.description_for("https://cdn/x.png")),
+            Some("en bild"),
+            "the description reaches the pending message so it persists with the turn"
+        );
+    }
 
     /// Builds a minimal character with no name-similarity score.
     fn character() -> Character {
