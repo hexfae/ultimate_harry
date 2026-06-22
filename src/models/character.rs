@@ -37,6 +37,11 @@ use crate::{
 /// See [`jiff::fmt::strtime`] for formatting details.
 const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %T | %F";
 
+/// Compact date format for the "senast använd" leaderboard column.
+///
+/// See [`jiff::fmt::strtime`] for formatting details.
+const LATEST_CONVERSATION_FORMAT: &str = "%Y-%m-%d %H:%M";
+
 /// Discord's per-field value limit for embeds; longer values are rejected.
 const FIELD_VALUE_LIMIT: usize = 1024;
 
@@ -344,6 +349,18 @@ impl Character {
         self.conversations_had
     }
 
+    /// Returns the number of words this character has generated.
+    #[must_use]
+    pub const fn words_generated(&self) -> u32 {
+        self.words_generated
+    }
+
+    /// Returns the number of tokens this character has generated.
+    #[must_use]
+    pub const fn tokens_generated(&self) -> u32 {
+        self.tokens_generated
+    }
+
     /// Records that this character was spawned into a new conversation by the given user.
     ///
     /// Bumps the total and per-user conversation counts and refreshes the
@@ -373,6 +390,16 @@ impl Character {
             }
         }
         string
+    }
+
+    /// Returns the character's last-used time, compactly formatted, or `aldrig`
+    /// when the character has never been spawned into a conversation.
+    #[must_use]
+    pub fn formatted_latest_conversation(&self) -> String {
+        self.latest_conversation.as_ref().map_or_else(
+            || "aldrig".to_owned(),
+            |time| time.strftime(LATEST_CONVERSATION_FORMAT).to_string(),
+        )
     }
 
     /// Returns the character's model settings override, if any.

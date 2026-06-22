@@ -6,6 +6,7 @@ pub mod emoji;
 pub mod model;
 pub mod name;
 pub mod pin_channel;
+pub mod stats;
 
 pub use character::character;
 pub use chat::chat;
@@ -13,6 +14,7 @@ pub use emoji::emoji;
 pub use model::model;
 pub use name::name;
 pub use pin_channel::pin_channel;
+pub use stats::stats;
 
 use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse};
 use tracing::warn;
@@ -23,7 +25,15 @@ use crate::{Context, app_state::AppState, error::AppError, models::character::Ch
 ///
 /// Declared once here so framework setup and per-guild registration cannot drift apart.
 pub fn commands() -> Vec<poise::Command<AppState, AppError>> {
-    vec![character(), chat(), emoji(), model(), pin_channel(), name()]
+    vec![
+        character(),
+        chat(),
+        emoji(),
+        model(),
+        pin_channel(),
+        name(),
+        stats(),
+    ]
 }
 
 /// Returns an auto completion response from characters found in the database, sorted by similarity to the input.
