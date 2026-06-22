@@ -25,7 +25,7 @@ miette = { version = "7.6.0", features = ["fancy"] }
 snafu = "0.9.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
-jiff = { version = "0.2.23", features = ["serde"] }
+jiff = { version = "0.2.23", features = ["serde", "tzdb-bundle-always"] }
 ulid = { version = "1.2.1", features = ["serde"] }
 nonempty = { version = "0.12.0", features = ["serialize"] }
 bon = "3.9.1"
