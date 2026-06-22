@@ -16,7 +16,7 @@ use rig::{
     message::{AssistantContent, Message as RigMessage, UserContent},
 };
 use serde::{Deserialize, Serialize};
-use serenity::all::{Attachment, Message as DiscordMessage, MessageId, UserId};
+use serenity::all::{Message as DiscordMessage, MessageId, UserId};
 use tracing::warn;
 use ulid::Ulid;
 
@@ -24,6 +24,42 @@ use crate::models::character::Character;
 
 /// Discord voice messages are uploaded as `.ogg` attachments.
 const PROBABLE_DISCORD_VOICE_RECORDING: &str = ".ogg";
+
+/// Placeholder text fed to a non-vision model when an image has no cached description.
+const UNDESCRIBED_IMAGE: &str = "[Bild kunde inte tolkas]";
+
+/// Whether a message's image attachments are sent to the LLM as images or as text descriptions.
+///
+/// `Image` is the normal path; `Describe` is used when the active model lacks vision and a separate
+/// vision model has described the images instead.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum AttachmentMode {
+    /// Send image attachments to the model as images.
+    #[default]
+    Image,
+    /// Replace image attachments with their cached text descriptions.
+    Describe,
+}
+
+/// A cached vision-model description of a single attachment, looked up by its URL.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DescribedAttachment {
+    /// The attachment URL this describes.
+    pub url: String,
+    /// The vision model's text description of the attachment.
+    pub description: String,
+}
+
+/// How one attachment is rendered into LLM content under a given [`AttachmentMode`].
+#[derive(Debug, PartialEq, Eq)]
+enum AttachmentRender {
+    /// Sent as an image URL.
+    Image(String),
+    /// Sent as an audio URL (Discord voice messages).
+    Audio(String),
+    /// Sent as plain text (a description or a placeholder).
+    Text(String),
+}
 
 /// A chat message between a user and a character.
 ///
@@ -61,9 +97,14 @@ pub struct Message {
     #[builder(default)]
     revisions: Vec<Revision>,
     /// The URLs of all attached images, if any.
-    #[builder(default, with = |attachments: &[Attachment]| attachments.iter().map(|attachment| attachment.url.to_string()).collect::<Vec<String>>()  )]
+    #[builder(default)]
     #[serde(rename = "images")]
     attachments: Vec<String>,
+    /// Cached vision-model descriptions of `attachments`, keyed by URL. Filled lazily the first
+    /// time a model without vision needs them, and empty otherwise.
+    #[builder(default)]
+    #[serde(default)]
+    described: Vec<DescribedAttachment>,
     /// The message "revision," 0 is the original (unedited) message, 1 is the
     /// first edit, 2 is the second edit, etc.
     #[builder(default)]
@@ -235,8 +276,11 @@ impl Message {
     }
 
     /// Converts this message into a vector of Rig messages for the LLM.
+    ///
+    /// `mode` selects whether image attachments are sent as images or replaced with their cached
+    /// text descriptions (for models without vision).
     #[must_use]
-    pub fn to_rig_messages(&self) -> Vec<RigMessage> {
+    pub fn to_rig_messages(&self, mode: AttachmentMode) -> Vec<RigMessage> {
         let chosen = self.chosen_revision();
         let last_user = chosen.0.iter().rposition(|part| matches!(part.role, Role::User));
 
@@ -258,11 +302,17 @@ impl Message {
                     let mut content = OneOrMany::one(UserContent::text(&part.content));
 
                     if Some(index) == last_user {
-                        for url in &self.attachments {
-                            if url.contains(PROBABLE_DISCORD_VOICE_RECORDING) {
-                                content.push(UserContent::audio_url(url, None));
-                            } else {
-                                content.push(UserContent::image_url(url, None, None));
+                        for render in self.render_attachments(mode) {
+                            match render {
+                                AttachmentRender::Image(url) => {
+                                    content.push(UserContent::image_url(&url, None, None));
+                                }
+                                AttachmentRender::Audio(url) => {
+                                    content.push(UserContent::audio_url(&url, None));
+                                }
+                                AttachmentRender::Text(text) => {
+                                    content.push(UserContent::text(&text));
+                                }
                             }
                         }
                     }
@@ -271,6 +321,79 @@ impl Message {
                 }
             })
             .collect()
+    }
+
+    /// Renders this message's attachments under `mode`: voice notes stay audio, while images are
+    /// either kept as images or swapped for their cached description (or a placeholder).
+    fn render_attachments(&self, mode: AttachmentMode) -> Vec<AttachmentRender> {
+        self.attachments
+            .iter()
+            .map(|url| {
+                if url.contains(PROBABLE_DISCORD_VOICE_RECORDING) {
+                    AttachmentRender::Audio(url.clone())
+                } else {
+                    match mode {
+                        AttachmentMode::Image => AttachmentRender::Image(url.clone()),
+                        AttachmentMode::Describe => AttachmentRender::Text(
+                            self.description_for(url).map_or_else(
+                                || UNDESCRIBED_IMAGE.to_owned(),
+                                |description| format!("[Bild: {description}]"),
+                            ),
+                        ),
+                    }
+                }
+            })
+            .collect()
+    }
+
+    /// The non-voice attachment URLs that do not yet have a cached description.
+    #[must_use]
+    pub fn undescribed_image_urls(&self) -> Vec<String> {
+        self.attachments
+            .iter()
+            .filter(|url| !url.contains(PROBABLE_DISCORD_VOICE_RECORDING))
+            .filter(|url| self.description_for(url).is_none())
+            .cloned()
+            .collect()
+    }
+
+    /// Whether this message has at least one image (non-voice) attachment.
+    #[must_use]
+    pub fn has_image_attachment(&self) -> bool {
+        self.attachments
+            .iter()
+            .any(|url| !url.contains(PROBABLE_DISCORD_VOICE_RECORDING))
+    }
+
+    /// The cached description for `url`, if one has been generated.
+    #[must_use]
+    pub fn description_for(&self, url: &str) -> Option<&str> {
+        self.described
+            .iter()
+            .find(|described| described.url.as_str() == url)
+            .map(|described| described.description.as_str())
+    }
+
+    /// Merges in any descriptions whose URL matches one of this message's attachments, skipping
+    /// URLs that are already described.
+    pub fn add_descriptions(&mut self, new: &[DescribedAttachment]) {
+        for description in new {
+            let owned = self
+                .attachments
+                .iter()
+                .any(|url| url.as_str() == description.url.as_str());
+            let already = self.description_for(&description.url).is_some();
+            if owned && !already {
+                self.described.push(description.clone());
+            }
+        }
+    }
+
+    /// The number of cached attachment descriptions, for tests.
+    #[cfg(test)]
+    #[must_use]
+    pub const fn described_count(&self) -> usize {
+        self.described.len()
     }
 }
 
@@ -337,7 +460,13 @@ impl From<(&DiscordMessage, String)> for Message {
                 &author,
                 message.author.bot(),
             ))
-            .attachments(&message.attachments)
+            .attachments(
+                message
+                    .attachments
+                    .iter()
+                    .map(|attachment| attachment.url.to_string())
+                    .collect::<Vec<String>>(),
+            )
             .build()
     }
 }
@@ -367,7 +496,10 @@ impl From<(String, String, Role)> for Parts {
 /// Tests for message revision navigation and conversion.
 #[cfg(test)]
 mod tests {
-    use super::{Message, Part, Parts, Role, parts_from_lines};
+    use super::{
+        AttachmentMode, AttachmentRender, DescribedAttachment, Message, Part, Parts, Role,
+        parts_from_lines,
+    };
     use rig::message::Message as RigMessage;
 
     /// Builds a system message edited twice, leaving two revisions on top of the original.
@@ -463,7 +595,7 @@ mod tests {
                     .build(),
             ])
             .build();
-        let rig_messages = message.to_rig_messages();
+        let rig_messages = message.to_rig_messages(AttachmentMode::Image);
         assert_eq!(rig_messages.len(), 3, "each part maps to one rig message");
         assert!(
             matches!(rig_messages.first(), Some(RigMessage::System { .. })),
@@ -557,6 +689,122 @@ mod tests {
         assert!(
             parts.iter().all(|part| matches!(part.role, Role::Assistant)),
             "every line from a bot author is an assistant part"
+        );
+    }
+
+    /// Builds a user message with the given attachment URLs and cached descriptions.
+    fn message_with_attachments(
+        attachments: Vec<String>,
+        described: Vec<DescribedAttachment>,
+    ) -> Message {
+        Message::builder()
+            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .attachments(attachments)
+            .described(described)
+            .build()
+    }
+
+    /// Image mode keeps images as images and voice notes as audio.
+    #[test]
+    fn render_image_mode_keeps_images_and_audio() {
+        let message = message_with_attachments(
+            vec![
+                "https://cdn/img.png".to_owned(),
+                "https://cdn/voice.ogg".to_owned(),
+            ],
+            Vec::new(),
+        );
+        assert_eq!(
+            message.render_attachments(AttachmentMode::Image),
+            vec![
+                AttachmentRender::Image("https://cdn/img.png".to_owned()),
+                AttachmentRender::Audio("https://cdn/voice.ogg".to_owned()),
+            ],
+            "image mode sends images as images and voice notes as audio"
+        );
+    }
+
+    /// Describe mode swaps a described image for its text, leaving audio untouched.
+    #[test]
+    fn render_describe_mode_uses_cached_descriptions() {
+        let message = message_with_attachments(
+            vec![
+                "https://cdn/img.png".to_owned(),
+                "https://cdn/voice.ogg".to_owned(),
+            ],
+            vec![DescribedAttachment {
+                url: "https://cdn/img.png".to_owned(),
+                description: "en katt".to_owned(),
+            }],
+        );
+        assert_eq!(
+            message.render_attachments(AttachmentMode::Describe),
+            vec![
+                AttachmentRender::Text("[Bild: en katt]".to_owned()),
+                AttachmentRender::Audio("https://cdn/voice.ogg".to_owned()),
+            ],
+            "describe mode swaps a described image for its text and leaves audio alone"
+        );
+    }
+
+    /// Describe mode falls back to a placeholder for an image with no cached description.
+    #[test]
+    fn render_describe_mode_falls_back_for_undescribed_images() {
+        let message = message_with_attachments(vec!["https://cdn/img.png".to_owned()], Vec::new());
+        assert_eq!(
+            message.render_attachments(AttachmentMode::Describe),
+            vec![AttachmentRender::Text("[Bild kunde inte tolkas]".to_owned())],
+            "an undescribed image falls back to a placeholder"
+        );
+    }
+
+    /// `undescribed_image_urls` lists only non-voice attachments without a cached description.
+    #[test]
+    fn undescribed_image_urls_excludes_audio_and_described() {
+        let message = message_with_attachments(
+            vec![
+                "https://cdn/a.png".to_owned(),
+                "https://cdn/b.png".to_owned(),
+                "https://cdn/voice.ogg".to_owned(),
+            ],
+            vec![DescribedAttachment {
+                url: "https://cdn/a.png".to_owned(),
+                description: "beskriven".to_owned(),
+            }],
+        );
+        assert_eq!(
+            message.undescribed_image_urls(),
+            vec!["https://cdn/b.png".to_owned()],
+            "only undescribed, non-voice attachments need describing"
+        );
+    }
+
+    /// `add_descriptions` merges descriptions for owned URLs once, ignoring unrelated URLs.
+    #[test]
+    fn add_descriptions_merges_matching_urls_without_duplicates() {
+        let mut message =
+            message_with_attachments(vec!["https://cdn/a.png".to_owned()], Vec::new());
+        let descriptions = vec![
+            DescribedAttachment {
+                url: "https://cdn/a.png".to_owned(),
+                description: "katt".to_owned(),
+            },
+            DescribedAttachment {
+                url: "https://cdn/other.png".to_owned(),
+                description: "ovidkommande".to_owned(),
+            },
+        ];
+        message.add_descriptions(&descriptions);
+        message.add_descriptions(&descriptions);
+        assert_eq!(
+            message.described_count(),
+            1,
+            "only the matching url merges, and a second merge adds no duplicate"
+        );
+        assert_eq!(
+            message.description_for("https://cdn/a.png"),
+            Some("katt"),
+            "the matching url is described"
         );
     }
 

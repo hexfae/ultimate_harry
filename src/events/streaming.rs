@@ -16,7 +16,7 @@ use crate::{
     models::{
         character::{Character, CharacterOption},
         history::History,
-        message::Message as ChatMessage,
+        message::{AttachmentMode, Message as ChatMessage},
     },
 };
 use core::time::Duration;
@@ -251,6 +251,7 @@ pub async fn stream_into<S: ReplySink>(
     requester: &LlmManager,
     context: &[ChatMessage],
     prompt: Option<String>,
+    mode: AttachmentMode,
     start: Instant,
     sink: &mut S,
 ) -> AppResult<Reply> {
@@ -260,7 +261,7 @@ pub async fn stream_into<S: ReplySink>(
     let mut complete = true;
     'attempts: loop {
         attempt = attempt.saturating_add(1);
-        let mut stream = match requester.request_stream(context, prompt.clone()).await {
+        let mut stream = match requester.request_stream(context, prompt.clone(), mode).await {
             Ok(stream) => stream,
             Err(source) => {
                 let why = AppError::from(source);

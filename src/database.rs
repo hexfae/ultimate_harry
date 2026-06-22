@@ -25,7 +25,7 @@ use crate::llm::ModelSettings;
 use crate::models::{
     character::{Character, CharacterOption},
     history::{History, StoredHistory, scaffolding},
-    message::Message,
+    message::{DescribedAttachment, Message},
 };
 
 /// The path of the embedded `native_db` database file.
@@ -310,6 +310,30 @@ impl Database {
         }
         write.upsert(stored).context(InsertSnafu)?;
         write.commit().context(InsertSnafu)
+    }
+
+    /// Merges vision-model descriptions into a stored message, keyed by attachment URL.
+    ///
+    /// Loads the message from the table, adds any descriptions for attachments it owns, and writes
+    /// it back. A message that is not yet stored (still pending this turn) is a no-op.
+    pub async fn cache_attachment_descriptions(
+        &self,
+        message_id: &str,
+        descriptions: &[DescribedAttachment],
+    ) -> Result<(), DatabaseError> {
+        let stored = {
+            let read = self.0.r_transaction().context(GetSnafu)?;
+            read.get()
+                .primary::<Message>(message_id.to_owned())
+                .context(GetSnafu)?
+        };
+        let Some(mut message) = stored else {
+            return Ok(());
+        };
+        message.add_descriptions(descriptions);
+        let write = self.0.rw_transaction().context(UpdateSnafu)?;
+        write.upsert(message).context(UpdateSnafu)?;
+        write.commit().context(UpdateSnafu)
     }
 
     /// Updates or inserts a user's emoji.
@@ -685,11 +709,12 @@ pub enum DatabaseError {
 mod tests {
     use super::Database;
     use core::ptr;
+    use core::slice::from_ref;
     use crate::llm::ModelSettings;
     use crate::models::{
         character::Character,
         history::{History, scaffolding},
-        message::Message,
+        message::{DescribedAttachment, Message, Role},
     };
     use nonempty::NonEmpty;
     use serenity::all::{MessageId, UserId};
@@ -896,6 +921,66 @@ mod tests {
             resolved_ids,
             vec![first_id, second_id],
             "messages resolve in request order, skipping the missing ID"
+        );
+    }
+
+    /// `cache_attachment_descriptions` persists a description onto an already-stored message and
+    /// is a harmless no-op for a message that is not in the table.
+    #[tokio::test]
+    async fn cache_attachment_descriptions_persists_onto_stored_messages() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+
+        let image_message = Message::builder()
+            .id(MessageId::new(7))
+            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .attachments(vec!["https://cdn/cat.png".to_owned()])
+            .build();
+        let message_id = image_message.id().to_owned();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("char-id")
+            .choices(NonEmpty::new(image_message))
+            .build();
+        assert!(
+            db.upsert_history(history).await.is_ok(),
+            "storing the image message should succeed"
+        );
+
+        let descriptions = vec![DescribedAttachment {
+            url: "https://cdn/cat.png".to_owned(),
+            description: "en katt".to_owned(),
+        }];
+        assert!(
+            db.cache_attachment_descriptions(&message_id, &descriptions)
+                .await
+                .is_ok(),
+            "caching descriptions should succeed"
+        );
+
+        let reloaded = db
+            .messages(from_ref(&message_id))
+            .await
+            .unwrap_or_default();
+        let described = reloaded
+            .first()
+            .and_then(|message| message.description_for("https://cdn/cat.png"));
+        assert_eq!(
+            described,
+            Some("en katt"),
+            "the cached description is persisted onto the stored message"
+        );
+
+        let missing = db
+            .cache_attachment_descriptions("not-stored", &descriptions)
+            .await;
+        assert!(
+            missing.is_ok(),
+            "caching onto a missing message is a no-op, not an error"
         );
     }
 

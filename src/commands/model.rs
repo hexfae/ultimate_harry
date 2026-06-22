@@ -16,15 +16,18 @@ pub async fn model(
     #[rename = "temperatur"]
     #[description = "Temperaturen (högre = mer slumpmässig)"]
     temperature: Option<f32>,
+    #[rename = "syn-modell"]
+    #[description = "Modellen som beskriver bilder för modeller utan syn"]
+    vision_model: Option<String>,
 ) -> AppResult {
     let mut model_settings = ctx.data().db.model_settings().await;
-    if model.is_none() && api_key.is_none() && temperature.is_none() {
+    if model.is_none() && api_key.is_none() && temperature.is_none() && vision_model.is_none() {
         ctx.say_ephemeral(model_settings.summary())
             .await
             .context(SendMessageSnafu)?;
         return Ok(());
     }
-    model_settings.apply_overrides(model, api_key, temperature);
+    model_settings.apply_overrides(model, api_key, temperature, vision_model);
     ctx.data().db.upsert_model_settings(model_settings).await?;
     ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
     Ok(())

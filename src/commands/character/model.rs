@@ -23,6 +23,9 @@ pub async fn model(
     #[rename = "temperatur"]
     #[description = "Temperaturen (högre = mer slumpmässig)"]
     temperature: Option<f32>,
+    #[rename = "syn-modell"]
+    #[description = "Modellen som beskriver bilder för modeller utan syn"]
+    vision_model: Option<String>,
 ) -> AppResult {
     let db = &ctx.data().db;
     let characters: Vec<Character> = db.characters_by_similarity(name).await?;
@@ -34,7 +37,7 @@ pub async fn model(
     };
 
     let mut model_settings = db.resolved_model_settings(character).await;
-    if model.is_none() && api_key.is_none() && temperature.is_none() {
+    if model.is_none() && api_key.is_none() && temperature.is_none() && vision_model.is_none() {
         let scope = if character.has_model_settings() {
             "egna inställningar"
         } else {
@@ -45,7 +48,7 @@ pub async fn model(
             .context(SendMessageSnafu)?;
         return Ok(());
     }
-    model_settings.apply_overrides(model, api_key, temperature);
+    model_settings.apply_overrides(model, api_key, temperature, vision_model);
     db.set_character_model_settings(character.id(), model_settings)
         .await?;
     ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;

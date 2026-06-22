@@ -3014,6 +3014,7 @@ dependencies = [
  "native_model",
  "nonempty",
  "poise",
+ "reqwest",
  "rig-core",
  "rustls",
  "serde",

@@ -15,6 +15,7 @@ mod models;
 mod phrases;
 mod traits;
 mod util;
+mod vision;
 
 use crate::{
     app_state::AppState,

@@ -11,6 +11,7 @@ use crate::{
     events::streaming::{MessageSink, ReplySink as _, stream_into},
     llm::LlmManager,
     models::{character::Character, history::History},
+    vision::resolve_attachments,
 };
 use poise::serenity_prelude::{Context, Message};
 use serenity::all::ReactionType;
@@ -49,7 +50,8 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
     let requester = LlmManager::new(db.resolved_model_settings(&character).await);
 
     let now = Instant::now();
-    let context = db.build_context(&history, &character).await?;
+    let mut context = db.build_context(&history, &character).await?;
+    let mode = resolve_attachments(db, &requester, &mut context).await;
 
     let mut sink = MessageSink {
         ctx,
@@ -59,7 +61,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         db,
         options: &options,
     };
-    let reply = stream_into(&requester, &context, None, now, &mut sink).await?;
+    let reply = stream_into(&requester, &context, None, mode, now, &mut sink).await?;
     sink.finalize(reply, now.elapsed()).await?;
 
     Ok(())

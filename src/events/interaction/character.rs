@@ -7,6 +7,7 @@ use crate::{
     events::streaming::{MessageSink, ReplySink as _, stream_into},
     llm::LlmManager,
     models::{history::History, message::Message},
+    vision::resolve_attachments,
 };
 use poise::serenity_prelude::{ComponentInteraction, Context, CreateInteractionResponse};
 use serenity::all::ComponentInteractionDataKind;
@@ -58,7 +59,8 @@ pub async fn character(
     let requester = LlmManager::new(db.resolved_model_settings(&new_character).await);
 
     let now = Instant::now();
-    let context = db.build_context(&history, &new_character).await?;
+    let mut context = db.build_context(&history, &new_character).await?;
+    let mode = resolve_attachments(db, &requester, &mut context).await;
     let prompt = format!("Fortsätt rollspelet som {new_character}.");
 
     let mut sink = MessageSink {
@@ -69,7 +71,7 @@ pub async fn character(
         db,
         options: &options,
     };
-    let reply = stream_into(&requester, &context, Some(prompt), now, &mut sink).await?;
+    let reply = stream_into(&requester, &context, Some(prompt), mode, now, &mut sink).await?;
     sink.finalize(reply, now.elapsed()).await?;
 
     db.record_character_spawn(new_character.id(), interaction.user.id)

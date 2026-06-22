@@ -1,6 +1,6 @@
 //! The LLM manager for generating responses from AI models.
 
-use crate::models::message::Message as ChatMessage;
+use crate::models::message::{AttachmentMode, Message as ChatMessage};
 use core::pin::Pin;
 use miette::Diagnostic;
 use rig::{
@@ -12,7 +12,16 @@ use rig::{
 };
 use serde::{Deserialize, Serialize};
 use serenity::futures::Stream;
-use snafu::{ResultExt as _, Snafu};
+use snafu::{OptionExt as _, ResultExt as _, Snafu};
+
+/// The `OpenRouter` endpoint listing every available model and its capabilities.
+const MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
+
+/// The `OpenRouter` chat-completions endpoint, used to describe images.
+const CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
+
+/// The instruction given to the vision model when describing an image.
+const DESCRIBE_PROMPT: &str = "Beskriv bilden så detaljerat som möjligt på svenska.";
 
 /// The LLM manager for generating responses from AI models.
 ///
@@ -41,6 +50,21 @@ pub struct ModelSettings {
     /// Higher values make the output more random, while lower values make it
     /// more deterministic and focused.
     pub temperature: f32,
+    /// The model used to describe image attachments for models that lack vision.
+    ///
+    /// When the active model cannot read images, this model is asked to caption them and the text
+    /// is sent instead. `None` disables the fallback.
+    #[serde(default = "default_vision_model")]
+    pub vision_model: Option<String>,
+}
+
+/// The default vision model used to describe images for models without vision.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "serde default must produce the Option<String> field type"
+)]
+fn default_vision_model() -> Option<String> {
+    Some("google/gemini-3.1-flash-lite".to_owned())
 }
 
 impl ModelSettings {
@@ -52,8 +76,9 @@ impl ModelSettings {
         } else {
             "inställd"
         };
+        let vision_model = self.vision_model.as_deref().unwrap_or("ingen");
         format!(
-            "modell: {}\ntemperatur: {}\napi-nyckel: {api_key}",
+            "modell: {}\nsynmodell: {vision_model}\ntemperatur: {}\napi-nyckel: {api_key}",
             self.model, self.temperature
         )
     }
@@ -64,6 +89,7 @@ impl ModelSettings {
         model: Option<String>,
         api_key: Option<String>,
         temperature: Option<f32>,
+        vision_model: Option<String>,
     ) {
         if let Some(new_model) = model {
             self.model = new_model;
@@ -73,6 +99,9 @@ impl ModelSettings {
         }
         if let Some(new_temperature) = temperature {
             self.temperature = new_temperature;
+        }
+        if let Some(new_vision_model) = vision_model {
+            self.vision_model = Some(new_vision_model);
         }
     }
 }
@@ -95,6 +124,7 @@ impl LlmManager {
         &self,
         context: &[ChatMessage],
         prompt: Option<String>,
+        mode: AttachmentMode,
     ) -> Result<
         Pin<
             Box<
@@ -113,7 +143,7 @@ impl LlmManager {
 
         let mut rig_messages: Vec<Message> = Vec::new();
         for msg in context {
-            rig_messages.extend(msg.to_rig_messages());
+            rig_messages.extend(msg.to_rig_messages(mode));
         }
 
         let agent = AgentBuilder::new(model)
@@ -127,6 +157,120 @@ impl LlmManager {
             )
             .await)
     }
+
+    /// Returns whether the active model can read images, by checking its `OpenRouter` capabilities.
+    pub async fn supports_vision(&self) -> Result<bool, LlmError> {
+        let response = reqwest::get(MODELS_URL).await.context(ListModelsSnafu)?;
+        let models = response
+            .json::<ModelsResponse>()
+            .await
+            .context(ListModelsSnafu)?;
+        Ok(model_supports_vision(&models, &self.settings.model))
+    }
+
+    /// Describes the image at `url` using the configured vision model, returning its caption.
+    pub async fn describe_image(&self, url: &str) -> Result<String, LlmError> {
+        let vision_model = self
+            .settings
+            .vision_model
+            .as_deref()
+            .context(NoVisionModelSnafu)?;
+        let body = serde_json::json!({
+            "model": vision_model,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": DESCRIBE_PROMPT},
+                    {"type": "image_url", "image_url": {"url": url}},
+                ],
+            }],
+        });
+        let response = reqwest::Client::new()
+            .post(CHAT_URL)
+            .bearer_auth(&self.settings.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context(DescribeImageSnafu)?;
+        let parsed = response
+            .json::<ChatResponse>()
+            .await
+            .context(DescribeImageSnafu)?;
+        extract_description(&parsed).context(EmptyDescriptionSnafu)
+    }
+}
+
+/// Whether the model with `model_id` lists `image` among its accepted input modalities.
+fn model_supports_vision(models: &ModelsResponse, model_id: &str) -> bool {
+    models
+        .data
+        .iter()
+        .find(|entry| entry.id == model_id)
+        .is_some_and(|entry| {
+            entry
+                .architecture
+                .input_modalities
+                .iter()
+                .any(|modality| modality == "image")
+        })
+}
+
+/// Pulls the description text out of a chat-completions response, if any non-blank content exists.
+fn extract_description(response: &ChatResponse) -> Option<String> {
+    response
+        .choices
+        .first()
+        .map(|choice| choice.message.content.trim().to_owned())
+        .filter(|content| !content.is_empty())
+}
+
+/// The subset of `OpenRouter`'s model-list response we care about.
+#[derive(Deserialize)]
+struct ModelsResponse {
+    /// The listed models.
+    #[serde(default)]
+    data: Vec<ModelEntry>,
+}
+
+/// One model in `OpenRouter`'s model list.
+#[derive(Deserialize)]
+struct ModelEntry {
+    /// The model identifier, for example `deepseek/deepseek-v3.2`.
+    id: String,
+    /// The model's input/output modality metadata.
+    #[serde(default)]
+    architecture: Architecture,
+}
+
+/// A model's modality metadata.
+#[derive(Default, Deserialize)]
+struct Architecture {
+    /// The input modalities the model accepts, for example `text` and `image`.
+    #[serde(default)]
+    input_modalities: Vec<String>,
+}
+
+/// The subset of a chat-completions response we care about.
+#[derive(Deserialize)]
+struct ChatResponse {
+    /// The completion choices returned.
+    #[serde(default)]
+    choices: Vec<ChatChoice>,
+}
+
+/// One choice in a chat-completions response.
+#[derive(Deserialize)]
+struct ChatChoice {
+    /// The message produced for this choice.
+    message: ChatMessageContent,
+}
+
+/// The message content of a chat-completions choice.
+#[derive(Deserialize)]
+struct ChatMessageContent {
+    /// The text content of the message.
+    #[serde(default)]
+    content: String,
 }
 
 impl Default for ModelSettings {
@@ -135,6 +279,7 @@ impl Default for ModelSettings {
             model: "deepseek/deepseek-v3.2".to_owned(),
             api_key: String::new(),
             temperature: 1.0,
+            vision_model: default_vision_model(),
         }
     }
 }
@@ -152,4 +297,101 @@ pub enum LlmError {
         /// The source of the error.
         source: RigError,
     },
+    /// Failed to list the available models from `OpenRouter`.
+    #[snafu(display("Kunde inte hämta modeller från OpenRouter: {source}"))]
+    #[diagnostic(
+        help("Kontrollera din internetanslutning och OpenRouter-status."),
+        code(llm::list_models)
+    )]
+    ListModels {
+        /// The source of the error.
+        source: reqwest::Error,
+    },
+    /// Failed to describe an image with the vision model.
+    #[snafu(display("Kunde inte beskriva bilden: {source}"))]
+    #[diagnostic(
+        help("Kontrollera att synmodellen och API-nyckeln är giltiga."),
+        code(llm::describe_image)
+    )]
+    DescribeImage {
+        /// The source of the error.
+        source: reqwest::Error,
+    },
+    /// No vision model is configured to describe images.
+    #[snafu(display("Ingen synmodell är inställd"))]
+    #[diagnostic(help("Ställ in en synmodell med /modell."), code(llm::no_vision_model))]
+    NoVisionModel,
+    /// The vision model returned an empty description.
+    #[snafu(display("Synmodellen gav ingen beskrivning"))]
+    #[diagnostic(
+        help("Försök igen eller byt synmodell."),
+        code(llm::empty_description)
+    )]
+    EmptyDescription,
+}
+
+/// Tests for the `OpenRouter` response parsing helpers.
+#[cfg(test)]
+mod tests {
+    use super::{ChatResponse, ModelsResponse, extract_description, model_supports_vision};
+
+    /// A model is vision-capable only when it lists `image` among its input modalities.
+    #[test]
+    fn model_supports_vision_checks_image_modality() {
+        let json = r#"{"data":[
+            {"id":"vendor/sees","architecture":{"input_modalities":["text","image"]}},
+            {"id":"vendor/blind","architecture":{"input_modalities":["text"]}}
+        ]}"#;
+        let parsed = serde_json::from_str::<ModelsResponse>(json);
+        assert!(parsed.is_ok(), "the model list should parse");
+        let Ok(models) = parsed else { return };
+
+        assert!(
+            model_supports_vision(&models, "vendor/sees"),
+            "a model listing image input supports vision"
+        );
+        assert!(
+            !model_supports_vision(&models, "vendor/blind"),
+            "a model without image input does not support vision"
+        );
+        assert!(
+            !model_supports_vision(&models, "vendor/missing"),
+            "an unlisted model is treated as having no vision"
+        );
+    }
+
+    /// The first choice's trimmed content is taken as the description.
+    #[test]
+    fn extract_description_reads_the_first_choice() {
+        let parsed =
+            serde_json::from_str::<ChatResponse>(r#"{"choices":[{"message":{"content":"  en hund  "}}]}"#);
+        assert!(parsed.is_ok(), "the chat response should parse");
+        let Ok(response) = parsed else { return };
+        assert_eq!(
+            extract_description(&response).as_deref(),
+            Some("en hund"),
+            "the first choice's trimmed content is the description"
+        );
+    }
+
+    /// No choices or blank content yields no description.
+    #[test]
+    fn extract_description_is_none_when_empty() {
+        let parsed_empty = serde_json::from_str::<ChatResponse>(r#"{"choices":[]}"#);
+        assert!(parsed_empty.is_ok(), "an empty chat response should parse");
+        let Ok(empty) = parsed_empty else { return };
+        assert!(
+            extract_description(&empty).is_none(),
+            "no choices yields no description"
+        );
+
+        let parsed_blank =
+            serde_json::from_str::<ChatResponse>(r#"{"choices":[{"message":{"content":"   "}}]}"#);
+        assert!(parsed_blank.is_ok(), "a blank chat response should parse");
+        let Ok(blank) = parsed_blank else { return };
+        assert!(
+            extract_description(&blank).is_none(),
+            "blank content yields no description"
+        );
+    }
 }

@@ -8,6 +8,7 @@ use crate::{
     events::streaming::{InteractionSink, ReplySink as _, stream_into},
     llm::LlmManager,
     models::{character::Character, history::History},
+    vision::resolve_attachments,
 };
 use core::time::Duration;
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
@@ -37,7 +38,8 @@ pub async fn next(
         let requester = LlmManager::new(db.resolved_model_settings(&character).await);
 
         let now = Instant::now();
-        let context = db.build_context(&history, &character).await?;
+        let mut context = db.build_context(&history, &character).await?;
+        let mode = resolve_attachments(db, &requester, &mut context).await;
 
         let mut sink = InteractionSink {
             ctx,
@@ -48,7 +50,7 @@ pub async fn next(
             db,
             options: &options,
         };
-        let reply = stream_into(&requester, &context, None, now, &mut sink).await?;
+        let reply = stream_into(&requester, &context, None, mode, now, &mut sink).await?;
         sink.finalize(reply, now.elapsed()).await?;
     } else {
         swipe(ctx, interaction, id, db, history, character, History::next).await?;
