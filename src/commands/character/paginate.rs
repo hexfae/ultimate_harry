@@ -67,6 +67,41 @@ where
     Fut: Future<Output = AppResult>,
 {
     let characters: Vec<Character> = ctx.data().db.characters_by_similarity(name).await?;
+    paginate_characters(ctx, characters, action_emoji, on_confirm).await
+}
+
+/// Like [`paginate`], but searches only the soft-deleted characters, used by the
+/// restore command to bring a deleted character back from deletion.
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "this is the deleted-character variant of paginate, so the shared prefix is meaningful"
+)]
+pub async fn paginate_deleted<'a, F, Fut>(
+    ctx: Context<'a>,
+    name: String,
+    action_emoji: &'static str,
+    on_confirm: F,
+) -> AppResult
+where
+    F: FnOnce(Context<'a>, ComponentInteraction, Character) -> Fut,
+    Fut: Future<Output = AppResult>,
+{
+    let characters: Vec<Character> = ctx.data().db.deleted_characters_by_similarity(name).await?;
+    paginate_characters(ctx, characters, action_emoji, on_confirm).await
+}
+
+/// Builds the paginated embeds for an already-fetched character list and drives
+/// the swipe/cancel/confirm UI.
+async fn paginate_characters<'a, F, Fut>(
+    ctx: Context<'a>,
+    characters: Vec<Character>,
+    action_emoji: &'static str,
+    on_confirm: F,
+) -> AppResult
+where
+    F: FnOnce(Context<'a>, ComponentInteraction, Character) -> Fut,
+    Fut: Future<Output = AppResult>,
+{
     let Some(pages) = build_pages(ctx, characters).await? else {
         return Ok(());
     };

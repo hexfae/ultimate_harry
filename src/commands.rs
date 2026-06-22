@@ -55,3 +55,28 @@ pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocomp
         .collect::<Vec<AutocompleteChoice<'_>>>();
     CreateAutocompleteResponse::new().set_choices(character_names)
 }
+
+/// Returns an auto completion response from soft-deleted characters, sorted by
+/// similarity to the input. Used by the restore command, since deleted
+/// characters are hidden from the regular autocomplete.
+pub async fn autocomplete_deleted<'a>(
+    ctx: Context<'_>,
+    partial: &str,
+) -> CreateAutocompleteResponse<'a> {
+    let characters: Vec<Character> =
+        match ctx.data().db.deleted_characters_by_similarity(partial).await {
+            Ok(characters) => characters,
+            Err(why) => {
+                warn!("failed to rank deleted characters for autocomplete, returning none: {why}");
+                Vec::new()
+            }
+        };
+
+    let character_names = characters
+        .into_iter()
+        .map(|character| {
+            AutocompleteChoice::new(character.to_string(), character.name().to_owned())
+        })
+        .collect::<Vec<AutocompleteChoice<'_>>>();
+    CreateAutocompleteResponse::new().set_choices(character_names)
+}

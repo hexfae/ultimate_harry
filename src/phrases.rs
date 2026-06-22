@@ -64,6 +64,16 @@ pub fn deleted() -> &'static str {
     sample(DELETED_PHRASES)
 }
 
+/// Returns a phrase asking for restore confirmation with the character name inserted.
+pub fn ask_restore<N: Display>(name: N) -> String {
+    sample_name(ASK_RESTORE_PHRASES, name)
+}
+
+/// Returns a restoration phrase with the character name inserted.
+pub fn restored<N: Display>(name: N) -> String {
+    sample_name(RESTORED_PHRASES, name)
+}
+
 /// Returns a phrase instructing to click the button below.
 pub fn click_below() -> &'static str {
     sample(CLICK_BELOW_PHRASES)
@@ -169,6 +179,26 @@ const DELETED_PHRASES: &[&str] = &[
     "Bra jobbat, soldat.",
     "Stå för rättvisa.",
     "En ängel gråter.",
+];
+
+/// Phrases for asking restore confirmation.
+const ASK_RESTORE_PHRASES: &[&str] = &[
+    "Vill du verkligen återuppliva {character}?",
+    "Är du säker på att du vill väcka {character} till liv igen?",
+    "Ska vi ge {character} en andra chans?",
+    "Tillbaka från döden, alltså?",
+    "Ångrar du dig redan?",
+    "Är detta gubben du vill ha tillbaka?",
+];
+
+/// Phrases for character restoration.
+const RESTORED_PHRASES: &[&str] = &[
+    "{character} lever igen!",
+    "Välkommen tillbaka, {character}.",
+    "Återupplivad och redo igen.",
+    "Döden var visst inte slutet ändå.",
+    "Tillbaka som om ingenting hänt.",
+    "En ängel ler.",
 ];
 
 /// Phrases for clicking the button below.

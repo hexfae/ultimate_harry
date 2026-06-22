@@ -126,6 +126,19 @@ impl Database {
         ))
     }
 
+    /// Returns up to 25 soft-deleted characters, sorted by the most similar ones
+    /// to the given name. Used by the restore command, since deleted characters
+    /// are hidden from every other listing.
+    pub async fn deleted_characters_by_similarity<T: Into<String>>(
+        &self,
+        name: T,
+    ) -> Result<Vec<Character>, DatabaseError> {
+        Ok(Character::rank_deleted_by_similarity(
+            self.all_characters().await?,
+            &name.into(),
+        ))
+    }
+
     /// Returns every visible (not deleted, not superseded) character.
     async fn visible_characters(&self) -> Result<Vec<Character>, DatabaseError> {
         Ok(self
@@ -214,6 +227,16 @@ impl Database {
             character.mark_deleted(deleted_by.into());
         })
         .await
+    }
+
+    /// Restores a soft-deleted character by clearing its deleted state. Returns
+    /// the restored character, or `Ok(None)` if it is missing.
+    pub async fn restore_character(
+        &self,
+        id: &str,
+    ) -> Result<Option<Character>, DatabaseError> {
+        self.mutate_character(id, UpdateSnafu, Character::restore)
+            .await
     }
 
     /// Sets the `next_version` field on the given old character ID to point to the given new character ID.
@@ -1041,6 +1064,71 @@ mod tests {
             tail_ids,
             vec![pending_id, table_id],
             "the pending message is taken from memory, the other from the table, missing skipped"
+        );
+    }
+
+    /// `restore_character` clears a soft-deleted character's deleted state and
+    /// returns it visible again; a missing character returns `None`.
+    #[tokio::test]
+    async fn restore_character_restores_a_deleted_character() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        insert(&db, character("char-id", "Harry")).await;
+        let deleted = db.delete_character("char-id", UserId::new(2)).await;
+        assert!(deleted.is_ok(), "deleting the character should succeed");
+
+        let restored = db.restore_character("char-id").await;
+        assert!(
+            restored
+                .as_ref()
+                .is_ok_and(|found| found.as_ref().is_some_and(Character::is_visible)),
+            "restoring returns the now-visible character"
+        );
+
+        let stored = db.character("char-id").await.ok().flatten();
+        assert!(
+            stored.is_some_and(|record| record.is_visible()),
+            "the stored character is visible again"
+        );
+
+        let missing = db.restore_character("missing").await;
+        assert!(
+            matches!(missing, Ok(None)),
+            "restoring a missing character returns None"
+        );
+    }
+
+    /// `deleted_characters_by_similarity` ranks only the soft-deleted characters,
+    /// never the visible ones.
+    #[tokio::test]
+    async fn deleted_characters_by_similarity_returns_only_deleted() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        insert(&db, character("visible", "Harry")).await;
+        insert(&db, character("ghost", "Harry")).await;
+        let deleted = db.delete_character("ghost", UserId::new(2)).await;
+        assert!(deleted.is_ok(), "deleting the character should succeed");
+
+        let found = db
+            .deleted_characters_by_similarity("Harry")
+            .await
+            .unwrap_or_default();
+        let ids = found
+            .iter()
+            .map(|record| record.id().to_owned())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            ids,
+            vec!["ghost".to_owned()],
+            "only the deleted character is returned, never the visible one"
         );
     }
 

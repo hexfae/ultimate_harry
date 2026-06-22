@@ -302,6 +302,12 @@ impl Character {
         self.deleted_at.is_none() && self.next_version.is_none()
     }
 
+    /// Returns whether the character has been soft-deleted.
+    #[must_use]
+    pub const fn is_deleted(&self) -> bool {
+        self.deleted_at.is_some()
+    }
+
     /// Returns the ID of the next version of this character, if it has been superseded.
     #[must_use]
     pub fn next_version(&self) -> Option<&str> {
@@ -315,9 +321,29 @@ impl Character {
     /// character's `similarity` for display.
     #[must_use]
     pub fn rank_by_similarity(characters: Vec<Self>, input: &str) -> Vec<Self> {
+        Self::rank_filtered(characters, input, Self::is_visible)
+    }
+
+    /// Like [`rank_by_similarity`](Self::rank_by_similarity), but ranks only the
+    /// soft-deleted characters, used by the restore command to find a character
+    /// to bring back from deletion.
+    #[must_use]
+    pub fn rank_deleted_by_similarity(characters: Vec<Self>, input: &str) -> Vec<Self> {
+        Self::rank_filtered(characters, input, Self::is_deleted)
+    }
+
+    /// Keeps the characters for which `keep` returns true, then returns up to
+    /// [`MAX_RESULTS`] ranked by name (and nickname) similarity to the input,
+    /// breaking ties by number of conversations had, setting each returned
+    /// character's `similarity` for display.
+    fn rank_filtered(
+        characters: Vec<Self>,
+        input: &str,
+        keep: impl Fn(&Self) -> bool,
+    ) -> Vec<Self> {
         let mut ranked: Vec<Self> = characters
             .into_iter()
-            .filter(Self::is_visible)
+            .filter(|character| keep(character))
             .map(|mut character| {
                 let name_similarity =
                     strsim::normalized_damerau_levenshtein(&character.name, input);
@@ -423,6 +449,12 @@ impl Character {
     pub fn mark_deleted(&mut self, deleted_by: UserId) {
         self.deleted_by = Some(deleted_by);
         self.deleted_at = Some(Zoned::now());
+    }
+
+    /// Clears the character's deleted state, making it visible again.
+    pub fn restore(&mut self) {
+        self.deleted_by = None;
+        self.deleted_at = None;
     }
 
     /// Sets the ID of the next version of this character, hiding it from view.
@@ -734,6 +766,58 @@ mod tests {
             position_of(&ranked, "id-tie-high") < position_of(&ranked, "id-tie-low"),
             "equal similarity breaks ties toward more conversations"
         );
+    }
+
+    /// Restoring a deleted character clears its deleted state, making it visible again.
+    #[test]
+    fn restore_makes_a_deleted_character_visible_again() {
+        let mut character = basic_character("id", "Harry");
+        character.mark_deleted(UserId::new(2));
+        assert!(
+            character.is_deleted(),
+            "marking a character deleted sets its deleted state"
+        );
+        assert!(
+            !character.is_visible(),
+            "a deleted character is not visible"
+        );
+
+        character.restore();
+        assert!(
+            !character.is_deleted(),
+            "restoring clears the deleted state"
+        );
+        assert!(
+            character.is_visible(),
+            "a restored character is visible again"
+        );
+    }
+
+    /// Deleted-character ranking filters to only deleted characters and orders
+    /// them by name similarity to the input.
+    #[test]
+    fn rank_deleted_by_similarity_returns_only_deleted_characters() {
+        let visible = basic_character("id-visible", "Banana");
+        let mut deleted_match = basic_character("id-deleted", "Banana");
+        deleted_match.mark_deleted(UserId::new(2));
+        let mut deleted_other = basic_character("id-deleted-other", "Zzzzzz");
+        deleted_other.mark_deleted(UserId::new(2));
+
+        let ranked = Character::rank_deleted_by_similarity(
+            vec![visible, deleted_match, deleted_other],
+            "Banana",
+        );
+
+        assert!(
+            position_of(&ranked, "id-visible").is_none(),
+            "a visible character never appears among deleted results"
+        );
+        assert_eq!(
+            ranked.first().map(Character::id),
+            Some("id-deleted"),
+            "the closest-matching deleted character ranks first"
+        );
+        assert_eq!(ranked.len(), 2, "only deleted characters are returned");
     }
 
     /// `rank_by_similarity` caps its output at the shared `MAX_RESULTS`, matching the database

@@ -18,6 +18,8 @@ pub const REDO: &str = "↪️";
 pub const PIN: &str = "📌";
 /// The emoji used for deleting a character.
 pub const DELETE: &str = "🗑";
+/// The emoji used for restoring a deleted character.
+pub const RESTORE: &str = "♻️";
 
 /// The max amount of characters an AI can respond with.
 ///
