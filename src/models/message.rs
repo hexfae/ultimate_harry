@@ -299,22 +299,38 @@ impl Message {
                     })),
                 },
                 Role::User => {
-                    let mut content = OneOrMany::one(UserContent::text(&part.content));
+                    let renders = if Some(index) == last_user {
+                        self.render_attachments(mode)
+                    } else {
+                        Vec::new()
+                    };
 
-                    if Some(index) == last_user {
-                        for render in self.render_attachments(mode) {
-                            match render {
-                                AttachmentRender::Image(url) => {
-                                    content.push(UserContent::image_url(&url, None, None));
+                    // Fold text renders (descriptions and placeholders) into the message's single
+                    // text content; only images/audio become separate content parts. A text-only
+                    // model rejects a multi-part content array, so a described image must arrive as
+                    // a plain string, exactly like a normal text message.
+                    let mut text = part.content.clone();
+                    let mut media = Vec::new();
+                    for render in renders {
+                        match render {
+                            AttachmentRender::Image(url) => {
+                                media.push(UserContent::image_url(&url, None, None));
+                            }
+                            AttachmentRender::Audio(url) => {
+                                media.push(UserContent::audio_url(&url, None));
+                            }
+                            AttachmentRender::Text(description) => {
+                                if !text.is_empty() {
+                                    text.push('\n');
                                 }
-                                AttachmentRender::Audio(url) => {
-                                    content.push(UserContent::audio_url(&url, None));
-                                }
-                                AttachmentRender::Text(text) => {
-                                    content.push(UserContent::text(&text));
-                                }
+                                text.push_str(&description);
                             }
                         }
+                    }
+
+                    let mut content = OneOrMany::one(UserContent::text(&text));
+                    for item in media {
+                        content.push(item);
                     }
 
                     RigMessage::User { content }
@@ -805,6 +821,51 @@ mod tests {
             message.description_for("https://cdn/a.png"),
             Some("katt"),
             "the matching url is described"
+        );
+    }
+
+    /// Describe mode folds the description into one text content, so a text-only model receives a
+    /// plain string rather than a multi-part content array (which such models reject).
+    #[test]
+    fn describe_mode_folds_descriptions_into_a_single_text_content() {
+        let message = message_with_attachments(
+            vec!["https://cdn/img.png".to_owned()],
+            vec![DescribedAttachment {
+                url: "https://cdn/img.png".to_owned(),
+                description: "en katt".to_owned(),
+            }],
+        );
+        let described = message.to_rig_messages(AttachmentMode::Describe).pop();
+        assert!(
+            matches!(described, Some(RigMessage::User { .. })),
+            "the message maps to a user message"
+        );
+        let Some(RigMessage::User { content }) = described else {
+            return;
+        };
+        assert_eq!(
+            content.iter().count(),
+            1,
+            "describe mode keeps the user message as a single text content"
+        );
+    }
+
+    /// Image mode keeps the image as its own content part alongside the text.
+    #[test]
+    fn image_mode_keeps_the_image_as_a_separate_content_part() {
+        let message = message_with_attachments(vec!["https://cdn/img.png".to_owned()], Vec::new());
+        let imaged = message.to_rig_messages(AttachmentMode::Image).pop();
+        assert!(
+            matches!(imaged, Some(RigMessage::User { .. })),
+            "the message maps to a user message"
+        );
+        let Some(RigMessage::User { content }) = imaged else {
+            return;
+        };
+        assert_eq!(
+            content.iter().count(),
+            2,
+            "image mode sends the text plus the image as two content parts"
         );
     }
 

@@ -58,10 +58,11 @@ pub async fn character(
 
     let requester = LlmManager::new(db.resolved_model_settings(&new_character).await);
 
-    let now = Instant::now();
     let mut context = db.build_context(&history, &new_character).await?;
     let mode = resolve_attachments(db, &requester, &mut context).await;
     let prompt = format!("Fortsätt rollspelet som {new_character}.");
+
+    let now = Instant::now();
 
     let mut sink = MessageSink {
         ctx,

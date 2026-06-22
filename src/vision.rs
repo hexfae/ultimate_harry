@@ -14,8 +14,8 @@ use crate::{
 /// Decides whether the active model receives images or text descriptions, describing and caching
 /// any undescribed images when the model lacks vision.
 ///
-/// Network failures are logged and treated as "vision supported" so a transient `OpenRouter`
-/// problem never blocks a reply.
+/// When vision support cannot be determined, falls back to describing: a text description is
+/// accepted by any model, whereas an image hard-fails (404) on a text-only one.
 pub async fn resolve_attachments(
     db: &Database,
     requester: &LlmManager,
@@ -27,10 +27,7 @@ pub async fn resolve_attachments(
     match requester.supports_vision().await {
         Ok(true) => return AttachmentMode::Image,
         Ok(false) => {}
-        Err(why) => {
-            warn!("could not check vision support, sending images as-is: {why}");
-            return AttachmentMode::Image;
-        }
+        Err(why) => warn!("could not check vision support, describing images to be safe: {why}"),
     }
     describe_and_cache(db, requester, context).await;
     AttachmentMode::Describe

@@ -13,6 +13,8 @@ use rig::{
 use serde::{Deserialize, Serialize};
 use serenity::futures::Stream;
 use snafu::{OptionExt as _, ResultExt as _, Snafu};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 
 /// The `OpenRouter` endpoint listing every available model and its capabilities.
 const MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
@@ -159,13 +161,27 @@ impl LlmManager {
     }
 
     /// Returns whether the active model can read images, by checking its `OpenRouter` capabilities.
+    ///
+    /// The per-model answer is cached process-wide so the full model list is fetched at most once
+    /// per model rather than on every request.
     pub async fn supports_vision(&self) -> Result<bool, LlmError> {
+        if let Some(cached) = vision_cache()
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&self.settings.model).copied())
+        {
+            return Ok(cached);
+        }
         let response = reqwest::get(MODELS_URL).await.context(ListModelsSnafu)?;
         let models = response
             .json::<ModelsResponse>()
             .await
             .context(ListModelsSnafu)?;
-        Ok(model_supports_vision(&models, &self.settings.model))
+        let supported = model_supports_vision(&models, &self.settings.model);
+        if let Ok(mut cache) = vision_cache().lock() {
+            cache.insert(self.settings.model.clone(), supported);
+        }
+        Ok(supported)
     }
 
     /// Describes the image at `url` using the configured vision model, returning its caption.
@@ -198,6 +214,13 @@ impl LlmManager {
             .context(DescribeImageSnafu)?;
         extract_description(&parsed).context(EmptyDescriptionSnafu)
     }
+}
+
+/// Process-wide cache of model id to whether it accepts image input, so the `OpenRouter` model
+/// list is fetched at most once per model.
+fn vision_cache() -> &'static Mutex<HashMap<String, bool>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Whether the model with `model_id` lists `image` among its accepted input modalities.
