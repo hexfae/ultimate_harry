@@ -20,6 +20,12 @@ pub const PIN: &str = "📌";
 pub const DELETE: &str = "🗑";
 /// The emoji used for restoring a deleted character.
 pub const RESTORE: &str = "♻️";
+/// The emoji used for navigating to an older version of a character.
+pub const OLDER_VERSION: &str = "⏮";
+/// The emoji used for navigating to a newer version of a character.
+pub const NEWER_VERSION: &str = "⏭";
+/// The emoji used for rolling a character back to the shown older version.
+pub const ROLLBACK: &str = "⏪";
 
 /// The max amount of characters an AI can respond with.
 ///

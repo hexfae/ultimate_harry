@@ -239,6 +239,63 @@ impl Database {
             .await
     }
 
+    /// Returns every version of the character chain containing `id`, ordered
+    /// oldest to newest. Walks back to the chain's root via `previous_version`,
+    /// then forward via `next_version`. Returns an empty vector if `id` is
+    /// missing, and stops walking at the first dangling link.
+    pub async fn character_versions(
+        &self,
+        id: &str,
+    ) -> Result<Vec<Character>, DatabaseError> {
+        let Some(start) = self.character(id).await? else {
+            return Ok(Vec::new());
+        };
+        let mut root = start;
+        while let Some(previous_id) = root.previous_version().map(str::to_owned) {
+            match self.character(&previous_id).await? {
+                Some(previous) => root = previous,
+                None => break,
+            }
+        }
+        let mut chain = vec![root.clone()];
+        let mut current = root;
+        while let Some(next_id) = current.next_version().map(str::to_owned) {
+            match self.character(&next_id).await? {
+                Some(next) => {
+                    chain.push(next.clone());
+                    current = next;
+                }
+                None => break,
+            }
+        }
+        Ok(chain)
+    }
+
+    /// Rolls a character back to the content of an older version `target_id`.
+    ///
+    /// Creates a new head atop `head_id` with the target version's content (see
+    /// [`Character::rollback_to`]), keeping the head's accumulated stats, then
+    /// supersedes the head with it. Returns the new head, or `Ok(None)` if either
+    /// the head or the target version is missing.
+    pub async fn rollback_character(
+        &self,
+        head_id: &str,
+        target_id: &str,
+        editor: UserId,
+    ) -> Result<Option<Character>, DatabaseError> {
+        let Some(target) = self.character(target_id).await? else {
+            return Ok(None);
+        };
+        let Some(mut head) = self.character(head_id).await? else {
+            return Ok(None);
+        };
+        head.rollback_to(editor, &target);
+        let new_id = head.id().to_owned();
+        self.supersede_character(new_id, head_id).await?;
+        self.insert_character(head.clone()).await?;
+        Ok(Some(head))
+    }
+
     /// Sets the `next_version` field on the given old character ID to point to the given new character ID.
     pub async fn supersede_character(
         &self,
@@ -1129,6 +1186,106 @@ mod tests {
             ids,
             vec!["ghost".to_owned()],
             "only the deleted character is returned, never the visible one"
+        );
+    }
+
+    /// `character_versions` walks the version chain to its root and back, returning
+    /// every version oldest to newest regardless of which version it starts from.
+    #[tokio::test]
+    async fn character_versions_returns_the_chain_oldest_to_newest() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let mut old = character("v0", "Harry");
+        old.set_next_version("v1".to_owned());
+        insert(&db, old).await;
+        let new = Character::builder()
+            .id("v1".to_owned())
+            .name("Harry")
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .version(1_u32)
+            .previous_version("v0".to_owned())
+            .build();
+        insert(&db, new).await;
+
+        let from_new = db.character_versions("v1").await.unwrap_or_default();
+        let ids_from_new = from_new
+            .iter()
+            .map(|record| record.id().to_owned())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            ids_from_new,
+            vec!["v0".to_owned(), "v1".to_owned()],
+            "the chain is returned oldest to newest"
+        );
+
+        let from_old = db.character_versions("v0").await.unwrap_or_default();
+        let ids_from_old = from_old
+            .iter()
+            .map(|record| record.id().to_owned())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            ids_from_old,
+            vec!["v0".to_owned(), "v1".to_owned()],
+            "walking from any version returns the full chain"
+        );
+    }
+
+    /// `rollback_character` creates a new head with the old version's content,
+    /// keeps the previous head's accumulated stats, and supersedes that head.
+    #[tokio::test]
+    async fn rollback_character_supersedes_the_head_with_an_old_version() {
+        let opened = Database::in_memory().await;
+        assert!(
+            opened.is_ok(),
+            "opening an in-memory database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let mut old = Character::builder()
+            .id("v0".to_owned())
+            .name("Old")
+            .greeting("old greeting")
+            .creator(UserId::new(1))
+            .personality("old personality".to_owned())
+            .build();
+        old.set_next_version("v1".to_owned());
+        insert(&db, old).await;
+        let head = Character::builder()
+            .id("v1".to_owned())
+            .name("New")
+            .greeting("new greeting")
+            .creator(UserId::new(1))
+            .version(1_u32)
+            .previous_version("v0".to_owned())
+            .personality("new personality".to_owned())
+            .conversations_had(7_u32)
+            .build();
+        insert(&db, head).await;
+
+        let rolled = db.rollback_character("v1", "v0", UserId::new(3)).await;
+        assert!(
+            rolled.as_ref().is_ok_and(|found| found
+                .as_ref()
+                .is_some_and(|record| record.name() == "Old"
+                    && record.is_visible()
+                    && record.conversations_had() == 7)),
+            "rolling back returns a visible new head with the old content and kept stats"
+        );
+
+        let head_now = db.character("v1").await.ok().flatten();
+        assert!(
+            head_now.is_some_and(|record| record.next_version().is_some()),
+            "the previous head is superseded by the rolled-back version"
+        );
+
+        let missing = db.rollback_character("missing", "v0", UserId::new(3)).await;
+        assert!(
+            matches!(missing, Ok(None)),
+            "rolling back a missing head returns None"
         );
     }
 

@@ -55,6 +55,12 @@ pub enum InteractionKind {
     Confirm,
     /// Cancel performing the desired operation.
     Cancel,
+    /// Show an older version of the character being viewed.
+    OlderVersion,
+    /// Show a newer version of the character being viewed.
+    NewerVersion,
+    /// Roll the character back to the older version being viewed.
+    Rollback,
 }
 
 /// An unknown interaction happened.
@@ -105,14 +111,20 @@ pub async fn component(
         }
         InteractionKind::Pin => pin(ctx, interaction, db, history, character).await?,
         InteractionKind::Character => character_fn(ctx, interaction, db, history).await?,
-        InteractionKind::Confirm | InteractionKind::Cancel => {}
+        // these only ever fire on the ephemeral /gubbe visa paginator, collected
+        // by that command's own collector, never on a chat message's history
+        InteractionKind::Confirm
+        | InteractionKind::Cancel
+        | InteractionKind::OlderVersion
+        | InteractionKind::NewerVersion
+        | InteractionKind::Rollback => {}
     }
     Ok(())
 }
 
 impl InteractionKind {
     /// Every interaction kind, the basis for tag round-tripping and the round-trip test.
-    const ALL: [Self; 9] = [
+    const ALL: [Self; 12] = [
         Self::Previous,
         Self::Next,
         Self::Edit,
@@ -122,6 +134,9 @@ impl InteractionKind {
         Self::Character,
         Self::Confirm,
         Self::Cancel,
+        Self::OlderVersion,
+        Self::NewerVersion,
+        Self::Rollback,
     ];
 
     /// The 4-character tag that encodes this kind in a component's `custom_id`.
@@ -137,6 +152,9 @@ impl InteractionKind {
             Self::Character => "char",
             Self::Confirm => "conf",
             Self::Cancel => "canc",
+            Self::OlderVersion => "ovrs",
+            Self::NewerVersion => "nvrs",
+            Self::Rollback => "roll",
         }
     }
 

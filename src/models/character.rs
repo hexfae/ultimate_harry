@@ -314,6 +314,12 @@ impl Character {
         self.next_version.as_deref()
     }
 
+    /// Returns the ID of the previous version of this character, if it has one.
+    #[must_use]
+    pub fn previous_version(&self) -> Option<&str> {
+        self.previous_version.as_deref()
+    }
+
     /// Filters out deleted and superseded characters, then returns up to [`MAX_RESULTS`] ranked by
     /// name (and nickname) similarity to the input, breaking ties by number of conversations had.
     ///
@@ -455,6 +461,36 @@ impl Character {
     pub fn restore(&mut self) {
         self.deleted_by = None;
         self.deleted_at = None;
+    }
+
+    /// Rolls the character back to the content of an older version `old`.
+    ///
+    /// Like [`edit_from_modals`](Self::edit_from_modals), this turns `self` (the
+    /// current head) into a fresh version atop itself: it keeps the head's
+    /// accumulated stats, creator, and creation time, copies every content field
+    /// from `old`, bumps the version, and links the new version back to the head.
+    /// The caller supersedes the head with this new version.
+    pub fn rollback_to<E: Into<UserId>>(&mut self, editor: E, old: &Self) {
+        let editor_id = editor.into();
+        self.latest_editor = Some(editor_id);
+        self.all_editors.insert(editor_id);
+        self.edited_at = Some(Zoned::now());
+        self.version = self.version.saturating_add(1);
+        self.previous_version = Some(self.id.clone());
+        self.id = Ulid::new().to_string();
+        self.name.clone_from(&old.name);
+        self.greeting.clone_from(&old.greeting);
+        self.nickname.clone_from(&old.nickname);
+        self.description.clone_from(&old.description);
+        self.personality.clone_from(&old.personality);
+        self.prompt.clone_from(&old.prompt);
+        self.system_prompt.clone_from(&old.system_prompt);
+        self.scenario.clone_from(&old.scenario);
+        self.avatar.clone_from(&old.avatar);
+        self.emoji.clone_from(&old.emoji);
+        self.color = old.color;
+        self.example_messages.clone_from(&old.example_messages);
+        self.model_settings.clone_from(&old.model_settings);
     }
 
     /// Sets the ID of the next version of this character, hiding it from view.
@@ -790,6 +826,71 @@ mod tests {
         assert!(
             character.is_visible(),
             "a restored character is visible again"
+        );
+    }
+
+    /// Rolling back to an older version reverts the content fields to that version
+    /// but keeps the current version's accumulated stats and links the new version
+    /// back to the one it superseded.
+    #[test]
+    fn rollback_to_reverts_content_and_keeps_stats() {
+        let old = Character::builder()
+            .id("v0".to_owned())
+            .name("Old Name")
+            .greeting("old greeting")
+            .creator(UserId::new(1))
+            .personality("old personality".to_owned())
+            .build();
+        let mut current = Character::builder()
+            .id("v1".to_owned())
+            .name("New Name")
+            .greeting("new greeting")
+            .creator(UserId::new(1))
+            .version(1_u32)
+            .personality("new personality".to_owned())
+            .conversations_had(7_u32)
+            .build();
+
+        current.rollback_to(UserId::new(3), &old);
+
+        assert_eq!(
+            current.name(),
+            "Old Name",
+            "the content reverts to the old version's name"
+        );
+        assert_eq!(
+            current.greeting(),
+            "old greeting",
+            "the content reverts to the old version's greeting"
+        );
+        assert_eq!(
+            current.personality(),
+            Some("old personality"),
+            "the content reverts to the old version's personality"
+        );
+        assert_eq!(
+            current.conversations_had(),
+            7,
+            "the accumulated stats from the current version are kept"
+        );
+        assert_eq!(
+            current.version,
+            2,
+            "the rolled-back version's number is bumped past the current one"
+        );
+        assert_eq!(
+            current.previous_version(),
+            Some("v1"),
+            "the new version links back to the version it superseded"
+        );
+        assert_ne!(
+            current.id(),
+            "v1",
+            "a rollback creates a new version with a fresh id"
+        );
+        assert!(
+            current.is_visible(),
+            "the rolled-back version is visible"
         );
     }
 

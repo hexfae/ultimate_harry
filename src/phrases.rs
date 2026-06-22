@@ -74,6 +74,11 @@ pub fn restored<N: Display>(name: N) -> String {
     sample_name(RESTORED_PHRASES, name)
 }
 
+/// Returns a rollback phrase.
+pub fn rolled_back() -> &'static str {
+    sample(ROLLED_BACK_PHRASES)
+}
+
 /// Returns a phrase instructing to click the button below.
 pub fn click_below() -> &'static str {
     sample(CLICK_BELOW_PHRASES)
@@ -199,6 +204,16 @@ const RESTORED_PHRASES: &[&str] = &[
     "Döden var visst inte slutet ändå.",
     "Tillbaka som om ingenting hänt.",
     "En ängel ler.",
+];
+
+/// Phrases for rolling a character back to an older version.
+const ROLLED_BACK_PHRASES: &[&str] = &[
+    "Tillbaka till det förflutna.",
+    "Som den en gång var.",
+    "Rullade tillbaka tiden åt dig.",
+    "Den gamla goda versionen är tillbaka.",
+    "Ånej, var den nya versionen så dålig?",
+    "Bättre förr, eller hur?",
 ];
 
 /// Phrases for clicking the button below.

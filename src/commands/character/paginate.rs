@@ -1,34 +1,31 @@
-//! Shared character paginator for the view, edit, and delete slash commands.
+//! Shared character paginators for the view, edit, delete, and restore commands.
 //!
-//! All three run a similarity search (or usage sort), render the matching
-//! characters as a swipeable embed, and let the user flip pages with the
-//! Previous/Next buttons. The edit and delete commands additionally show a
-//! Confirm button and act on the page the user confirms; the view command is
-//! read-only and shows only the navigation buttons. The Confirm emoji and the
-//! action it triggers are passed in by the caller; `None` produces the
-//! read-only browse UI.
+//! The edit, delete, and restore commands run a search, render the matching
+//! characters as a swipeable embed with Previous/Next page buttons plus a
+//! Confirm button, and act on the page the user confirms. The view command uses
+//! the separate [`browse`] paginator, which additionally walks each character's
+//! version chain and can roll a character back to an older version.
 
 use crate::{
     AppResult, Context,
     components::emoji_button,
-    constants::{CANCEL, NEXT, PREVIOUS, TRANSIENT_LINGER},
-    error::{
-        DeleteMessageSnafu, DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu,
+    constants::{
+        CANCEL, NEWER_VERSION, NEXT, OLDER_VERSION, PREVIOUS, ROLLBACK, TRANSIENT_LINGER,
     },
+    error::{DeleteMessageSnafu, DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
     events::interaction::{Interaction, InteractionKind},
     models::character::Character,
-    phrases::{cancelled, no_character},
+    phrases::{cancelled, no_character, rolled_back},
     traits::{RespondToWith as _, SayEphemeral as _},
     util::wrapping_previous,
 };
 use alloc::borrow::Cow;
-use core::future::Ready;
 use nonempty::NonEmpty;
 use poise::{
     CreateReply, ReplyHandle,
     serenity_prelude::{
         ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateComponent,
-        CreateInteractionResponse, CreateInteractionResponseMessage,
+        CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage,
         small_fixed_array::{FixedArray, FixedString},
     },
 };
@@ -43,15 +40,15 @@ const BUTTONS: [&str; 4] = [
     InteractionKind::Next.as_tag(),
 ];
 
-/// The 2 navigation button tags visible on a read-only browse embed.
-const NAV_BUTTONS: [&str; 2] = [
+/// The 5 button tags visible on the read-only [`browse`] embed: page navigation,
+/// version navigation, and rollback.
+const BROWSE_BUTTONS: [&str; 5] = [
     InteractionKind::Previous.as_tag(),
     InteractionKind::Next.as_tag(),
+    InteractionKind::OlderVersion.as_tag(),
+    InteractionKind::NewerVersion.as_tag(),
+    InteractionKind::Rollback.as_tag(),
 ];
-
-/// Concrete instantiation of the generic confirm callback used by [`browse`],
-/// which never supplies a confirm action and therefore never calls it.
-type NoConfirm = fn(Context<'_>, ComponentInteraction, Character) -> Ready<AppResult>;
 
 /// Runs a similarity search for `name`, builds the paginated embeds, and drives
 /// the swipe/cancel/confirm UI. `action_emoji` is the Confirm button's emoji and
@@ -105,19 +102,7 @@ where
     let Some(pages) = build_pages(ctx, characters).await? else {
         return Ok(());
     };
-    Box::pin(display_pagination(ctx, pages, Some((action_emoji, on_confirm)))).await
-}
-
-/// Builds the paginated embeds for an already-fetched character list and drives
-/// the read-only browse UI (Previous/Next only, no Confirm action).
-pub async fn browse(ctx: Context<'_>, characters: Vec<Character>) -> AppResult {
-    let Some(pages) = build_pages(ctx, characters).await? else {
-        return Ok(());
-    };
-    Box::pin(display_pagination::<NoConfirm, Ready<AppResult>>(
-        ctx, pages, None,
-    ))
-    .await
+    Box::pin(display_pagination(ctx, pages, action_emoji, on_confirm)).await
 }
 
 /// Builds the per-character footer text and wraps the results in a `NonEmpty`,
@@ -145,23 +130,29 @@ async fn build_pages(
     if let Some(nonempty) = NonEmpty::from_vec(characters_and_footers) {
         Ok(Some(nonempty))
     } else {
-        let msg = ctx
-            .say_ephemeral(no_character())
-            .await
-            .context(SendMessageSnafu)?;
-        sleep(TRANSIENT_LINGER).await;
-        msg.delete(ctx).await.context(DeleteMessageSnafu)?;
+        notify_no_character(ctx).await?;
         Ok(None)
     }
 }
 
+/// Sends the "no character" notice, then deletes it 5 seconds later.
+async fn notify_no_character(ctx: Context<'_>) -> AppResult {
+    let msg = ctx
+        .say_ephemeral(no_character())
+        .await
+        .context(SendMessageSnafu)?;
+    sleep(TRANSIENT_LINGER).await;
+    msg.delete(ctx).await.context(DeleteMessageSnafu)?;
+    Ok(())
+}
+
 /// Sends the paginator embed and loops on button presses until the user
-/// confirms or cancels, re-rendering the embed on each page flip. A `None`
-/// `action` renders only the navigation buttons and never confirms.
+/// confirms or cancels, re-rendering the embed on each page flip.
 async fn display_pagination<'a, F, Fut>(
     ctx: Context<'a>,
     characters_and_footers: NonEmpty<(Character, String)>,
-    action: Option<(&'static str, F)>,
+    action_emoji: &'static str,
+    on_confirm: F,
 ) -> AppResult
 where
     F: FnOnce(Context<'a>, ComponentInteraction, Character) -> Fut,
@@ -169,8 +160,7 @@ where
 {
     let mut current_page: usize = 0;
     let pages = characters_and_footers.len();
-    let action_emoji = action.as_ref().map(|(emoji, _)| *emoji);
-    let mut on_confirm = action.map(|(_, on_confirm)| on_confirm);
+    let mut pending_confirm = Some(on_confirm);
 
     send_initial_embed(
         ctx,
@@ -180,7 +170,7 @@ where
     )
     .await?;
 
-    while let Some(interaction) = create_collector(ctx, action_emoji.is_some()).await {
+    while let Some(interaction) = create_collector(ctx, &BUTTONS).await {
         match Interaction::try_from(&interaction)?.kind {
             InteractionKind::Previous => {
                 current_page = wrapping_previous(current_page, pages);
@@ -192,7 +182,7 @@ where
                 return notify_cancelled(ctx, interaction).await;
             }
             InteractionKind::Confirm => {
-                if let Some(confirm) = on_confirm.take() {
+                if let Some(confirm) = pending_confirm.take() {
                     let (character, _footer_text) = characters_and_footers
                         .get(current_page)
                         .unwrap_or_else(|| characters_and_footers.first())
@@ -225,13 +215,180 @@ where
     Ok(())
 }
 
-/// Creates a collector that listens for a paginator button press with the
-/// context's ID. `has_action` includes the Confirm/Cancel buttons. The
-/// paginator message is ephemeral, so only the command author can see and press
-/// these buttons; no author filter is needed.
+/// Builds the read-only view paginator for an already-fetched character list,
+/// or sends the "no character" notice when the list is empty.
+pub async fn browse(ctx: Context<'_>, characters: Vec<Character>) -> AppResult {
+    let Some(nonempty) = NonEmpty::from_vec(characters) else {
+        return notify_no_character(ctx).await;
+    };
+    Box::pin(display_browse(ctx, nonempty)).await
+}
+
+/// Sends the view embed and loops on button presses, flipping between search
+/// results with the page buttons, walking the shown character's version chain
+/// with the version buttons, and rolling it back to the shown older version with
+/// the rollback button.
+async fn display_browse(ctx: Context<'_>, characters: NonEmpty<Character>) -> AppResult {
+    let pages = characters.len();
+    let mut page: usize = 0;
+    let mut chain = load_version_chain(ctx, characters.first()).await?;
+    let mut version = chain.len().saturating_sub(1);
+
+    send_browse_message(ctx, &characters, &chain, version, page).await?;
+
+    while let Some(interaction) = create_collector(ctx, &BROWSE_BUTTONS).await {
+        match Interaction::try_from(&interaction)?.kind {
+            InteractionKind::Previous => {
+                page = wrapping_previous(page, pages);
+                chain = load_version_chain(ctx, page_character(&characters, page)).await?;
+                version = chain.len().saturating_sub(1);
+            }
+            InteractionKind::Next => {
+                page = page.saturating_add(1).strict_rem(pages);
+                chain = load_version_chain(ctx, page_character(&characters, page)).await?;
+                version = chain.len().saturating_sub(1);
+            }
+            InteractionKind::OlderVersion => {
+                version = version.saturating_sub(1);
+            }
+            InteractionKind::NewerVersion => {
+                version = version
+                    .saturating_add(1)
+                    .min(chain.len().saturating_sub(1));
+            }
+            InteractionKind::Rollback => {
+                return roll_back_to_shown(ctx, interaction, &chain, version).await;
+            }
+            _ => {} // no more kinds possible on this type of message
+        }
+
+        let (embed, buttons) = browse_components(ctx, &characters, &chain, version, page).await;
+        interaction
+            .create_response(
+                ctx.http(),
+                CreateInteractionResponse::UpdateMessage(
+                    CreateInteractionResponseMessage::new()
+                        .embed(embed)
+                        .components(buttons),
+                ),
+            )
+            .await
+            .context(SendResponseSnafu)?;
+    }
+
+    Ok(())
+}
+
+/// Sends the initial view paginator message (a new ephemeral reply).
+async fn send_browse_message(
+    ctx: Context<'_>,
+    characters: &NonEmpty<Character>,
+    chain: &[Character],
+    version: usize,
+    page: usize,
+) -> AppResult {
+    let (embed, buttons) = browse_components(ctx, characters, chain, version, page).await;
+    ctx.send(
+        CreateReply::default()
+            .embed(embed)
+            .components(buttons)
+            .ephemeral(true),
+    )
+    .await
+    .context(SendMessageSnafu)?;
+    Ok(())
+}
+
+/// Builds the embed and button rows for the version shown on the current page.
+async fn browse_components(
+    ctx: Context<'_>,
+    characters: &NonEmpty<Character>,
+    chain: &[Character],
+    version: usize,
+    page: usize,
+) -> (CreateEmbed<'static>, Cow<'static, [CreateComponent<'static>]>) {
+    let embed = browse_embed(ctx, characters, chain, version, page).await;
+    let buttons = browse_buttons(ctx.id(), characters.len() < 2, version, chain.len());
+    (embed, buttons)
+}
+
+/// Returns the search result shown on the given page, falling back to the first.
+fn page_character(characters: &NonEmpty<Character>, page: usize) -> &Character {
+    characters.get(page).unwrap_or_else(|| characters.first())
+}
+
+/// Loads the version chain (oldest to newest) of a character, falling back to the
+/// character itself when the chain cannot be resolved.
+async fn load_version_chain(
+    ctx: Context<'_>,
+    character: &Character,
+) -> AppResult<Vec<Character>> {
+    let chain = ctx.data().db.character_versions(character.id()).await?;
+    Ok(if chain.is_empty() {
+        vec![character.clone()]
+    } else {
+        chain
+    })
+}
+
+/// Builds the view embed for the version shown on the current page, with a footer
+/// carrying the page counter, the head's conversation count, the search-result
+/// similarity, and the version counter.
+async fn browse_embed(
+    ctx: Context<'_>,
+    characters: &NonEmpty<Character>,
+    chain: &[Character],
+    version: usize,
+    page: usize,
+) -> CreateEmbed<'static> {
+    let result = page_character(characters, page);
+    let head = chain.last().unwrap_or(result);
+    let shown = chain.get(version).unwrap_or(result).clone();
+    let footer = format!(
+        "{}/{} | {} konversationer{} | version {}/{}",
+        page.saturating_add(1),
+        characters.len(),
+        head.conversations_had(),
+        result.similarity(),
+        version.saturating_add(1),
+        chain.len(),
+    );
+    shown.into_embed_with_footer_text(footer, &ctx.data().db).await
+}
+
+/// Rolls the shown character back to the older version currently on screen, then
+/// notifies the user and clears the message 5 seconds later. A no-op when the
+/// chain endpoints cannot be resolved.
+async fn roll_back_to_shown(
+    ctx: Context<'_>,
+    interaction: ComponentInteraction,
+    chain: &[Character],
+    version: usize,
+) -> AppResult {
+    let (Some(head), Some(target)) = (chain.last(), chain.get(version)) else {
+        return Ok(());
+    };
+    ctx.data()
+        .db
+        .rollback_character(head.id(), target.id(), ctx.author().id)
+        .await?;
+
+    ctx.respond_to_with(&interaction, rolled_back())
+        .await
+        .context(SendMessageSnafu)?;
+    sleep(TRANSIENT_LINGER).await;
+    interaction
+        .delete_response(ctx.http())
+        .await
+        .context(DeleteResponseSnafu)?;
+    Ok(())
+}
+
+/// Creates a collector that listens for any of `tags` keyed on the context's ID.
+/// The paginator message is ephemeral, so only the command author can see and
+/// press these buttons; no author filter is needed.
 #[must_use]
-async fn create_collector(ctx: Context<'_>, has_action: bool) -> Option<ComponentInteraction> {
-    let tags: &[&str] = if has_action { &BUTTONS } else { &NAV_BUTTONS };
+async fn create_collector(ctx: Context<'_>, tags: &[&str]) -> Option<ComponentInteraction> {
     let custom_ids = FixedArray::from_vec_trunc(
         tags.iter()
             .map(|suffix| FixedString::from_string_trunc(format!("{}{suffix}", ctx.id())))
@@ -242,11 +399,12 @@ async fn create_collector(ctx: Context<'_>, has_action: bool) -> Option<Componen
         .await
 }
 
-/// Sends the first message, containing the embed of a character and buttons for manipulating it.
+/// Sends the first message, containing the embed of a character and the
+/// Confirm/Cancel/Previous/Next buttons.
 async fn send_initial_embed<'a>(
     ctx: Context<'a>,
     (character, footer_text): (Character, String),
-    action_emoji: Option<&'static str>,
+    action_emoji: &'static str,
     nav_disabled: bool,
 ) -> AppResult<ReplyHandle<'a>> {
     let id = ctx.id();
@@ -264,27 +422,60 @@ async fn send_initial_embed<'a>(
     .context(SendMessageSnafu)
 }
 
-/// Returns a component action row for the paginator. With a `Some` `action_emoji`
-/// it prepends Confirm/Cancel buttons; otherwise only Previous/Next are shown.
-/// `nav_disabled` greys out the Previous/Next buttons (used on single-page results).
+/// Returns the action row for the confirm paginator: Confirm/Cancel followed by
+/// Previous/Next. `nav_disabled` greys out the Previous/Next buttons (used on
+/// single-page results).
 #[must_use]
 fn create_buttons(
     id: u64,
-    action_emoji: Option<&'static str>,
+    action_emoji: &'static str,
     nav_disabled: bool,
 ) -> Cow<'static, [CreateComponent<'static>]> {
-    let mut buttons = Vec::new();
-    if let Some(emoji) = action_emoji {
-        buttons.push(emoji_button(InteractionKind::Confirm.custom_id(id), emoji));
-        buttons.push(emoji_button(InteractionKind::Cancel.custom_id(id), CANCEL));
-    }
-    buttons.push(
+    let buttons = vec![
+        emoji_button(InteractionKind::Confirm.custom_id(id), action_emoji),
+        emoji_button(InteractionKind::Cancel.custom_id(id), CANCEL),
         emoji_button(InteractionKind::Previous.custom_id(id), PREVIOUS).disabled(nav_disabled),
-    );
-    buttons.push(emoji_button(InteractionKind::Next.custom_id(id), NEXT).disabled(nav_disabled));
+        emoji_button(InteractionKind::Next.custom_id(id), NEXT).disabled(nav_disabled),
+    ];
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         buttons.into(),
     ))]
+    .into()
+}
+
+/// Returns the action rows for the view paginator: a page-navigation row and a
+/// version-navigation row. The version buttons are disabled at the chain's ends,
+/// and rollback is disabled while the newest version is shown.
+#[must_use]
+fn browse_buttons(
+    id: u64,
+    page_disabled: bool,
+    version: usize,
+    chain_len: usize,
+) -> Cow<'static, [CreateComponent<'static>]> {
+    let at_oldest = version == 0;
+    let at_head = version.saturating_add(1) >= chain_len;
+    let page_row = CreateActionRow::Buttons(
+        vec![
+            emoji_button(InteractionKind::Previous.custom_id(id), PREVIOUS).disabled(page_disabled),
+            emoji_button(InteractionKind::Next.custom_id(id), NEXT).disabled(page_disabled),
+        ]
+        .into(),
+    );
+    let version_row = CreateActionRow::Buttons(
+        vec![
+            emoji_button(InteractionKind::OlderVersion.custom_id(id), OLDER_VERSION)
+                .disabled(at_oldest),
+            emoji_button(InteractionKind::NewerVersion.custom_id(id), NEWER_VERSION)
+                .disabled(at_head),
+            emoji_button(InteractionKind::Rollback.custom_id(id), ROLLBACK).disabled(at_head),
+        ]
+        .into(),
+    );
+    vec![
+        CreateComponent::ActionRow(page_row),
+        CreateComponent::ActionRow(version_row),
+    ]
     .into()
 }
 
