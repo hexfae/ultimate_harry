@@ -1,6 +1,7 @@
 //! The text-to-speech manager for speaking character replies aloud via `ElevenLabs`.
 
 use crate::models::character::Character;
+use jiff::Zoned;
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
 use snafu::{ResultExt as _, Snafu};
@@ -204,6 +205,40 @@ pub fn is_speakable(text: &str) -> bool {
     !text.trim().is_empty()
 }
 
+/// The fallback filename stem when a character's name has nothing filename-safe.
+const FILENAME_FALLBACK: &str = "uppläsning";
+
+/// Builds a filename-safe audio attachment name from the character name and the time
+/// the reading was requested, e.g. `Harry_2026-06-23_1430.mp3`. `when` is expected to
+/// already be in the desired timezone.
+pub fn audio_filename(character_name: &str, when: &Zoned) -> String {
+    format!(
+        "{}_{}.mp3",
+        sanitize_filename(character_name),
+        when.strftime("%Y-%m-%d_%H%M")
+    )
+}
+
+/// Reduces `name` to a filename-safe stem: alphanumerics are kept, every other run
+/// collapses to a single underscore, and a name with nothing usable falls back to a
+/// default. Swedish letters are alphanumeric, so they survive unchanged.
+fn sanitize_filename(name: &str) -> String {
+    let mut out = String::new();
+    for character in name.chars() {
+        if character.is_alphanumeric() {
+            out.push(character);
+        } else if !out.is_empty() && !out.ends_with('_') {
+            out.push('_');
+        }
+    }
+    let trimmed = out.trim_matches('_');
+    if trimmed.is_empty() {
+        FILENAME_FALLBACK.to_owned()
+    } else {
+        trimmed.to_owned()
+    }
+}
+
 /// The full `ElevenLabs` text-to-speech URL for the given voice.
 fn tts_url(voice_id: &str) -> String {
     format!("{TTS_URL_BASE}{voice_id}")
@@ -276,7 +311,10 @@ impl TtsError {
 /// Tests for voice resolution and request construction.
 #[cfg(test)]
 mod tests {
-    use super::{TtsError, TtsOverrides, TtsSettings, is_speakable, tts_request_body, tts_url};
+    use super::{
+        TtsError, TtsOverrides, TtsSettings, audio_filename, is_speakable, tts_request_body,
+        tts_url,
+    };
     use crate::models::character::Character;
     use serenity::all::UserId;
 
@@ -450,6 +488,36 @@ mod tests {
             body.get("model_id").and_then(serde_json::Value::as_str),
             Some("eleven_multilingual_v2"),
             "the model is sent as model_id"
+        );
+    }
+
+    /// The filename combines the sanitized character name with the request time,
+    /// collapsing unsafe characters and falling back when nothing usable remains.
+    #[test]
+    fn audio_filename_combines_name_and_request_time() {
+        use jiff::civil::date;
+        let Ok(when) = date(2026, 6, 23).at(14, 30, 0, 0).in_tz("Europe/Stockholm") else {
+            return;
+        };
+        assert_eq!(
+            audio_filename("Harry", &when),
+            "Harry_2026-06-23_1430.mp3",
+            "a plain name pairs with the formatted request time"
+        );
+        assert_eq!(
+            audio_filename("Captain O'Hara!", &when),
+            "Captain_O_Hara_2026-06-23_1430.mp3",
+            "spaces and punctuation collapse to single underscores"
+        );
+        assert_eq!(
+            audio_filename("Åsa Ö", &when),
+            "Åsa_Ö_2026-06-23_1430.mp3",
+            "Swedish letters survive as alphanumeric"
+        );
+        assert_eq!(
+            audio_filename("🙂", &when),
+            "uppläsning_2026-06-23_1430.mp3",
+            "a name with nothing filename-safe falls back to a default"
         );
     }
 

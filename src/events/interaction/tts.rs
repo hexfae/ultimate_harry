@@ -6,9 +6,10 @@ use crate::{
     error::SendResponseSnafu,
     llm::LlmManager,
     models::{character::Character, history::History},
-    tts::{TtsError, TtsManager},
+    tts::{TtsError, TtsManager, audio_filename},
     util::report_error,
 };
+use jiff::{Timestamp, Zoned};
 use serenity::all::{
     ComponentInteraction, Context, CreateAttachment, CreateInteractionResponse,
     CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
@@ -16,8 +17,8 @@ use serenity::all::{
 use snafu::ResultExt as _;
 use tracing::warn;
 
-/// The filename of the synthesized audio attachment.
-const AUDIO_FILENAME: &str = "uppläsning.mp3";
+/// The timezone the audio filename's request timestamp is rendered in.
+const FILENAME_TIMEZONE: &str = "Europe/Stockholm";
 
 /// Speak the chosen reply aloud, posting it as an MP3 followup attachment.
 ///
@@ -37,6 +38,9 @@ pub async fn tts(
     history: History,
     character: Character,
 ) -> AppResult {
+    let requested_at = Timestamp::now()
+        .in_tz(FILENAME_TIMEZONE)
+        .unwrap_or_else(|_| Zoned::now());
     let settings = db.tts_settings().await;
     let manager = TtsManager::new(settings.clone());
     let voice = manager.voice_for(&character).ok_or(TtsError::NoVoice)?;
@@ -71,7 +75,7 @@ pub async fn tts(
     };
 
     let audio = manager.synthesize(&speak_text, &voice).await?;
-    let attachment = CreateAttachment::bytes(audio, AUDIO_FILENAME);
+    let attachment = CreateAttachment::bytes(audio, audio_filename(character.name(), &requested_at));
 
     interaction
         .create_followup(
