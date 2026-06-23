@@ -287,6 +287,14 @@ impl History {
         }
     }
 
+    /// Marks the current choice as a failed-generation notice, so it renders as a
+    /// distinct error rather than as the character speaking.
+    pub fn set_current_choice_error(&mut self) {
+        if let Some(choice) = self.choices.get_mut(self.current) {
+            choice.set_error(true);
+        }
+    }
+
     /// Begins a new reply turn: the chosen reply and the user message join the
     /// context, the old swipeable choices are cleared, and the reply is marked
     /// as not yet finished.
@@ -605,6 +613,39 @@ mod tests {
             hydrated.chosen_message().id(),
             choice_two_id.as_str(),
             "the chosen index points at the second choice"
+        );
+    }
+
+    /// Marking the current choice as an error sets it on the chosen message and survives the
+    /// stored round-trip, so a failed reply still renders as an error after the history reloads.
+    #[test]
+    fn current_choice_error_marks_chosen_and_persists() {
+        let mut choices = NonEmpty::new(Message::new_system("a real reply"));
+        choices.push(Message::new_system("the failed reply"));
+        let mut history = History::builder()
+            .id(MessageId::new(1))
+            .character("character-id")
+            .choices(choices)
+            .current(1_usize)
+            .build();
+
+        history.set_current_choice_error();
+        assert!(
+            history.chosen_message().is_error(),
+            "marking sets the error flag on the current choice"
+        );
+
+        let stored = history.into_stored();
+        let maybe_hydrated = History::hydrate(stored);
+        assert!(maybe_hydrated.is_some(), "a history with choices hydrates");
+        let Some(hydrated) = maybe_hydrated else { return };
+        assert!(
+            hydrated.chosen_message().is_error(),
+            "the error flag survives the stored round-trip"
+        );
+        assert!(
+            !hydrated.choices.first().is_error(),
+            "only the failed choice is marked, not the genuine one"
         );
     }
 

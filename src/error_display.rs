@@ -12,11 +12,7 @@ use serenity::all::{
     EditMessage, MessageFlags,
 };
 
-use crate::constants::ERROR_COLOUR;
-
-/// The heading shown atop every error container, marking it as a failure rather
-/// than a character's reply.
-const ERROR_HEADING: &str = "## ⚠️ Något gick fel";
+use crate::constants::{ERROR_COLOUR, ERROR_HEADING};
 
 /// Builds the red error container's components from a user-facing message.
 fn error_components(message: String) -> Vec<CreateComponent<'static>> {

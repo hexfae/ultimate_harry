@@ -164,6 +164,9 @@ impl ReplySink for MessageSink<'_> {
         self.history
             .set_choices((self.character.clone(), reply.text, elapsed));
         self.history.set_id(&*self.message);
+        if !complete {
+            self.history.set_current_choice_error();
+        }
         persist_reply(self.db, self.history, self.character, counts, complete).await?;
         let edit = self
             .history
@@ -226,6 +229,9 @@ impl ReplySink for InteractionSink<'_> {
         let complete = reply.complete;
         self.history
             .update_current_choice((self.character.clone(), reply.text, elapsed));
+        if !complete {
+            self.history.set_current_choice_error();
+        }
         persist_reply(self.db, self.history, self.character, counts, complete).await?;
         let edit = self
             .history

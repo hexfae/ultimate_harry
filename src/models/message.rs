@@ -102,6 +102,12 @@ pub struct Message {
     /// first edit, 2 is the second edit, etc.
     #[builder(default)]
     revision: usize,
+    /// Whether this message is a failed-generation notice (a timeout, an empty
+    /// completion, or a request error) rather than a genuine reply, so it renders
+    /// as a distinct error instead of as the character speaking.
+    #[builder(default)]
+    #[serde(default)]
+    error: bool,
 }
 
 /// A non-empty list of message parts.
@@ -240,6 +246,17 @@ impl Message {
     #[must_use]
     pub const fn revision(&self) -> usize {
         self.revision
+    }
+
+    /// Whether this message is a failed-generation notice rather than a genuine reply.
+    #[must_use]
+    pub const fn is_error(&self) -> bool {
+        self.error
+    }
+
+    /// Marks this message as a failed-generation notice (or clears the mark).
+    pub const fn set_error(&mut self, error: bool) {
+        self.error = error;
     }
 
     /// Undoes an edit by cycling to the previous revision.

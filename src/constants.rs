@@ -45,3 +45,7 @@ pub const TRANSIENT_LINGER: Duration = Duration::from_secs(5);
 /// The accent colour of a user-facing error container (Discord's danger red), so
 /// a failure reads as an error rather than as the character speaking.
 pub const ERROR_COLOUR: u32 = 0x00ED_4245;
+
+/// The heading shown atop a user-facing error, marking it as a failure rather
+/// than a character's reply.
+pub const ERROR_HEADING: &str = "## ⚠️ Något gick fel";

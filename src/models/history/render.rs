@@ -18,7 +18,7 @@ use serenity::all::{
 
 use crate::{
     components::emoji_button,
-    constants::{CHARACTER_LIMIT, EDIT, NEXT, PIN, PREVIOUS, REDO, UNDO},
+    constants::{CHARACTER_LIMIT, EDIT, ERROR_COLOUR, ERROR_HEADING, NEXT, PIN, PREVIOUS, REDO, UNDO},
     database::Database,
     events::interaction::InteractionKind,
     models::character::{Character, CharacterOption},
@@ -270,6 +270,35 @@ impl History {
             .into()
         };
 
+        let components = create_buttons(
+            id.into().into(),
+            self.has_finished,
+            self.has_multiple_choices(),
+            self.chosen_has_edit(),
+            options,
+        );
+
+        // a failed generation renders as a distinct red error container rather than
+        // as the character speaking, while keeping the buttons so the user can swipe
+        // to retry without resending their message
+        if chosen.is_error() {
+            let heading = vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
+                ERROR_HEADING,
+            ))]
+            .into();
+            let body = vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
+                content.to_owned(),
+            ))]
+            .into();
+            let container = vec![CreateComponent::Container(
+                CreateContainer::new([heading, body, components, footer].concat())
+                    .accent_colour(ERROR_COLOUR),
+            )];
+            return CreateReply::default()
+                .flags(MessageFlags::IS_COMPONENTS_V2)
+                .components(container);
+        }
+
         // discord rejects a whitespace-only text display; an empty finished choice is the
         // "skip the greeting" swipe option, so show a hint explaining what selecting it does
         let text = if content.is_empty() {
@@ -283,14 +312,6 @@ impl History {
         };
 
         let title = vec![character_title_section(character, first)].into();
-
-        let components = create_buttons(
-            id.into().into(),
-            self.has_finished,
-            self.has_multiple_choices(),
-            self.chosen_has_edit(),
-            options,
-        );
 
         let container = vec![CreateComponent::Container(CreateContainer::new(
             [
