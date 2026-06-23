@@ -4,7 +4,7 @@ use crate::{
     AppResult,
     database::Database,
     error::{SendMessageSnafu, SendResponseSnafu},
-    events::streaming::{MessageSink, prepare_request, stream_and_finalize},
+    events::streaming::{MessageSink, stream_and_finalize},
     models::{history::History, message::Message},
 };
 use poise::serenity_prelude::{ComponentInteraction, Context, CreateInteractionResponse};
@@ -53,7 +53,6 @@ pub async fn character(
         .await
         .context(SendMessageSnafu)?;
 
-    let (requester, context, mode) = prepare_request(db, &new_character, &mut history).await?;
     let prompt = format!("Fortsätt rollspelet som {new_character}.");
 
     let sink = MessageSink {
@@ -64,7 +63,7 @@ pub async fn character(
         db,
         options: &options,
     };
-    stream_and_finalize(&requester, &context, Some(prompt), mode, sink).await?;
+    stream_and_finalize(Some(prompt), sink).await?;
 
     db.record_character_spawn(new_character.id(), interaction.user.id)
         .await?;

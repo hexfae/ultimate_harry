@@ -9,7 +9,7 @@ use crate::{
     error::{AppError, EditMessageSnafu, SendMessageSnafu},
     error_display::error_message_edit,
     events::lookup::history_and_character_of,
-    events::streaming::{MessageSink, prepare_request, stream_and_finalize},
+    events::streaming::{MessageSink, stream_and_finalize},
     models::{
         character::{Character, CharacterOption},
         history::History,
@@ -69,7 +69,6 @@ async fn reply_into(
     bot_message: &mut Message,
     options: &[CharacterOption],
 ) -> AppResult {
-    let (requester, context, mode) = prepare_request(db, character, history).await?;
     let sink = MessageSink {
         ctx,
         history,
@@ -78,7 +77,7 @@ async fn reply_into(
         db,
         options,
     };
-    stream_and_finalize(&requester, &context, None, mode, sink).await
+    stream_and_finalize(None, sink).await
 }
 
 /// Replaces the in-flight placeholder with the error notice when a reply fails

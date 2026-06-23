@@ -104,6 +104,12 @@ async fn persist_reply(
 /// is still empty and [`progress`](ReplySink::progress) once tokens arrive. The
 /// futures are `Send` so the loop stays usable from the event handler.
 pub trait ReplySink {
+    /// Prepare the LLM request (requester, conversation context, attachment mode)
+    /// for this reply, from the sink's own character and history.
+    fn prepare(
+        &mut self,
+    ) -> impl Future<Output = AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)>> + Send;
+
     /// Render the waiting placeholder after `elapsed` of silence.
     fn placeholder(&mut self, elapsed: Duration) -> impl Future<Output = AppResult> + Send;
 
@@ -133,6 +139,10 @@ pub struct MessageSink<'a> {
 }
 
 impl ReplySink for MessageSink<'_> {
+    async fn prepare(&mut self) -> AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)> {
+        prepare_request(self.db, self.character, self.history).await
+    }
+
     async fn placeholder(&mut self, elapsed: Duration) -> AppResult {
         let edit =
             self.history
@@ -199,6 +209,10 @@ pub struct InteractionSink<'a> {
 }
 
 impl ReplySink for InteractionSink<'_> {
+    async fn prepare(&mut self) -> AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)> {
+        prepare_request(self.db, self.character, self.history).await
+    }
+
     async fn placeholder(&mut self, elapsed: Duration) -> AppResult {
         let edit =
             self.history
@@ -261,21 +275,37 @@ pub async fn prepare_request(
     Ok((requester, context, mode))
 }
 
-/// Streams a reply into `sink`, then finalizes it (storing the chosen reply,
-/// persisting the history, and recording the character's generation stats).
+/// Prepares the request, streams the reply into `sink`, then finalizes it
+/// (storing the chosen reply, persisting the history, and recording the
+/// character's generation stats).
 ///
-/// The shared tail of every reply handler: pair it with [`prepare_request`] and
-/// a sink built in between.
-pub async fn stream_and_finalize<S: ReplySink>(
-    requester: &LlmManager,
-    context: &[ChatMessage],
-    prompt: Option<String>,
-    mode: AttachmentMode,
-    mut sink: S,
-) -> AppResult {
+/// The shared tail of every reply handler: build a sink and hand it here. A
+/// failure to prepare the request is treated like any other reply-ending failure
+/// (a timeout or a stream error): it renders as the red error choice, with the
+/// buttons kept live so the user can swipe/next to retry, rather than aborting.
+pub async fn stream_and_finalize<S: ReplySink>(prompt: Option<String>, mut sink: S) -> AppResult {
+    let (requester, context, mode) = match sink.prepare().await {
+        Ok(prepared) => prepared,
+        Err(why) => {
+            error!("failed to prepare the reply request, giving up");
+            report_error(why);
+            return finalize_failed(sink).await;
+        }
+    };
     let now = Instant::now();
-    let reply = stream_into(requester, context, prompt, mode, now, &mut sink).await?;
+    let reply = stream_into(&requester, &context, prompt, mode, now, &mut sink).await?;
     sink.finalize(reply, now.elapsed()).await
+}
+
+/// Finalizes `sink` with the generic error sentinel, so a pre-stream failure
+/// renders as the red error choice exactly like an in-stream one.
+async fn finalize_failed<S: ReplySink>(sink: S) -> AppResult {
+    let reply = Reply {
+        text: ERROR_MESSAGE.to_owned(),
+        output_tokens: 0,
+        complete: false,
+    };
+    sink.finalize(reply, Duration::ZERO).await
 }
 
 /// Stream an LLM reply, ticking `sink` about once a second so the Discord

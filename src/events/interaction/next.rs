@@ -5,7 +5,7 @@ use crate::{
     AppResult,
     database::Database,
     error::SendResponseSnafu,
-    events::streaming::{InteractionSink, prepare_request, stream_and_finalize},
+    events::streaming::{InteractionSink, stream_and_finalize},
     models::{character::Character, history::History},
 };
 use core::time::Duration;
@@ -32,8 +32,6 @@ pub async fn next(
             .await
             .context(SendResponseSnafu)?;
 
-        let (requester, context, mode) = prepare_request(db, &character, &mut history).await?;
-
         let sink = InteractionSink {
             ctx,
             history: &mut history,
@@ -43,7 +41,7 @@ pub async fn next(
             db,
             options: &options,
         };
-        stream_and_finalize(&requester, &context, None, mode, sink).await?;
+        stream_and_finalize(None, sink).await?;
     } else {
         swipe(ctx, interaction, id, db, history, character, History::next).await?;
     }
