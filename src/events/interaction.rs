@@ -104,20 +104,24 @@ pub async fn component(
     result
 }
 
-/// Surfaces a failed interaction to the user as an ephemeral error notice,
-/// trying a followup first (for an already-acknowledged interaction) and falling
-/// back to an initial response. Logs if neither can be sent.
+/// Surfaces a failed interaction to the user as an ephemeral error notice.
+///
+/// An unacknowledged interaction (the common case: a failure before any
+/// response) needs its initial response within Discord's 3-second window, so that
+/// is tried first; an already-acknowledged interaction (a failure after a
+/// placeholder was posted) rejects a second response, so it falls back to a
+/// followup. Logs if neither can be sent.
 async fn report_failure(ctx: &Context, interaction: &ComponentInteraction, why: &AppError) {
     let message = why.user_message();
     if interaction
-        .create_followup(&ctx.http, error_followup(message.clone()))
+        .create_response(&ctx.http, error_response(message.clone()))
         .await
         .is_ok()
     {
         return;
     }
     if let Err(report_why) = interaction
-        .create_response(&ctx.http, error_response(message))
+        .create_followup(&ctx.http, error_followup(message))
         .await
         .context(SendResponseSnafu)
     {
