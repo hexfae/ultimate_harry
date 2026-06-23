@@ -6,7 +6,9 @@ pub mod message;
 pub mod ready;
 pub mod streaming;
 
-use crate::{app_state::AppState, error::AppError, traits::SayEphemeral as _};
+use crate::{
+    app_state::AppState, error::AppError, traits::SayEphemeral as _, util::render_diagnostic,
+};
 use alloc::sync::Arc;
 use miette::{IntoDiagnostic as _, Report, Result};
 use poise::{FrameworkError, builtins};
@@ -27,7 +29,7 @@ impl EventHandlerTrait for EventHandler {
         match event {
             FullEvent::Ready { data_about_bot, .. } => {
                 if let Err(why) = ready::ready(ctx, data_about_bot).await {
-                    error!("in ready handler: {why:?}");
+                    error!("in ready handler:\n{}", render_diagnostic(why));
                 }
             }
             // chat replies and interactions stream an LLM response and only
@@ -43,7 +45,8 @@ impl EventHandlerTrait for EventHandler {
                             message_id = %user_message.id,
                             channel_id = %user_message.channel_id,
                             user_id = %user_message.author.id,
-                            "in message handler: {why:?}"
+                            "in message handler:\n{}",
+                            render_diagnostic(why)
                         );
                     }
                 });
@@ -62,7 +65,8 @@ impl EventHandlerTrait for EventHandler {
                             message_id = %pressed.message.id,
                             channel_id = %pressed.message.channel_id,
                             user_id = %pressed.user.id,
-                            "in interaction handler: {why:?}"
+                            "in interaction handler:\n{}",
+                            render_diagnostic(why)
                         );
                     }
                 });

@@ -11,13 +11,14 @@ use crate::{
     AppResult,
     constants::CHARACTER_LIMIT,
     database::Database,
-    error::{AppError, EditMessageSnafu, EditResponseSnafu, StreamingSnafu},
+    error::{EditMessageSnafu, EditResponseSnafu, StreamingSnafu},
     llm::LlmManager,
     models::{
         character::{Character, CharacterOption},
         history::History,
         message::{AttachmentMode, Message as ChatMessage},
     },
+    util::render_diagnostic,
     vision::resolve_attachments,
 };
 use core::time::Duration;
@@ -298,8 +299,10 @@ pub async fn stream_into<S: ReplySink>(
         let mut stream = match requester.request_stream(context, prompt.clone(), mode).await {
             Ok(stream) => stream,
             Err(source) => {
-                let why = AppError::from(source);
-                error!("failed to start the reply stream, giving up: {why:?}");
+                error!(
+                    "failed to start the reply stream, giving up:\n{}",
+                    render_diagnostic(source)
+                );
                 total += ERROR_MESSAGE;
                 complete = false;
                 break 'attempts;
@@ -314,7 +317,10 @@ pub async fn stream_into<S: ReplySink>(
                     let item = match result.transpose().context(StreamingSnafu) {
                         Ok(item) => item,
                         Err(why) => {
-                            error!("the reply stream errored, giving up: {why:?}");
+                            error!(
+                                "the reply stream errored, giving up:\n{}",
+                                render_diagnostic(why)
+                            );
                             if total.is_empty() {
                                 total += ERROR_MESSAGE;
                                 complete = false;

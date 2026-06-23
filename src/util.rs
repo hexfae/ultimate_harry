@@ -1,5 +1,20 @@
 //! Small shared helpers used across the crate.
 
+use miette::Report;
+use strip_ansi_escapes::strip_str;
+
+/// Renders an error as a full miette diagnostic (code, message, help, and source
+/// chain), with terminal colors stripped, for inclusion in a tracing log line.
+///
+/// The command error handler already surfaces user-facing errors through a
+/// [`miette::Report`]; this gives the bot's background tasks (chat replies,
+/// interactions, autocomplete, image description) the same rich rendering in the
+/// logs, where a bare `Display`/`Debug` would drop the diagnostic code, help
+/// text, and source chain.
+pub fn render_diagnostic<E: Into<Report>>(error: E) -> String {
+    strip_str(format!("{:?}", error.into()))
+}
+
 /// Returns the previous index in a cyclic sequence of `len` elements, wrapping from the first
 /// element back to the last.
 ///

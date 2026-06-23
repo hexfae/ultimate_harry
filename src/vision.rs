@@ -11,6 +11,7 @@ use crate::{
         history::History,
         message::{AttachmentMode, DescribedAttachment, Message},
     },
+    util::render_diagnostic,
 };
 
 /// Decides whether the active model receives images or text descriptions, describing and caching
@@ -29,7 +30,10 @@ pub async fn resolve_attachments(
     match requester.supports_vision().await {
         Ok(true) => return AttachmentMode::Image,
         Ok(false) => {}
-        Err(why) => warn!("could not check vision support, describing images to be safe: {why}"),
+        Err(why) => warn!(
+            "could not check vision support, describing images to be safe:\n{}",
+            render_diagnostic(why)
+        ),
     }
     let described = describe_images(requester, context).await;
     apply_descriptions(history, context, &described);
@@ -69,7 +73,10 @@ async fn describe_images(
     for url in urls {
         match requester.describe_image(&url).await {
             Ok(description) => described.push(DescribedAttachment { url, description }),
-            Err(why) => warn!("could not describe an image, leaving it undescribed: {why}"),
+            Err(why) => warn!(
+                "could not describe an image, leaving it undescribed:\n{}",
+                render_diagnostic(why)
+            ),
         }
     }
     described
