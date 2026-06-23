@@ -14,7 +14,7 @@ use crate::{
         character::{Character, CharacterOption},
         history::History,
     },
-    util::render_diagnostic,
+    util::report_error,
 };
 use poise::serenity_prelude::{Context, Message};
 use serenity::all::ReactionType;
@@ -88,9 +88,9 @@ async fn report_reply_failure(ctx: &Context, bot_message: &mut Message, why: &Ap
     if let Err(report_why) = bot_message.edit(ctx, edit).await.context(EditMessageSnafu) {
         warn!(
             message_id = %bot_message.id,
-            "failed to show the error notice:\n{}",
-            render_diagnostic(report_why)
+            "failed to show the error notice"
         );
+        report_error(report_why);
     }
 }
 
@@ -106,10 +106,8 @@ async fn react_to_mentions_and_replies(ctx: &Context, new_message: &Message, db:
     let all_emoji: BTreeMap<String, ReactionType> = match db.user_emoji().await {
         Ok(emoji) => emoji.into_iter().collect(),
         Err(why) => {
-            warn!(
-                "failed to load reaction emoji, skipping reactions:\n{}",
-                render_diagnostic(why)
-            );
+            warn!("failed to load reaction emoji, skipping reactions");
+            report_error(why);
             return;
         }
     };

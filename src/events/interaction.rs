@@ -13,7 +13,7 @@ use crate::{
     error_display::{error_followup, error_response},
     events::lookup::history_and_character_of,
     models::history::History,
-    util::render_diagnostic,
+    util::report_error,
 };
 use core::fmt::{self, Display, Formatter};
 use miette::{Diagnostic, Result, SourceSpan};
@@ -123,9 +123,9 @@ async fn report_failure(ctx: &Context, interaction: &ComponentInteraction, why: 
     {
         warn!(
             custom_id = %interaction.data.custom_id,
-            "failed to show the error notice:\n{}",
-            render_diagnostic(report_why)
+            "failed to show the error notice"
         );
+        report_error(report_why);
     }
 }
 

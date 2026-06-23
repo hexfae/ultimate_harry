@@ -1,18 +1,25 @@
 //! Small shared helpers used across the crate.
 
 use miette::Report;
-use strip_ansi_escapes::strip_str;
 
-/// Renders an error as a full miette diagnostic (code, message, help, and source
-/// chain), with terminal colors stripped, for inclusion in a tracing log line.
+/// Prints the full miette diagnostic (code, message, help, and source chain) to
+/// stderr, where miette renders it graphically and in colour on an interactive
+/// terminal, and plainly when stderr is not a terminal (so journald/file logs
+/// stay free of escape codes).
 ///
-/// The command error handler already surfaces user-facing errors through a
-/// [`miette::Report`]; this gives the bot's background tasks (chat replies,
-/// interactions, autocomplete, image description) the same rich rendering in the
-/// logs, where a bare `Display`/`Debug` would drop the diagnostic code, help
-/// text, and source chain.
-pub fn render_diagnostic<E: Into<Report>>(error: E) -> String {
-    strip_str(format!("{:?}", error.into()))
+/// Pair it with a concise `tracing` event that carries the structured context
+/// fields: the rich report is kept off tracing's formatter, which mangles the
+/// colours and graphical layout (a bare `Display`/`Debug` in a log line would
+/// also drop the diagnostic code, help text, and source chain).
+#[expect(
+    clippy::print_stderr,
+    reason = "miette only renders its coloured graphical report when written straight to stderr, not through tracing"
+)]
+pub fn report_error<E: Into<Report>>(error: E) {
+    // build the graphical report with `format!` (where Debug formatting is
+    // allowed) and print its Display, so miette's colours survive to stderr.
+    let report = format!("{:?}", error.into());
+    eprintln!("{report}");
 }
 
 /// Returns the previous index in a cyclic sequence of `len` elements, wrapping from the first

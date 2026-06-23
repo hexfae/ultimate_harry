@@ -22,7 +22,7 @@ use crate::{
     commands::commands,
     error::AppError,
     events::{EventHandler, on_error},
-    util::render_diagnostic,
+    util::report_error,
 };
 use alloc::sync::Arc;
 use core::{result::Result as CoreResult, time::Duration};
@@ -70,10 +70,8 @@ async fn main() -> Result<()> {
             on_error: |error| {
                 Box::pin(async {
                     if let Err(why) = on_error(error).await {
-                        warn!(
-                            "error in event handler:\n{}",
-                            render_diagnostic(why)
-                        );
+                        warn!("error in event handler");
+                        report_error(why);
                     }
                 })
             },

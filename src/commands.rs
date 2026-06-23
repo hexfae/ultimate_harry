@@ -29,7 +29,7 @@ use crate::{
     models::character::Character,
     phrases::no_character,
     traits::SayEphemeral as _,
-    util::render_diagnostic,
+    util::report_error,
 };
 
 /// Returns the full list of the bot's slash commands.
@@ -77,10 +77,8 @@ pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocomp
     let characters = match ctx.data().db.characters_by_similarity(partial).await {
         Ok(characters) => characters,
         Err(why) => {
-            warn!(
-                "failed to rank characters for autocomplete, returning none:\n{}",
-                render_diagnostic(why)
-            );
+            warn!("failed to rank characters for autocomplete, returning none");
+            report_error(why);
             Vec::new()
         }
     };
@@ -97,10 +95,8 @@ pub async fn autocomplete_deleted<'a>(
     let characters = match ctx.data().db.deleted_characters_by_similarity(partial).await {
         Ok(characters) => characters,
         Err(why) => {
-            warn!(
-                "failed to rank deleted characters for autocomplete, returning none:\n{}",
-                render_diagnostic(why)
-            );
+            warn!("failed to rank deleted characters for autocomplete, returning none");
+            report_error(why);
             Vec::new()
         }
     };

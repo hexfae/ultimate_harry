@@ -18,7 +18,7 @@ use crate::{
         history::History,
         message::{AttachmentMode, Message as ChatMessage},
     },
-    util::render_diagnostic,
+    util::report_error,
     vision::resolve_attachments,
 };
 use core::time::Duration;
@@ -305,10 +305,8 @@ pub async fn stream_into<S: ReplySink>(
         let mut stream = match requester.request_stream(context, prompt.clone(), mode).await {
             Ok(stream) => stream,
             Err(source) => {
-                error!(
-                    "failed to start the reply stream, giving up:\n{}",
-                    render_diagnostic(source)
-                );
+                error!("failed to start the reply stream, giving up");
+                report_error(source);
                 total += ERROR_MESSAGE;
                 complete = false;
                 break 'attempts;
@@ -323,10 +321,8 @@ pub async fn stream_into<S: ReplySink>(
                     let item = match result.transpose().context(StreamingSnafu) {
                         Ok(item) => item,
                         Err(why) => {
-                            error!(
-                                "the reply stream errored, giving up:\n{}",
-                                render_diagnostic(why)
-                            );
+                            error!("the reply stream errored, giving up");
+                            report_error(why);
                             if total.is_empty() {
                                 total += ERROR_MESSAGE;
                                 complete = false;
@@ -359,18 +355,12 @@ pub async fn stream_into<S: ReplySink>(
                             break 'attempts;
                         }
                         // a render tick failing is best-effort: the next tick (or
-                        // finalize) re-renders, so warn and keep streaming.
+                        // finalize) re-renders, so warn concisely and keep streaming.
                         if let Err(why) = sink.placeholder(start.elapsed()).await {
-                            warn!(
-                                "failed to render placeholder, continuing:\n{}",
-                                render_diagnostic(why)
-                            );
+                            warn!("failed to render placeholder, continuing: {why}");
                         }
                     } else if let Err(why) = sink.progress(total.clone(), start.elapsed()).await {
-                        warn!(
-                            "failed to render progress, continuing:\n{}",
-                            render_diagnostic(why)
-                        );
+                        warn!("failed to render progress, continuing: {why}");
                     }
                 }
             }

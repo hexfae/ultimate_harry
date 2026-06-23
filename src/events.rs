@@ -7,7 +7,7 @@ pub mod ready;
 pub mod streaming;
 
 use crate::{
-    app_state::AppState, error::AppError, error_display::error_reply, util::render_diagnostic,
+    app_state::AppState, error::AppError, error_display::error_reply, util::report_error,
 };
 use alloc::sync::Arc;
 use miette::{IntoDiagnostic as _, Result};
@@ -28,7 +28,8 @@ impl EventHandlerTrait for EventHandler {
         match event {
             FullEvent::Ready { data_about_bot, .. } => {
                 if let Err(why) = ready::ready(ctx, data_about_bot).await {
-                    error!("in ready handler:\n{}", render_diagnostic(why));
+                    error!("in ready handler");
+                    report_error(why);
                 }
             }
             // chat replies and interactions stream an LLM response and only
@@ -44,9 +45,9 @@ impl EventHandlerTrait for EventHandler {
                             message_id = %user_message.id,
                             channel_id = %user_message.channel_id,
                             user_id = %user_message.author.id,
-                            "in message handler:\n{}",
-                            render_diagnostic(why)
+                            "in message handler"
                         );
+                        report_error(why);
                     }
                 });
             }
@@ -64,9 +65,9 @@ impl EventHandlerTrait for EventHandler {
                             message_id = %pressed.message.id,
                             channel_id = %pressed.message.channel_id,
                             user_id = %pressed.user.id,
-                            "in interaction handler:\n{}",
-                            render_diagnostic(why)
+                            "in interaction handler"
                         );
+                        report_error(why);
                     }
                 });
             }
@@ -88,9 +89,9 @@ pub async fn on_error(framework_error: FrameworkError<'_, AppState, AppError>) -
             error!(
                 command = %ctx.command().qualified_name,
                 user_id = %ctx.author().id,
-                "in command:\n{}",
-                render_diagnostic(error)
+                "in command"
             );
+            report_error(error);
             send_error(ctx, notice).await?;
         }
         other => report_framework_error(other).await?,
