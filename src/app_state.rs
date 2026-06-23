@@ -14,11 +14,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// Creates a new `AppState` by opening the embedded database.
+    /// Creates a new `AppState` by opening the database.
     ///
     /// # Errors
     ///
-    /// Returns an error if opening the embedded database fails.
+    /// Returns an error if opening the database fails.
     pub async fn new() -> Result<Self, DatabaseError> {
         let db = Database::new().await?;
 
