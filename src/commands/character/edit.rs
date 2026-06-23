@@ -36,7 +36,7 @@ pub async fn edit(
 }
 
 /// Sends 2 buttons back-to-back that show modals, edits the character, sends
-/// a message stating it was edit, and deletes the message 5 seconds later.
+/// a message stating it was edited, and deletes the message 5 seconds later.
 async fn edit_confirmed(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
@@ -68,6 +68,7 @@ async fn edit_confirmed(
             ctx.http(),
             EditInteractionResponse::new()
                 .content(edited(character_name))
+                .embeds(vec![])
                 .components(vec![]),
         )
         .await
