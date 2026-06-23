@@ -94,16 +94,12 @@ impl History {
         let (has_previous, has_edit) = (false, false);
 
         let footer = {
-            let pages = if self.choices.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    "-# {}/{} | tar {:.1}s | 0/{CHARACTER_LIMIT}",
-                    self.current.saturating_add(1),
-                    self.choices.len(),
-                    elapsed.as_secs_f32(),
-                )
-            };
+            let pages = format!(
+                "-# {}/{} | tar {:.1}s | 0/{CHARACTER_LIMIT}",
+                self.current.saturating_add(1),
+                self.choices.len(),
+                elapsed.as_secs_f32(),
+            );
             vec![CreateContainerComponent::TextDisplay(
                 CreateTextDisplay::new(pages),
             )]
