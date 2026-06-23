@@ -24,7 +24,7 @@ use tracing::warn;
 
 /// Handle a new message being sent.
 pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> AppResult {
-    react_to_mentions_and_replies(ctx, user_message, db).await?;
+    react_to_mentions_and_replies(ctx, user_message, db).await;
     if user_message.author.bot() {
         return Ok(());
     }
@@ -95,20 +95,29 @@ async fn report_reply_failure(ctx: &Context, bot_message: &mut Message, why: &Ap
 }
 
 /// Checks the mentions/replied to message of the new message, and reacts with the corresponding user emoji.
-async fn react_to_mentions_and_replies(
-    ctx: &Context,
-    new_message: &Message,
-    db: &Database,
-) -> AppResult {
-    let all_emoji: BTreeMap<String, ReactionType> = db.user_emoji().await?.into_iter().collect();
+///
+/// Reactions are cosmetic and best-effort, so this never fails the surrounding reply.
+async fn react_to_mentions_and_replies(ctx: &Context, new_message: &Message, db: &Database) {
     if new_message.author.bot() {
-        return Ok(());
+        return;
     }
+    // a failure to load the emoji must never abort the reply that follows: log it
+    // and skip reacting.
+    let all_emoji: BTreeMap<String, ReactionType> = match db.user_emoji().await {
+        Ok(emoji) => emoji.into_iter().collect(),
+        Err(why) => {
+            warn!(
+                "failed to load reaction emoji, skipping reactions:\n{}",
+                render_diagnostic(why)
+            );
+            return;
+        }
+    };
     if new_message.mention_everyone() {
         for emoji in all_emoji.values() {
             react(ctx, new_message, emoji.clone()).await;
         }
-        return Ok(());
+        return;
     }
     if let Some(ref replied_to) = new_message.referenced_message
         && let Some(emoji) = all_emoji.get(&replied_to.author.id.to_string())
@@ -120,7 +129,6 @@ async fn react_to_mentions_and_replies(
             react(ctx, new_message, emoji.clone()).await;
         }
     }
-    Ok(())
 }
 
 /// Reacts to a message with an emoji, logging instead of failing so a missed
