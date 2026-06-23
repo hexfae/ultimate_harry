@@ -141,7 +141,7 @@ impl History {
                 Some(user_id) => db.substitute_name(user_id).await,
                 None => String::new(),
             };
-            let len = format!("{}/{CHARACTER_LIMIT}", content.len());
+            let len = format!("{}/{CHARACTER_LIMIT}", content.chars().count());
 
             let footer = format!("{len}{editor}");
             CreateEmbedFooter::new(footer)
@@ -263,7 +263,7 @@ impl History {
             None => None,
         };
         let footer = {
-            let footer = self.footer_text(character, content.len(), editor_name.as_deref());
+            let footer = self.footer_text(character, content.chars().count(), editor_name.as_deref());
             vec![CreateContainerComponent::TextDisplay(
                 CreateTextDisplay::new(footer),
             )]

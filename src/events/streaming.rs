@@ -45,14 +45,12 @@ const GAVE_UP_MESSAGE: &str = "AI:n gav inget svar efter flera försök. Jag ger
 /// Reply shown when the request fails to start or the stream errors out.
 const ERROR_MESSAGE: &str = "Något gick fel när jag försökte svara. Försök igen senare.";
 
-/// Truncates `text` to the largest character boundary at or below `limit`, so
-/// the cut never splits a multi-byte character.
-fn truncate_to_char_boundary(text: &mut String, limit: usize) {
-    let mut cut = limit;
-    while cut > 0 && !text.is_char_boundary(cut) {
-        cut = cut.saturating_sub(1);
+/// Truncates `text` to at most `limit` characters, never splitting a multi-byte
+/// character. Discord counts characters, not bytes, so the limit is in characters.
+fn truncate_to_chars(text: &mut String, limit: usize) {
+    if let Some((cut, _)) = text.char_indices().nth(limit) {
+        text.truncate(cut);
     }
-    text.truncate(cut);
 }
 
 /// A finished streamed reply: the rendered text and the model's reported
@@ -363,9 +361,9 @@ pub async fn stream_into<S: ReplySink>(
                     match item {
                         Some(MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(delta))) => {
                             total += delta.text();
-                            if total.len() >= CHARACTER_LIMIT {
+                            if total.chars().count() >= CHARACTER_LIMIT {
                                 warn!("reply reached the character limit, truncating");
-                                truncate_to_char_boundary(&mut total, CHARACTER_LIMIT);
+                                truncate_to_chars(&mut total, CHARACTER_LIMIT);
                                 break 'attempts;
                             }
                         }
@@ -420,32 +418,32 @@ pub async fn stream_into<S: ReplySink>(
 /// Tests for the character-limit truncation helper.
 #[cfg(test)]
 mod tests {
-    use super::truncate_to_char_boundary;
+    use super::truncate_to_chars;
 
-    /// Cutting inside a multi-byte character walks back to the boundary before it.
+    /// The limit counts characters, not bytes, and never splits a multi-byte one.
     #[test]
-    fn truncation_keeps_a_whole_multibyte_char() {
+    fn truncation_counts_characters_not_bytes() {
         let mut text = "héllo".to_owned();
-        truncate_to_char_boundary(&mut text, 2);
+        truncate_to_chars(&mut text, 2);
         assert_eq!(
-            text, "h",
-            "a cut inside the é falls back to the boundary before it"
+            text, "hé",
+            "two characters are kept even though é is two bytes"
         );
     }
 
-    /// A cut already on a character boundary keeps everything up to the limit.
+    /// A limit at or above the character count keeps everything.
     #[test]
-    fn truncation_on_a_boundary_keeps_everything_up_to_it() {
+    fn truncation_at_the_length_keeps_everything() {
         let mut text = "hello".to_owned();
-        truncate_to_char_boundary(&mut text, 3);
-        assert_eq!(text, "hel", "an ascii cut lands exactly on the limit");
+        truncate_to_chars(&mut text, 5);
+        assert_eq!(text, "hello", "nothing is cut when the limit is not exceeded");
     }
 
     /// A zero limit truncates to the empty string.
     #[test]
     fn truncation_to_zero_empties_the_string() {
         let mut text = "abc".to_owned();
-        truncate_to_char_boundary(&mut text, 0);
+        truncate_to_chars(&mut text, 0);
         assert!(text.is_empty(), "a zero limit truncates to nothing");
     }
 }
