@@ -9,11 +9,11 @@ use core::time::Duration;
 use poise::CreateReply;
 use serenity::all::{
     CreateActionRow, CreateAllowedMentions, CreateComponent, CreateContainer,
-    CreateContainerComponent, CreateEmbed, CreateEmbedFooter, CreateInteractionResponse,
-    CreateInteractionResponseMessage, CreateMessage, CreateSection, CreateSectionAccessory,
-    CreateSectionComponent, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption,
-    CreateTextDisplay, CreateThumbnail, CreateUnfurledMediaItem, EditInteractionResponse,
-    EditMessage, Message as DiscordMessage, MessageFlags, MessageId,
+    CreateContainerComponent, CreateInteractionResponse, CreateInteractionResponseMessage,
+    CreateMessage, CreateSection, CreateSectionAccessory, CreateSectionComponent, CreateSelectMenu,
+    CreateSelectMenuKind, CreateSelectMenuOption, CreateTextDisplay, CreateThumbnail,
+    CreateUnfurledMediaItem, EditInteractionResponse, EditMessage, Message as DiscordMessage,
+    MessageFlags, MessageId,
 };
 
 use crate::{
@@ -119,41 +119,59 @@ impl History {
             .components(container)
     }
 
-    /// Converts the history into a bare response reply with the chosen message content.
-    pub async fn into_bare_response(
+    /// Converts the history into a Components V2 reply with the chosen message
+    /// content, for posting in the pin channel; `link` jumps back to the original
+    /// message.
+    pub async fn into_bare_response<'a>(
         self,
-        character: &Character,
+        character: &'a Character,
         link: String,
         db: &Database,
-    ) -> CreateReply<'static> {
+    ) -> CreateReply<'a> {
         let content = self
             .chosen_message()
             .chosen_revision()
             .head()
             .content()
             .to_owned();
-        let footer = {
-            let editor = match self.chosen_message().current_editor() {
-                Some(user_id) => db.substitute_name(user_id).await,
-                None => String::new(),
-            };
-            let len = format!("{}/{CHARACTER_LIMIT}", content.chars().count());
-
-            let footer = format!("{len}{editor}");
-            CreateEmbedFooter::new(footer)
+        let editor = match self.chosen_message().current_editor() {
+            Some(user_id) => db.substitute_name(user_id).await,
+            None => String::new(),
         };
-        let mut embed = CreateEmbed::new()
-            .title(character.name().to_owned())
-            .description(content)
-            .footer(footer);
+        let footer = format!("-# {}/{CHARACTER_LIMIT}{editor}", content.chars().count());
 
-        if let Some(avatar) = character.avatar() {
-            embed = embed.thumbnail(avatar.to_owned());
+        // discord rejects a whitespace-only text display
+        let text = if content.is_empty() {
+            "(ingen hälsning)".to_owned()
+        } else {
+            content
+        };
+        let (first, rest) = match text.split_once('\n') {
+            Some((first, rest)) => (first.to_owned(), Some(rest.to_owned())),
+            None => (text.clone(), None),
+        };
+
+        let mut card = vec![character_title_section(character, first)];
+        if let Some(tail) = rest {
+            card.extend(tail.split('\n').filter(|line| !line.is_empty()).map(|part| {
+                CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part.to_owned()))
+            }));
         }
-        if let Some(color) = character.color() {
-            embed = embed.color(color);
+        card.push(CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
+            footer,
+        )));
+
+        let mut card_container = CreateContainer::new(card);
+        if let Some(colour) = character.color() {
+            card_container = card_container.accent_colour(colour);
         }
-        CreateReply::default().content(link).embed(embed)
+
+        let jump = CreateComponent::TextDisplay(CreateTextDisplay::new(link));
+        let container = CreateComponent::Container(card_container);
+
+        CreateReply::default()
+            .flags(MessageFlags::IS_COMPONENTS_V2)
+            .components(vec![jump, container])
     }
 
     /// Converts the history to an interaction response.
@@ -337,10 +355,10 @@ impl History {
 /// Builds the title section of a history message: the character's name as a
 /// heading, `body` as the leading text, and the character's avatar (or a
 /// transparent placeholder) as the section thumbnail.
-fn character_title_section<'a>(
-    character: &'a Character,
-    body: &'a str,
-) -> CreateContainerComponent<'a> {
+fn character_title_section<'a, B>(character: &'a Character, body: B) -> CreateContainerComponent<'a>
+where
+    B: Into<Cow<'a, str>>,
+{
     CreateContainerComponent::Section(CreateSection::new(
         vec![
             CreateSectionComponent::TextDisplay(CreateTextDisplay::new(format!("## {character}"))),
