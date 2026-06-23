@@ -18,7 +18,9 @@ use serenity::all::{
 
 use crate::{
     components::emoji_button,
-    constants::{CHARACTER_LIMIT, EDIT, ERROR_COLOUR, ERROR_HEADING, NEXT, PIN, PREVIOUS, REDO, UNDO},
+    constants::{
+        CHARACTER_LIMIT, EDIT, ERROR_COLOUR, ERROR_HEADING, NEXT, PIN, PREVIOUS, REDO, SPEAK, UNDO,
+    },
     database::Database,
     events::interaction::InteractionKind,
     models::character::{Character, CharacterOption},
@@ -384,6 +386,7 @@ fn create_buttons<'a>(
     let undo_id = InteractionKind::Undo.custom_id(id);
     let redo_id = InteractionKind::Redo.custom_id(id);
     let pin_id = InteractionKind::Pin.custom_id(id);
+    let tts_id = InteractionKind::Tts.custom_id(id);
     let char_id = InteractionKind::Character.custom_id(id);
 
     let mut components = vec![
@@ -400,6 +403,7 @@ fn create_buttons<'a>(
             vec![
                 emoji_button(edit_msg_id, EDIT).disabled(!finished),
                 emoji_button(pin_id, PIN).disabled(!finished),
+                emoji_button(tts_id, SPEAK).disabled(!finished),
             ]
             .into(),
         )),

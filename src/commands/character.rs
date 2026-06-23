@@ -8,6 +8,7 @@ pub mod paginate;
 pub mod render;
 pub mod restore;
 pub mod view;
+pub mod voice;
 
 use crate::AppResult;
 use create::create;
@@ -16,11 +17,12 @@ use edit::edit;
 use model::model;
 use restore::restore;
 use view::view;
+use voice::voice;
 
 /// Hanterar gubbar.
 #[poise::command(
     slash_command,
-    subcommands("create", "edit", "view", "delete", "model", "restore"),
+    subcommands("create", "edit", "view", "delete", "model", "restore", "voice"),
     subcommand_required,
     rename = "gubbe"
 )]

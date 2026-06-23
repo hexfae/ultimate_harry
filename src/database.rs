@@ -16,6 +16,7 @@ use tracing::{error, warn};
 
 use crate::constants::MAX_RESULTS;
 use crate::llm::ModelSettings;
+use crate::tts::TtsSettings;
 use crate::models::{
     character::{Character, CharacterOption},
     config::UserPrefs,
@@ -36,6 +37,8 @@ const USERS_DIR: &str = "users";
 const MODEL_SETTINGS_FILE: &str = "model_settings.json";
 /// The config file storing the bot's pin channel.
 const PIN_CHANNEL_FILE: &str = "pin_channel.json";
+/// The config file storing the bot's text-to-speech settings.
+const TTS_SETTINGS_FILE: &str = "tts_settings.json";
 
 /// Reads and deserializes a JSON record from `path`, returning `None` if the file does not exist.
 async fn read_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, StoreError> {
@@ -154,6 +157,11 @@ impl Database {
     /// The path of the bot's pin-channel config file.
     fn pin_channel_path(&self) -> PathBuf {
         self.root.join(CONFIG_DIR).join(PIN_CHANNEL_FILE)
+    }
+
+    /// The path of the bot's text-to-speech-settings config file.
+    fn tts_settings_path(&self) -> PathBuf {
+        self.root.join(CONFIG_DIR).join(TTS_SETTINGS_FILE)
     }
 
     /// Serializes `value` to pretty JSON and writes it to `path` atomically (write to a temp file,
@@ -453,6 +461,19 @@ impl Database {
         .await
     }
 
+    /// Links (or, with `None`, clears) a character's `ElevenLabs` voice. Returns the
+    /// updated character, or `Ok(None)` if the character is missing.
+    pub async fn set_character_voice(
+        &self,
+        id: &str,
+        voice: Option<String>,
+    ) -> Result<Option<Character>, DatabaseError> {
+        self.mutate_character(id, UpdateSnafu, |character| {
+            character.set_voice(voice);
+        })
+        .await
+    }
+
     /// Records a character spawn (a new conversation) for the given user.
     ///
     /// The stats land on the character's latest version (walking the version
@@ -528,6 +549,26 @@ impl Database {
             Some(settings) => settings.clone(),
             None => self.model_settings().await,
         }
+    }
+
+    /// Returns the bot's text-to-speech settings.
+    pub async fn tts_settings(&self) -> TtsSettings {
+        read_or(
+            &self.tts_settings_path(),
+            "tts settings",
+            TtsSettings::default,
+        )
+        .await
+    }
+
+    /// Updates or inserts the bot's text-to-speech settings.
+    pub async fn upsert_tts_settings(
+        &self,
+        tts_settings: TtsSettings,
+    ) -> Result<(), DatabaseError> {
+        self.write_json(&self.tts_settings_path(), &tts_settings)
+            .await
+            .context(SetTtsSettingsSnafu)
     }
 
     /// Returns the bot's pin channel.
@@ -659,6 +700,16 @@ pub enum DatabaseError {
         /// The source of the error.
         source: StoreError,
     },
+    /// Setting the bot's text-to-speech settings failed.
+    #[snafu(display("Kunde inte spara uppläsningsinställningar: {source}"))]
+    #[diagnostic(
+        help("Kontrollera att inställningarna är giltiga"),
+        code(database::set_tts_settings)
+    )]
+    SetTtsSettings {
+        /// The source of the error.
+        source: StoreError,
+    },
 }
 
 impl DatabaseError {
@@ -674,6 +725,7 @@ impl DatabaseError {
                 | Self::Update { .. }
                 | Self::SetModelSettings { .. }
                 | Self::SetPinsChannel { .. }
+                | Self::SetTtsSettings { .. }
         )
     }
 }
@@ -841,6 +893,80 @@ mod tests {
         assert!(
             matches!(missing, Ok(None)),
             "setting model settings on a missing character returns None"
+        );
+    }
+
+    /// `set_character_voice` links a voice to a character and returns it; clearing
+    /// it removes the link, and a missing character returns `None`.
+    #[tokio::test]
+    async fn set_character_voice_links_and_clears_a_voice() {
+        let opened = Database::temporary().await;
+        assert!(
+            opened.is_ok(),
+            "opening a temporary database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        insert(&db, character("char-id", "Harry")).await;
+
+        let linked = db
+            .set_character_voice("char-id", Some("voice-abc".to_owned()))
+            .await;
+        assert!(
+            linked
+                .as_ref()
+                .is_ok_and(|found| found.as_ref().is_some_and(|record| record.voice()
+                    == Some("voice-abc"))),
+            "linking a voice records it and returns the character"
+        );
+
+        let cleared = db.set_character_voice("char-id", None).await;
+        assert!(
+            cleared
+                .as_ref()
+                .is_ok_and(|found| found.as_ref().is_some_and(|record| record.voice().is_none())),
+            "clearing the voice removes the link"
+        );
+
+        let missing = db
+            .set_character_voice("missing", Some("voice".to_owned()))
+            .await;
+        assert!(
+            matches!(missing, Ok(None)),
+            "setting a voice on a missing character returns None"
+        );
+    }
+
+    /// TTS settings round-trip through the config file, defaulting before any are saved.
+    #[tokio::test]
+    async fn tts_settings_round_trip_through_the_config_file() {
+        use crate::tts::TtsSettings;
+        let opened = Database::temporary().await;
+        assert!(
+            opened.is_ok(),
+            "opening a temporary database should succeed"
+        );
+        let Ok(db) = opened else { return };
+
+        assert!(
+            db.tts_settings().await.api_key.is_empty(),
+            "the default settings have no API key before any are saved"
+        );
+
+        let saved = db
+            .upsert_tts_settings(TtsSettings {
+                api_key: "secret".to_owned(),
+                default_voice: Some("voice-1".to_owned()),
+                ..TtsSettings::default()
+            })
+            .await;
+        assert!(saved.is_ok(), "saving the settings should succeed");
+
+        let loaded = db.tts_settings().await;
+        assert_eq!(loaded.api_key, "secret", "the saved API key is read back");
+        assert_eq!(
+            loaded.default_voice.as_deref(),
+            Some("voice-1"),
+            "the saved default voice is read back"
         );
     }
 

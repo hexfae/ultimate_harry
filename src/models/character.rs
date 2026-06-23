@@ -150,6 +150,11 @@ pub struct Character {
     ///
     /// If set, this overrides the default model settings for requests.
     model_settings: Option<ModelSettings>,
+    /// The `ElevenLabs` voice ID linked to the character.
+    ///
+    /// When set, the text-to-speech button speaks this character's replies in this
+    /// voice; otherwise it falls back to the configured generic default voice.
+    voice: Option<String>,
     /// The similarity of the character to the input.
     ///
     /// This is `Some` when the user searches a character by name, e.g. `chat` or `delete`. and `None` in e.g. `view`.
@@ -457,6 +462,17 @@ impl Character {
         self.model_settings = Some(model_settings);
     }
 
+    /// Returns the character's linked `ElevenLabs` voice ID, if any.
+    #[must_use]
+    pub fn voice(&self) -> Option<&str> {
+        self.voice.as_deref()
+    }
+
+    /// Sets (or, with `None`, clears) the character's linked `ElevenLabs` voice ID.
+    pub fn set_voice(&mut self, voice: Option<String>) {
+        self.voice = voice;
+    }
+
     /// Marks the character as deleted by the given user, recording the time of deletion.
     pub fn mark_deleted(&mut self, deleted_by: UserId) {
         self.deleted_by = Some(deleted_by);
@@ -508,6 +524,7 @@ impl Character {
         self.color = old.color;
         self.example_messages.clone_from(&old.example_messages);
         self.model_settings.clone_from(&old.model_settings);
+        self.voice.clone_from(&old.voice);
     }
 
     /// Sets the ID of the next version of this character, hiding it from view.
@@ -791,6 +808,39 @@ mod tests {
         assert!(
             current.is_visible(),
             "the rolled-back version is visible"
+        );
+    }
+
+    /// Setting a voice is readable back, and a rollback carries the older
+    /// version's linked voice forward like the rest of its content.
+    #[test]
+    fn voice_is_set_and_carried_across_rollback() {
+        let mut character = basic_character("id", "Harry");
+        assert!(
+            character.voice().is_none(),
+            "a fresh character has no linked voice"
+        );
+        character.set_voice(Some("voice-abc".to_owned()));
+        assert_eq!(
+            character.voice(),
+            Some("voice-abc"),
+            "the linked voice is readable back"
+        );
+
+        let mut old = basic_character("v0", "Harry");
+        old.set_voice(Some("old-voice".to_owned()));
+        let mut head = Character::builder()
+            .id("v1".to_owned())
+            .name("Harry")
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .version(1_u32)
+            .build();
+        head.rollback_to(UserId::new(3), &old);
+        assert_eq!(
+            head.voice(),
+            Some("old-voice"),
+            "a rollback restores the older version's linked voice"
         );
     }
 

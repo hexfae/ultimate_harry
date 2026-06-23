@@ -16,6 +16,8 @@ pub const UNDO: &str = "↩️";
 pub const REDO: &str = "↪️";
 /// The emoji used for pinning a message to the pin channel.
 pub const PIN: &str = "📌";
+/// The emoji used for speaking a reply aloud via text-to-speech.
+pub const SPEAK: &str = "🔊";
 /// The emoji used for deleting a character.
 pub const DELETE: &str = "🗑";
 /// The emoji used for restoring a deleted character.

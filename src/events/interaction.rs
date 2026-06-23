@@ -5,6 +5,7 @@ mod edit;
 mod next;
 mod pin;
 mod swipe;
+mod tts;
 
 use crate::{
     AppResult,
@@ -26,6 +27,7 @@ use edit::edit;
 use next::next;
 use pin::pin;
 use swipe::swipe;
+use tts::tts;
 
 /// An interaction that happened on Ultimate Harry.
 #[derive(Debug)]
@@ -55,6 +57,8 @@ pub enum InteractionKind {
     Redo,
     /// Send this reply in the pin channel.
     Pin,
+    /// Speak this reply aloud as a TTS audio attachment.
+    Tts,
     /// Send a new reply to this reply as the given character.
     Character,
     /// Confirm performing the desired operation.
@@ -164,6 +168,7 @@ async fn dispatch(
             swipe(ctx, interaction, id, db, history, character, History::redo).await?;
         }
         InteractionKind::Pin => pin(ctx, interaction, db, history, character).await?,
+        InteractionKind::Tts => tts(ctx, interaction, db, history, character).await?,
         InteractionKind::Character => character_fn(ctx, interaction, db, history).await?,
         // these only ever fire on the ephemeral /gubbe visa paginator, collected
         // by that command's own collector, never on a chat message's history
@@ -178,13 +183,14 @@ async fn dispatch(
 
 impl InteractionKind {
     /// Every interaction kind, the basis for tag round-tripping and the round-trip test.
-    const ALL: [Self; 12] = [
+    const ALL: [Self; 13] = [
         Self::Previous,
         Self::Next,
         Self::Edit,
         Self::Undo,
         Self::Redo,
         Self::Pin,
+        Self::Tts,
         Self::Character,
         Self::Confirm,
         Self::Cancel,
@@ -203,6 +209,7 @@ impl InteractionKind {
             Self::Undo => "undo",
             Self::Redo => "redo",
             Self::Pin => "pinn",
+            Self::Tts => "tala",
             Self::Character => "char",
             Self::Confirm => "conf",
             Self::Cancel => "canc",

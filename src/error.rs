@@ -5,7 +5,10 @@ use miette::Diagnostic;
 use rig::agent::StreamingError;
 use snafu::{Location, Snafu};
 
-use crate::{database::DatabaseError, events::interaction::UnknownInteraction, llm::LlmError};
+use crate::{
+    database::DatabaseError, events::interaction::UnknownInteraction, llm::LlmError,
+    tts::TtsError,
+};
 
 /// The central error type for the entire bot.
 #[derive(Debug, Snafu)]
@@ -104,6 +107,12 @@ pub enum AppError {
         /// The source of the error.
         source: LlmError,
     },
+    /// Using the text-to-speech client failed.
+    #[snafu(transparent)]
+    Tts {
+        /// The source of the error.
+        source: TtsError,
+    },
     /// Streaming a reply failed.
     #[snafu(display("Strömning misslyckades"))]
     Streaming {
@@ -151,6 +160,7 @@ impl AppError {
         match self {
             Self::Database { source } => source.retryable(),
             Self::Llm { source } => source.retryable(),
+            Self::Tts { source } => source.retryable(),
             Self::SendMessage { .. }
             | Self::SendResponse { .. }
             | Self::EditResponse { .. }
@@ -176,6 +186,7 @@ impl Diagnostic for AppError {
                 return source.code();
             }
             Self::Llm { source, .. } => return source.code(),
+            Self::Tts { source, .. } => return source.code(),
             Self::SendMessage { location, .. } => ("send_message", location),
             Self::EditMessage { location, .. } => ("edit_message", location),
             Self::RetrieveMessage { location, .. } => ("retrieve_message", location),
@@ -217,6 +228,7 @@ impl Diagnostic for AppError {
             Self::Llm { .. } | Self::Streaming { .. } => {
                 Some(Box::new("Förmodligen OpenRouter's fel"))
             }
+            Self::Tts { source } => source.help(),
             Self::RegisterCommand { .. } => Some(Box::new("¯\\_(ツ)_/¯")),
         }
     }
