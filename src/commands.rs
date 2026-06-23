@@ -36,24 +36,28 @@ pub fn commands() -> Vec<poise::Command<AppState, AppError>> {
     ]
 }
 
+/// Builds an autocomplete response listing the given characters by name.
+// TODO: having written e.g. ":microphone:" displays that text, not the emoji
+fn choices_from<'a>(characters: Vec<Character>) -> CreateAutocompleteResponse<'a> {
+    let character_names = characters
+        .into_iter()
+        .map(|character| {
+            AutocompleteChoice::new(character.to_string(), character.name().to_owned())
+        })
+        .collect::<Vec<AutocompleteChoice<'_>>>();
+    CreateAutocompleteResponse::new().set_choices(character_names)
+}
+
 /// Returns an auto completion response from characters found in the database, sorted by similarity to the input.
 pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {
-    let characters: Vec<Character> = match ctx.data().db.characters_by_similarity(partial).await {
+    let characters = match ctx.data().db.characters_by_similarity(partial).await {
         Ok(characters) => characters,
         Err(why) => {
             warn!("failed to rank characters for autocomplete, returning none: {why}");
             Vec::new()
         }
     };
-
-    let character_names = characters
-        .into_iter()
-        // TODO: having written e.g. ":microphone:" displays that text, not the emoji
-        .map(|character| {
-            AutocompleteChoice::new(character.to_string(), character.name().to_owned())
-        })
-        .collect::<Vec<AutocompleteChoice<'_>>>();
-    CreateAutocompleteResponse::new().set_choices(character_names)
+    choices_from(characters)
 }
 
 /// Returns an auto completion response from soft-deleted characters, sorted by
@@ -63,20 +67,12 @@ pub async fn autocomplete_deleted<'a>(
     ctx: Context<'_>,
     partial: &str,
 ) -> CreateAutocompleteResponse<'a> {
-    let characters: Vec<Character> =
-        match ctx.data().db.deleted_characters_by_similarity(partial).await {
-            Ok(characters) => characters,
-            Err(why) => {
-                warn!("failed to rank deleted characters for autocomplete, returning none: {why}");
-                Vec::new()
-            }
-        };
-
-    let character_names = characters
-        .into_iter()
-        .map(|character| {
-            AutocompleteChoice::new(character.to_string(), character.name().to_owned())
-        })
-        .collect::<Vec<AutocompleteChoice<'_>>>();
-    CreateAutocompleteResponse::new().set_choices(character_names)
+    let characters = match ctx.data().db.deleted_characters_by_similarity(partial).await {
+        Ok(characters) => characters,
+        Err(why) => {
+            warn!("failed to rank deleted characters for autocomplete, returning none: {why}");
+            Vec::new()
+        }
+    };
+    choices_from(characters)
 }

@@ -86,25 +86,46 @@ impl ModelSettings {
     }
 
     /// Overrides any field for which a new value is supplied, leaving the rest untouched.
-    pub fn apply_overrides(
-        &mut self,
-        model: Option<String>,
-        api_key: Option<String>,
-        temperature: Option<f32>,
-        vision_model: Option<String>,
-    ) {
-        if let Some(new_model) = model {
+    pub fn apply_overrides(&mut self, overrides: ModelOverrides) {
+        if let Some(new_model) = overrides.model {
             self.model = new_model;
         }
-        if let Some(new_api_key) = api_key {
+        if let Some(new_api_key) = overrides.api_key {
             self.api_key = new_api_key;
         }
-        if let Some(new_temperature) = temperature {
+        if let Some(new_temperature) = overrides.temperature {
             self.temperature = new_temperature;
         }
-        if let Some(new_vision_model) = vision_model {
+        if let Some(new_vision_model) = overrides.vision_model {
             self.vision_model = Some(new_vision_model);
         }
+    }
+}
+
+/// The optional model-setting overrides supplied by the `/modell` commands.
+///
+/// Each present field replaces the corresponding setting; an all-`None` bundle
+/// means "show the current settings" rather than change them.
+#[derive(Debug, Default)]
+pub struct ModelOverrides {
+    /// The model to use, if overridden.
+    pub model: Option<String>,
+    /// The API key to use, if overridden.
+    pub api_key: Option<String>,
+    /// The sampling temperature, if overridden.
+    pub temperature: Option<f32>,
+    /// The vision model for image descriptions, if overridden.
+    pub vision_model: Option<String>,
+}
+
+impl ModelOverrides {
+    /// Returns `true` when no override was supplied.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.model.is_none()
+            && self.api_key.is_none()
+            && self.temperature.is_none()
+            && self.vision_model.is_none()
     }
 }
 

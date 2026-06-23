@@ -1,7 +1,7 @@
 //! The bot's Discord slash command for setting various AI model settings for a specific character.
 
 use crate::{
-    AppResult, Context, commands::autocomplete, error::SendMessageSnafu,
+    AppResult, Context, commands::autocomplete, error::SendMessageSnafu, llm::ModelOverrides,
     models::character::Character, phrases::no_character, traits::SayEphemeral as _,
 };
 use snafu::ResultExt as _;
@@ -36,8 +36,14 @@ pub async fn model(
         return Ok(());
     };
 
+    let overrides = ModelOverrides {
+        model,
+        api_key,
+        temperature,
+        vision_model,
+    };
     let mut model_settings = db.resolved_model_settings(character).await;
-    if model.is_none() && api_key.is_none() && temperature.is_none() && vision_model.is_none() {
+    if overrides.is_empty() {
         let scope = if character.has_model_settings() {
             "egna inställningar"
         } else {
@@ -48,7 +54,7 @@ pub async fn model(
             .context(SendMessageSnafu)?;
         return Ok(());
     }
-    model_settings.apply_overrides(model, api_key, temperature, vision_model);
+    model_settings.apply_overrides(overrides);
     db.set_character_model_settings(character.id(), model_settings)
         .await?;
     ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
