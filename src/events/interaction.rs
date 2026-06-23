@@ -66,6 +66,10 @@ pub enum InteractionKind {
 /// An unknown interaction happened.
 #[derive(Debug, Snafu, Diagnostic)]
 #[snafu(display("Okänd interaktion: {custom_id}"))]
+#[diagnostic(
+    help("Knappen kan vara för gammal, försök igen."),
+    code(events::interaction::unknown)
+)]
 #[expect(
     clippy::module_name_repetitions,
     reason = "this is the public error type for an unparseable interaction, so the module prefix disambiguates it at use sites"

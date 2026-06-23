@@ -137,6 +137,7 @@ async fn wait_for_shutdown() {
 /// Installing `aws-lc-rs` as the default `rustls` provider failed.
 #[derive(Debug, Snafu, Diagnostic)]
 #[snafu(display("Failed to install `aws-lc-rs` as the default Rustls provider"))]
+#[diagnostic(code(main::rustls))]
 struct RustlsError;
 
 /// All errors that can happen when reading the bot's Discord token.
@@ -144,14 +145,20 @@ struct RustlsError;
 enum TokenError {
     /// The path to the token file was invalid.
     #[snafu(display("Could not read the token file"))]
-    #[diagnostic(code(main::token_path))]
+    #[diagnostic(
+        help("Make sure the token file exists and is readable, or set TOKEN_FILE"),
+        code(main::token_path)
+    )]
     TokenPath {
         /// The source of the error.
         source: io::Error,
     },
     /// The token itself was invalid.
     #[snafu(display("Invalid Discord token: {source}"))]
-    #[diagnostic(code(main::invalid_token))]
+    #[diagnostic(
+        help("Check that the file contains a valid Discord bot token"),
+        code(main::invalid_token)
+    )]
     Invalid {
         /// The source of the error.
         source: SerenityTokenError,
@@ -162,11 +169,21 @@ enum TokenError {
 #[derive(Debug, Snafu, Diagnostic)]
 enum ClientError {
     /// Building the client failed.
+    #[snafu(display("Failed to build the Discord client: {source}"))]
+    #[diagnostic(
+        help("Check the Discord token and network connection"),
+        code(main::build_client)
+    )]
     Build {
         /// The source of the error.
         source: serenity::Error,
     },
     /// Starting the client failed.
+    #[snafu(display("Failed to start the Discord client: {source}"))]
+    #[diagnostic(
+        help("Check the network connection and that the token's intents are enabled"),
+        code(main::start_client)
+    )]
     Start {
         /// The source of the error.
         source: serenity::Error,

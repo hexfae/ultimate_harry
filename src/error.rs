@@ -74,7 +74,7 @@ pub enum AppError {
         #[snafu(implicit)]
         location: Location,
     },
-    /// Showing a modal failed.
+    /// A component interaction's `custom_id` could not be parsed.
     #[snafu(transparent)]
     UnknownInteraction {
         /// The source of the error.
