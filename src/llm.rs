@@ -132,6 +132,22 @@ impl ModelSettings {
     }
 }
 
+/// A character's per-character overrides for the global model settings.
+///
+/// Only the model and temperature can be overridden per character; the API key and the
+/// vision/audio fallback models always come from the global settings. Each present field
+/// replaces the corresponding global setting at request time (see
+/// [`Database::resolved_model_settings`](crate::database::Database::resolved_model_settings)).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CharacterModelSettings {
+    /// The model to use for this character, if overridden.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// The sampling temperature for this character, if overridden.
+    #[serde(default)]
+    pub temperature: Option<f32>,
+}
+
 /// The optional model-setting overrides supplied by the `/modell` commands.
 ///
 /// Each present field replaces the corresponding setting; an all-`None` bundle

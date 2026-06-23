@@ -16,7 +16,7 @@ use url::Url;
 
 use crate::{
     database::Database,
-    llm::ModelSettings,
+    llm::CharacterModelSettings,
     models::modals::{
         CreateCharacterModal, EditCharacterModal, SecondCreateCharacterModal,
         SecondEditCharacterModal,
@@ -148,8 +148,8 @@ pub struct Character {
     example_messages: Vec<(Option<String>, String)>,
     /// The model settings override for the character.
     ///
-    /// If set, this overrides the default model settings for requests.
-    model_settings: Option<ModelSettings>,
+    /// If set, its present fields override the global model settings for this character's requests.
+    model_settings: Option<CharacterModelSettings>,
     /// The `ElevenLabs` voice ID linked to the character.
     ///
     /// When set, the text-to-speech button speaks this character's replies in this
@@ -447,7 +447,7 @@ impl Character {
 
     /// Returns the character's model settings override, if any.
     #[must_use]
-    pub const fn model_settings(&self) -> Option<&ModelSettings> {
+    pub const fn model_settings(&self) -> Option<&CharacterModelSettings> {
         self.model_settings.as_ref()
     }
 
@@ -458,7 +458,7 @@ impl Character {
     }
 
     /// Sets the character's model settings override.
-    pub fn set_model_settings(&mut self, model_settings: ModelSettings) {
+    pub fn set_model_settings(&mut self, model_settings: CharacterModelSettings) {
         self.model_settings = Some(model_settings);
     }
 

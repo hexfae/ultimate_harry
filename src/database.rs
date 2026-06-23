@@ -15,7 +15,7 @@ use tokio::sync::Mutex;
 use tracing::{error, warn};
 
 use crate::constants::MAX_RESULTS;
-use crate::llm::ModelSettings;
+use crate::llm::{CharacterModelSettings, ModelSettings};
 use crate::tts::TtsSettings;
 use crate::models::{
     character::{Character, CharacterOption},
@@ -453,7 +453,7 @@ impl Database {
     pub async fn set_character_model_settings(
         &self,
         id: &str,
-        model_settings: ModelSettings,
+        model_settings: CharacterModelSettings,
     ) -> Result<Option<Character>, DatabaseError> {
         self.mutate_character(id, UpdateSnafu, |character| {
             character.set_model_settings(model_settings);
@@ -542,13 +542,19 @@ impl Database {
         .await
     }
 
-    /// Returns the character's own model settings, falling back to the
-    /// bot's global settings only when the character has no override.
+    /// Returns the global model settings with the character's per-character
+    /// overrides (model and temperature) applied on top, if it has any.
     pub async fn resolved_model_settings(&self, character: &Character) -> ModelSettings {
-        match character.model_settings() {
-            Some(settings) => settings.clone(),
-            None => self.model_settings().await,
+        let mut settings = self.model_settings().await;
+        if let Some(overrides) = character.model_settings() {
+            if let Some(model) = overrides.model.clone() {
+                settings.model = model;
+            }
+            if let Some(temperature) = overrides.temperature {
+                settings.temperature = temperature;
+            }
         }
+        settings
     }
 
     /// Returns the bot's text-to-speech settings.
@@ -759,7 +765,7 @@ pub enum StoreError {
 #[cfg(test)]
 mod tests {
     use super::Database;
-    use crate::llm::ModelSettings;
+    use crate::llm::CharacterModelSettings;
     use crate::models::character::Character;
     use serenity::all::UserId;
 
@@ -878,7 +884,7 @@ mod tests {
         insert(&db, character("char-id", "Harry")).await;
 
         let updated = db
-            .set_character_model_settings("char-id", ModelSettings::default())
+            .set_character_model_settings("char-id", CharacterModelSettings::default())
             .await;
         assert!(
             updated
@@ -888,7 +894,7 @@ mod tests {
         );
 
         let missing = db
-            .set_character_model_settings("missing", ModelSettings::default())
+            .set_character_model_settings("missing", CharacterModelSettings::default())
             .await;
         assert!(
             matches!(missing, Ok(None)),
