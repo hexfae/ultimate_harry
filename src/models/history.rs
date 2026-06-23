@@ -262,7 +262,9 @@ impl History {
         self.previous.push(value.into());
     }
 
-    /// Resets the choices, removing all but the first choice, and resets the current index to 0.
+    /// Removes all but the first choice and resets the current index to 0. The
+    /// surviving first choice is the previous turn's reply, so every caller must
+    /// replace it via `set_choices`/`update_current_choice` before persisting.
     pub fn reset_choices(&mut self) {
         self.choices.tail.clear();
         self.current = 0;
