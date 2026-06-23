@@ -8,12 +8,10 @@ use core::fmt::{Debug, Formatter, Result as FmtResult};
 use miette::{Diagnostic, SourceSpan};
 use nanorand::Rng as _;
 use native_db::{
-    Builder, Database as NativeDatabase, Models, ToInput, ToKey as _, db_type::Error as NativeError,
-    native_db, transaction::RTransaction,
+    Builder, Database as NativeDatabase, Models, ToInput, db_type::Error as NativeError,
+    transaction::RTransaction,
 };
-use native_model::{Model as _, native_model};
 use nonempty::NonEmpty;
-use serde::{Deserialize, Serialize};
 use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
 use snafu::{IntoError, OptionExt as _, ResultExt as _, Snafu};
 use std::collections::HashMap;
@@ -24,15 +22,13 @@ use crate::constants::MAX_RESULTS;
 use crate::llm::ModelSettings;
 use crate::models::{
     character::{Character, CharacterOption},
+    config::{GlobalModelSettings, PinChannel, SINGLETON_KEY, UserEmoji, UserName},
     history::{History, StoredHistory, scaffolding},
     message::{DescribedAttachment, Message},
 };
 
 /// The path of the embedded `native_db` database file.
 const DATABASE_PATH: &str = "harry_database.db";
-
-/// The fixed primary key used for singleton records (model settings, pin channel).
-const SINGLETON_KEY: &str = "global";
 
 /// Resolves a single message ID against an open read transaction, warning (and
 /// returning `None`) when the message is missing from the table.
@@ -432,10 +428,7 @@ impl Database {
         id: T,
         emoji: ReactionType,
     ) -> Result<(), DatabaseError> {
-        let user_emoji = UserEmoji {
-            emoji,
-            user_id: id.into().to_string(),
-        };
+        let user_emoji = UserEmoji::new(id.into().to_string(), emoji);
         self.upsert_one(user_emoji, InsertSnafu).await
     }
 
@@ -449,10 +442,7 @@ impl Database {
         &self,
         model_settings: ModelSettings,
     ) -> Result<(), DatabaseError> {
-        let stored = GlobalModelSettings {
-            id: SINGLETON_KEY.to_owned(),
-            settings: model_settings,
-        };
+        let stored = GlobalModelSettings::new(model_settings);
         self.upsert_one(stored, SetModelSettingsSnafu).await
     }
 
@@ -570,7 +560,7 @@ impl Database {
             SINGLETON_KEY.to_owned(),
             "model settings",
             ModelSettings::default,
-            |found| found.settings,
+            GlobalModelSettings::into_settings,
         )
     }
 
@@ -589,7 +579,7 @@ impl Database {
             SINGLETON_KEY.to_owned(),
             "pin channel",
             ChannelId::default,
-            |found| found.channel_id,
+            |found| found.channel_id(),
         )
     }
 
@@ -598,10 +588,7 @@ impl Database {
         &self,
         channel_id: ChannelId,
     ) -> Result<ChannelId, DatabaseError> {
-        let pin_channel = PinChannel {
-            id: SINGLETON_KEY.to_owned(),
-            channel_id,
-        };
+        let pin_channel = PinChannel::new(channel_id);
         self.upsert_one(pin_channel, SetPinsChannelSnafu).await?;
         Ok(channel_id)
     }
@@ -622,60 +609,9 @@ impl Database {
         user_id: T,
         name: String,
     ) -> Result<(), DatabaseError> {
-        let user_name = UserName {
-            user_id: user_id.into().to_string(),
-            name,
-        };
+        let user_name = UserName::new(user_id.into().to_string(), name);
         self.upsert_one(user_name, InsertSnafu).await
     }
-}
-
-/// The Discord channel where pins should go, stored as a singleton.
-#[derive(Debug, Default, Serialize, Deserialize)]
-#[native_model(id = 4, version = 1, with = crate::codec::Json)]
-#[native_db]
-pub struct PinChannel {
-    /// The fixed singleton primary key.
-    #[primary_key]
-    id: String,
-    /// The Discord channel's id.
-    channel_id: ChannelId,
-}
-
-/// The bot's AI model settings, stored as a singleton.
-#[derive(Debug, Serialize, Deserialize)]
-#[native_model(id = 5, version = 1, with = crate::codec::Json)]
-#[native_db]
-struct GlobalModelSettings {
-    /// The fixed singleton primary key.
-    #[primary_key]
-    id: String,
-    /// The model settings.
-    settings: ModelSettings,
-}
-
-/// A user's display name, keyed by their Discord user ID.
-#[derive(Debug, Serialize, Deserialize)]
-#[native_model(id = 6, version = 1, with = crate::codec::Json)]
-#[native_db]
-pub struct UserName {
-    /// The user's discord ID, used as the primary key.
-    #[primary_key]
-    pub user_id: String,
-    /// The user's set display name.
-    pub name: String,
-}
-
-/// A user's emoji, keyed by their Discord user ID.
-#[derive(Debug, Serialize, Deserialize)]
-#[native_model(id = 7, version = 1, with = crate::codec::Json)]
-#[native_db]
-pub struct UserEmoji {
-    /// The user's discord ID, used as the primary key.
-    #[primary_key]
-    pub user_id: String,
-    /// The user's set emoji.
-    pub emoji: ReactionType,
 }
 
 /// All errors that can happen when interacting with the database.
