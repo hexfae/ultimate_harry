@@ -48,7 +48,7 @@ impl History {
         options: &[CharacterOption],
     ) -> CreateInteractionResponse<'a> {
         CreateInteractionResponse::UpdateMessage(
-            self.to_placeholder(character, id, Duration::ZERO, options)
+            self.to_placeholder(character, id, Duration::ZERO, true, options)
                 .to_slash_initial_response(CreateInteractionResponseMessage::new()),
         )
     }
@@ -61,23 +61,24 @@ impl History {
         elapsed: Duration,
         options: &[CharacterOption],
     ) -> EditInteractionResponse<'a> {
-        self.to_placeholder(character, id, elapsed, options)
+        self.to_placeholder(character, id, elapsed, true, options)
             .to_slash_initial_response_edit(EditInteractionResponse::new())
     }
 
     /// Converts the history to a placeholder message.
     ///
-    /// The reply has no Discord ID yet (it is about to be sent), so its Stop
-    /// button is keyed on a placeholder ID; the first streaming tick re-renders
-    /// it via [`to_placeholder_message_edit`](Self::to_placeholder_message_edit)
-    /// with the real ID before the user can press it.
+    /// The reply has no Discord ID yet (it is about to be sent), so the Stop
+    /// button is rendered disabled (`stoppable = false`); the first streaming
+    /// tick re-renders it via
+    /// [`to_placeholder_message_edit`](Self::to_placeholder_message_edit) with
+    /// the real ID and enables it. The ID passed here is therefore unused.
     pub fn to_placeholder_message<'a>(
         &self,
         character: &'a Character,
         replying_to: &DiscordMessage,
         options: &[CharacterOption],
     ) -> CreateMessage<'a> {
-        self.to_placeholder(character, MessageId::new(1), Duration::ZERO, options)
+        self.to_placeholder(character, MessageId::new(1), Duration::ZERO, false, options)
             .to_prefix(replying_to.into())
             .reference_message(replying_to)
             .allowed_mentions(CreateAllowedMentions::new())
@@ -91,7 +92,7 @@ impl History {
         elapsed: Duration,
         options: &[CharacterOption],
     ) -> EditMessage<'a> {
-        self.to_placeholder(character, id, elapsed, options)
+        self.to_placeholder(character, id, elapsed, true, options)
             .to_prefix_edit(EditMessage::new())
             .allowed_mentions(CreateAllowedMentions::new())
     }
@@ -103,6 +104,7 @@ impl History {
         character: &'a Character,
         id: M,
         elapsed: Duration,
+        stoppable: bool,
         options: &[CharacterOption],
     ) -> CreateReply<'a> {
         let (has_previous, has_edit) = (false, false);
@@ -130,6 +132,7 @@ impl History {
             has_previous,
             has_edit,
             false,
+            stoppable,
             options,
         );
 
@@ -328,6 +331,7 @@ impl History {
             self.has_multiple_choices(),
             self.chosen_has_edit(),
             is_speakable(content),
+            !self.has_finished,
             options,
         );
 
@@ -416,6 +420,7 @@ fn create_buttons<'a>(
     previous: bool,
     edit: bool,
     speakable: bool,
+    stoppable: bool,
     options: &[CharacterOption],
 ) -> Cow<'a, [CreateContainerComponent<'a>]> {
     let prev_msg_id = InteractionKind::Previous.custom_id(id);
@@ -443,7 +448,7 @@ fn create_buttons<'a>(
                 emoji_button(edit_msg_id, EDIT).disabled(!finished),
                 emoji_button(pin_id, PIN).disabled(!finished),
                 emoji_button(tts_id, SPEAK).disabled(!finished || !speakable),
-                emoji_button(stop_id, STOP).disabled(finished),
+                emoji_button(stop_id, STOP).disabled(!stoppable),
             ]
             .into(),
         )),
