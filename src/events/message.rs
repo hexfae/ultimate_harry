@@ -8,16 +8,13 @@ use crate::{
     database::Database,
     error::SendMessageSnafu,
     events::lookup::history_and_character_of,
-    events::streaming::{MessageSink, ReplySink as _, stream_into},
-    llm::LlmManager,
+    events::streaming::{MessageSink, prepare_request, stream_and_finalize},
     models::{character::Character, history::History},
-    vision::resolve_attachments,
 };
 use poise::serenity_prelude::{Context, Message};
 use serenity::all::ReactionType;
 use snafu::ResultExt as _;
 use alloc::collections::BTreeMap;
-use std::time::Instant;
 use tracing::warn;
 
 /// Handle a new message being sent.
@@ -47,13 +44,9 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         .await
         .context(SendMessageSnafu)?;
 
-    let requester = LlmManager::new(db.resolved_model_settings(&character).await);
+    let (requester, context, mode) = prepare_request(db, &character, &mut history).await?;
 
-    let mut context = db.build_context(&history, &character).await?;
-    let mode = resolve_attachments(db, &requester, &mut history, &mut context).await;
-
-    let now = Instant::now();
-    let mut sink = MessageSink {
+    let sink = MessageSink {
         ctx,
         history: &mut history,
         character: &character,
@@ -61,8 +54,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         db,
         options: &options,
     };
-    let reply = stream_into(&requester, &context, None, mode, now, &mut sink).await?;
-    sink.finalize(reply, now.elapsed()).await?;
+    stream_and_finalize(&requester, &context, None, mode, sink).await?;
 
     Ok(())
 }

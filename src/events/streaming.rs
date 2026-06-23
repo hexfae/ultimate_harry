@@ -18,6 +18,7 @@ use crate::{
         history::History,
         message::{AttachmentMode, Message as ChatMessage},
     },
+    vision::resolve_attachments,
 };
 use core::time::Duration;
 use poise::serenity_prelude::{ComponentInteraction, Context, Message, MessageId};
@@ -235,6 +236,39 @@ impl ReplySink for InteractionSink<'_> {
             .context(EditResponseSnafu)?;
         Ok(())
     }
+}
+
+/// Prepares the LLM request for a reply: builds the requester from the
+/// character's resolved model settings, assembles the conversation context, and
+/// resolves how attachments are sent (describing and caching images when the
+/// model lacks vision). Borrows the history mutably only for the duration of
+/// attachment resolution, so the caller can hand it to a [`ReplySink`] after.
+pub async fn prepare_request(
+    db: &Database,
+    character: &Character,
+    history: &mut History,
+) -> AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)> {
+    let requester = LlmManager::new(db.resolved_model_settings(character).await);
+    let mut context = db.build_context(history, character).await?;
+    let mode = resolve_attachments(db, &requester, history, &mut context).await;
+    Ok((requester, context, mode))
+}
+
+/// Streams a reply into `sink`, then finalizes it (storing the chosen reply,
+/// persisting the history, and recording the character's generation stats).
+///
+/// The shared tail of every reply handler: pair it with [`prepare_request`] and
+/// a sink built in between.
+pub async fn stream_and_finalize<S: ReplySink>(
+    requester: &LlmManager,
+    context: &[ChatMessage],
+    prompt: Option<String>,
+    mode: AttachmentMode,
+    mut sink: S,
+) -> AppResult {
+    let now = Instant::now();
+    let reply = stream_into(requester, context, prompt, mode, now, &mut sink).await?;
+    sink.finalize(reply, now.elapsed()).await
 }
 
 /// Stream an LLM reply, ticking `sink` about once a second so the Discord

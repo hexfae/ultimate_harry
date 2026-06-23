@@ -4,15 +4,12 @@ use crate::{
     AppResult,
     database::Database,
     error::{SendMessageSnafu, SendResponseSnafu},
-    events::streaming::{MessageSink, ReplySink as _, stream_into},
-    llm::LlmManager,
+    events::streaming::{MessageSink, prepare_request, stream_and_finalize},
     models::{history::History, message::Message},
-    vision::resolve_attachments,
 };
 use poise::serenity_prelude::{ComponentInteraction, Context, CreateInteractionResponse};
 use serenity::all::ComponentInteractionDataKind;
 use snafu::ResultExt as _;
-use std::time::Instant;
 
 /// Respond to the history of this message as the given character.
 pub async fn character(
@@ -56,15 +53,10 @@ pub async fn character(
         .await
         .context(SendMessageSnafu)?;
 
-    let requester = LlmManager::new(db.resolved_model_settings(&new_character).await);
-
-    let mut context = db.build_context(&history, &new_character).await?;
-    let mode = resolve_attachments(db, &requester, &mut history, &mut context).await;
+    let (requester, context, mode) = prepare_request(db, &new_character, &mut history).await?;
     let prompt = format!("Fortsätt rollspelet som {new_character}.");
 
-    let now = Instant::now();
-
-    let mut sink = MessageSink {
+    let sink = MessageSink {
         ctx,
         history: &mut history,
         character: &new_character,
@@ -72,8 +64,7 @@ pub async fn character(
         db,
         options: &options,
     };
-    let reply = stream_into(&requester, &context, Some(prompt), mode, now, &mut sink).await?;
-    sink.finalize(reply, now.elapsed()).await?;
+    stream_and_finalize(&requester, &context, Some(prompt), mode, sink).await?;
 
     db.record_character_spawn(new_character.id(), interaction.user.id)
         .await?;

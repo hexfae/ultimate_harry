@@ -5,15 +5,12 @@ use crate::{
     AppResult,
     database::Database,
     error::SendResponseSnafu,
-    events::streaming::{InteractionSink, ReplySink as _, stream_into},
-    llm::LlmManager,
+    events::streaming::{InteractionSink, prepare_request, stream_and_finalize},
     models::{character::Character, history::History},
-    vision::resolve_attachments,
 };
 use core::time::Duration;
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
 use snafu::ResultExt as _;
-use std::time::Instant;
 
 /// Show the next reply to this message or generate a new one.
 pub async fn next(
@@ -35,13 +32,9 @@ pub async fn next(
             .await
             .context(SendResponseSnafu)?;
 
-        let requester = LlmManager::new(db.resolved_model_settings(&character).await);
+        let (requester, context, mode) = prepare_request(db, &character, &mut history).await?;
 
-        let mut context = db.build_context(&history, &character).await?;
-        let mode = resolve_attachments(db, &requester, &mut history, &mut context).await;
-
-        let now = Instant::now();
-        let mut sink = InteractionSink {
+        let sink = InteractionSink {
             ctx,
             history: &mut history,
             character: &character,
@@ -50,8 +43,7 @@ pub async fn next(
             db,
             options: &options,
         };
-        let reply = stream_into(&requester, &context, None, mode, now, &mut sink).await?;
-        sink.finalize(reply, now.elapsed()).await?;
+        stream_and_finalize(&requester, &context, None, mode, sink).await?;
     } else {
         swipe(ctx, interaction, id, db, history, character, History::next).await?;
     }
