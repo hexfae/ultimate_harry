@@ -25,7 +25,7 @@ const MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 const CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
 /// The instruction given to the vision model when describing an image.
-const DESCRIBE_PROMPT: &str = "Beskriv bilden så detaljerat som möjligt på svenska.";
+const DESCRIBE_PROMPT: &str = "Describe the image in as much detail as possible. Write the description in Swedish.";
 
 /// The instruction given to the audio model when transcribing a voice message.
 const TRANSCRIBE_PROMPT: &str = "Transcribe the spoken audio verbatim, keeping the transcription in the original spoken language (do not translate it). Briefly describe any non-speech sounds in square brackets. Reply with only the transcription, no explanation.";
