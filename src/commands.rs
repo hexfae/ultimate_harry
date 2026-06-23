@@ -17,10 +17,18 @@ pub use pin_channel::pin_channel;
 pub use stats::stats;
 
 use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse};
+use snafu::ResultExt as _;
+use tokio::time::sleep;
 use tracing::warn;
 
 use crate::{
-    Context, app_state::AppState, error::AppError, models::character::Character,
+    AppResult, Context,
+    app_state::AppState,
+    constants::TRANSIENT_LINGER,
+    error::{AppError, DeleteMessageSnafu, SendMessageSnafu},
+    models::character::Character,
+    phrases::no_character,
+    traits::SayEphemeral as _,
     util::render_diagnostic,
 };
 
@@ -37,6 +45,19 @@ pub fn commands() -> Vec<poise::Command<AppState, AppError>> {
         name(),
         stats(),
     ]
+}
+
+/// Sends the shared "no character found" notice ephemerally, then deletes it
+/// after a short linger, so every command that finds no character responds the
+/// same transient way.
+pub async fn notify_no_character(ctx: Context<'_>) -> AppResult {
+    let message = ctx
+        .say_ephemeral(no_character())
+        .await
+        .context(SendMessageSnafu)?;
+    sleep(TRANSIENT_LINGER).await;
+    message.delete(ctx).await.context(DeleteMessageSnafu)?;
+    Ok(())
 }
 
 /// Builds an autocomplete response listing the given characters by name.

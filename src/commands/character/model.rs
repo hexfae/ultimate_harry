@@ -1,8 +1,12 @@
 //! The bot's Discord slash command for setting various AI model settings for a specific character.
 
 use crate::{
-    AppResult, Context, commands::autocomplete, error::SendMessageSnafu, llm::ModelOverrides,
-    models::character::Character, phrases::no_character, traits::SayEphemeral as _,
+    AppResult, Context,
+    commands::{autocomplete, notify_no_character},
+    error::SendMessageSnafu,
+    llm::ModelOverrides,
+    models::character::Character,
+    traits::SayEphemeral as _,
 };
 use snafu::ResultExt as _;
 
@@ -30,9 +34,7 @@ pub async fn model(
     let db = &ctx.data().db;
     let characters: Vec<Character> = db.characters_by_similarity(name).await?;
     let Some(character) = characters.first() else {
-        ctx.say_ephemeral(no_character())
-            .await
-            .context(SendMessageSnafu)?;
+        notify_no_character(ctx).await?;
         return Ok(());
     };
 

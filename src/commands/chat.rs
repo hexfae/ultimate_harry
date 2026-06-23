@@ -2,11 +2,9 @@
 
 use crate::{
     AppResult, Context,
-    commands::autocomplete,
+    commands::{autocomplete, notify_no_character},
     error::{EditMessageSnafu, RetrieveMessageSnafu, SendMessageSnafu},
     models::{character::Character, history::History},
-    phrases::no_character,
-    traits::SayEphemeral as _,
 };
 use poise::serenity_prelude::MessageId;
 use snafu::ResultExt as _;
@@ -30,9 +28,7 @@ pub async fn chat(
     };
 
     let Some(character) = characters.first() else {
-        ctx.say_ephemeral(no_character())
-            .await
-            .context(SendMessageSnafu)?;
+        notify_no_character(ctx).await?;
         return Ok(());
     };
 

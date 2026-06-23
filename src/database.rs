@@ -576,9 +576,9 @@ impl Database {
 #[derive(Debug, Snafu, Diagnostic)]
 pub enum DatabaseError {
     /// Creating the database directory failed.
-    #[snafu(display("Could not open the database directory"))]
+    #[snafu(display("Kunde inte öppna databasmappen"))]
     #[diagnostic(
-        help("Make sure the database directory is accessible and writable"),
+        help("Kontrollera att databasmappen går att läsa och skriva till"),
         code(database::connect)
     )]
     Connect {

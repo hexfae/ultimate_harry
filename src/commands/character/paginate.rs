@@ -9,15 +9,16 @@
 use crate::{
     AppResult, Context,
     commands::character::render::character_embed,
+    commands::notify_no_character,
     components::{confirm_interaction_response, emoji_button},
     constants::{
         CANCEL, NEWER_VERSION, NEXT, OLDER_VERSION, PREVIOUS, ROLLBACK, TRANSIENT_LINGER,
     },
-    error::{DeleteMessageSnafu, DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
+    error::{DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
     events::interaction::{Interaction, InteractionKind},
     models::character::Character,
-    phrases::{cancelled, no_character, rolled_back},
-    traits::{RespondToWith as _, SayEphemeral as _},
+    phrases::{cancelled, rolled_back},
+    traits::RespondToWith as _,
     util::wrapping_previous,
 };
 use alloc::borrow::Cow;
@@ -134,17 +135,6 @@ async fn build_pages(
         notify_no_character(ctx).await?;
         Ok(None)
     }
-}
-
-/// Sends the "no character" notice, then deletes it 5 seconds later.
-async fn notify_no_character(ctx: Context<'_>) -> AppResult {
-    let msg = ctx
-        .say_ephemeral(no_character())
-        .await
-        .context(SendMessageSnafu)?;
-    sleep(TRANSIENT_LINGER).await;
-    msg.delete(ctx).await.context(DeleteMessageSnafu)?;
-    Ok(())
 }
 
 /// Sends the paginator embed and loops on button presses until the user
