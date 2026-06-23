@@ -294,7 +294,7 @@ impl Message {
         let chosen = self.chosen_revision();
         let last_user = chosen.0.iter().rposition(|part| matches!(part.role, Role::User));
 
-        chosen
+        let mut messages: Vec<RigMessage> = chosen
             .0
             .iter()
             .enumerate()
@@ -314,39 +314,57 @@ impl Message {
                     } else {
                         Vec::new()
                     };
-
-                    // Fold text renders (descriptions and placeholders) into the message's single
-                    // text content; only images/audio become separate content parts. A text-only
-                    // model rejects a multi-part content array, so a described image must arrive as
-                    // a plain string, exactly like a normal text message.
-                    let mut text = part.content.clone();
-                    let mut media = Vec::new();
-                    for render in renders {
-                        match render {
-                            AttachmentRender::Image(url) => {
-                                media.push(UserContent::image_url(&url, None, None));
-                            }
-                            AttachmentRender::Audio(url) => {
-                                media.push(UserContent::audio_url(&url, None));
-                            }
-                            AttachmentRender::Text(description) => {
-                                if !text.is_empty() {
-                                    text.push('\n');
-                                }
-                                text.push_str(&description);
-                            }
-                        }
-                    }
-
-                    let mut content = OneOrMany::one(UserContent::text(&text));
-                    for item in media {
-                        content.push(item);
-                    }
-
-                    RigMessage::User { content }
+                    Self::user_message_with_renders(&part.content, renders)
                 }
             })
-            .collect()
+            .collect();
+
+        // Attachments live only on user-authored messages, but a user can prefix every line with
+        // `ai:`/`system:`, leaving no user part to carry them. Append the renders as a trailing
+        // user message so the image (or its description) still reaches the model instead of
+        // vanishing silently.
+        if last_user.is_none() {
+            let renders = self.render_attachments(mode);
+            if !renders.is_empty() {
+                messages.push(Self::user_message_with_renders("", renders));
+            }
+        }
+
+        messages
+    }
+
+    /// Builds a user message from `base_text` plus rendered attachments.
+    ///
+    /// Folds text renders (descriptions and placeholders) into the message's single text content;
+    /// only images/audio become separate content parts. A text-only model rejects a multi-part
+    /// content array, so a described image must arrive as a plain string, exactly like a normal
+    /// text message.
+    fn user_message_with_renders(base_text: &str, renders: Vec<AttachmentRender>) -> RigMessage {
+        let mut text = base_text.to_owned();
+        let mut media = Vec::new();
+        for render in renders {
+            match render {
+                AttachmentRender::Image(url) => {
+                    media.push(UserContent::image_url(&url, None, None));
+                }
+                AttachmentRender::Audio(url) => {
+                    media.push(UserContent::audio_url(&url, None));
+                }
+                AttachmentRender::Text(description) => {
+                    if !text.is_empty() {
+                        text.push('\n');
+                    }
+                    text.push_str(&description);
+                }
+            }
+        }
+
+        let mut content = OneOrMany::one(UserContent::text(&text));
+        for item in media {
+            content.push(item);
+        }
+
+        RigMessage::User { content }
     }
 
     /// Renders this message's attachments under `mode`: voice notes stay audio, while images are
@@ -876,6 +894,38 @@ mod tests {
             content.iter().count(),
             2,
             "image mode sends the text plus the image as two content parts"
+        );
+    }
+
+    /// An attachment survives even when every line is role-prefixed, so the message has no user
+    /// part to carry it: it is appended as a trailing user message instead of vanishing.
+    #[test]
+    fn attachments_without_a_user_part_become_a_trailing_user_message() {
+        let message = Message::builder()
+            .parts((
+                "system".to_owned(),
+                "system: do this".to_owned(),
+                Role::System,
+            ))
+            .attachments(vec!["https://cdn/img.png".to_owned()])
+            .build();
+        let messages = message.to_rig_messages(AttachmentMode::Image);
+        assert!(
+            matches!(messages.first(), Some(RigMessage::System { .. })),
+            "the prefixed line stays a system message"
+        );
+        let last = messages.last();
+        assert!(
+            matches!(last, Some(RigMessage::User { .. })),
+            "the attachment is carried by a trailing user message"
+        );
+        let Some(RigMessage::User { content }) = last else {
+            return;
+        };
+        assert_eq!(
+            content.iter().count(),
+            2,
+            "the trailing user message holds the empty text plus the image"
         );
     }
 
