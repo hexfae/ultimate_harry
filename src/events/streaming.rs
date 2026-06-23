@@ -353,16 +353,24 @@ pub async fn stream_into<S: ReplySink>(
                 _ = interval.tick() => {
                     if total.is_empty() {
                         if start.elapsed() >= RESPONSE_TIMEOUT {
-                            warn!("no first token within the response timeout, giving up");
+                            error!("no first token within the response timeout, giving up");
                             total += TIMEOUT_MESSAGE;
                             complete = false;
                             break 'attempts;
                         }
+                        // a render tick failing is best-effort: the next tick (or
+                        // finalize) re-renders, so warn and keep streaming.
                         if let Err(why) = sink.placeholder(start.elapsed()).await {
-                            warn!("failed to render placeholder, continuing: {why}");
+                            warn!(
+                                "failed to render placeholder, continuing:\n{}",
+                                render_diagnostic(why)
+                            );
                         }
                     } else if let Err(why) = sink.progress(total.clone(), start.elapsed()).await {
-                        warn!("failed to render progress, continuing: {why}");
+                        warn!(
+                            "failed to render progress, continuing:\n{}",
+                            render_diagnostic(why)
+                        );
                     }
                 }
             }
@@ -374,7 +382,7 @@ pub async fn stream_into<S: ReplySink>(
             break 'attempts;
         }
         if attempt >= MAX_ATTEMPTS {
-            warn!("llm returned empty completions after {attempt} attempts, giving up");
+            error!("llm returned empty completions after {attempt} attempts, giving up");
             total += GAVE_UP_MESSAGE;
             complete = false;
             break 'attempts;
