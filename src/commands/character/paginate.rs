@@ -483,7 +483,7 @@ pub async fn respond_then_clear<T: AsRef<str>>(
 ) -> AppResult {
     ctx.respond_to_with(&interaction, text)
         .await
-        .context(SendMessageSnafu)?;
+        .context(SendResponseSnafu)?;
     sleep(TRANSIENT_LINGER).await;
     interaction
         .delete_response(ctx.http())
