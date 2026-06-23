@@ -142,7 +142,7 @@ impl LlmManager {
     /// providing a more interactive experience.
     ///
     /// `context` is the already-assembled message list (scaffolding followed by the conversation),
-    /// built by [`Database::build_context`](crate::database::Database::build_context).
+    /// built by [`History::build_context`](crate::models::history::History::build_context).
     pub async fn request_stream(
         &self,
         context: &[ChatMessage],

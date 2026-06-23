@@ -126,7 +126,7 @@ impl AppError {
     /// help hint when present, and a uniform retry line when the failure is
     /// [`retryable`](Self::retryable), each on its own small line.
     ///
-    /// Unlike [`render_diagnostic`](crate::util::render_diagnostic) (which is for
+    /// Unlike [`report_error`](crate::util::report_error) (which is for
     /// logs), this carries no diagnostic code, source location, or source chain,
     /// so it can be shown to a user as a clean error notice.
     #[must_use]
