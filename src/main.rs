@@ -8,6 +8,7 @@ mod components;
 mod constants;
 mod database;
 mod error;
+mod error_display;
 mod events;
 mod llm;
 mod models;

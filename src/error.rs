@@ -121,6 +121,23 @@ pub enum AppError {
     },
 }
 
+impl AppError {
+    /// The Swedish, user-facing rendering of this error: its display message and,
+    /// when present, its help hint on a small second line.
+    ///
+    /// Unlike [`render_diagnostic`](crate::util::render_diagnostic) (which is for
+    /// logs), this carries no diagnostic code, source location, or source chain,
+    /// so it can be shown to a user as a clean error notice.
+    #[must_use]
+    pub fn user_message(&self) -> String {
+        let display = self.to_string();
+        match Diagnostic::help(self) {
+            Some(help) => format!("{display}\n-# {help}"),
+            None => display,
+        }
+    }
+}
+
 impl Diagnostic for AppError {
     fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
         let (variant_name, loc) = match self {

@@ -7,13 +7,19 @@ mod pin;
 mod swipe;
 
 use crate::{
-    AppResult, database::Database, events::lookup::history_and_character_of,
+    AppResult,
+    database::Database,
+    error::{AppError, SendResponseSnafu},
+    error_display::{error_followup, error_response},
+    events::lookup::history_and_character_of,
     models::history::History,
+    util::render_diagnostic,
 };
 use core::fmt::{self, Display, Formatter};
 use miette::{Diagnostic, Result, SourceSpan};
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
-use snafu::Snafu;
+use snafu::{ResultExt as _, Snafu};
+use tracing::warn;
 
 use character::character as character_fn;
 use edit::edit;
@@ -83,8 +89,48 @@ pub struct UnknownInteraction {
     span: SourceSpan,
 }
 
-/// Handle the interaction based on which button was pressed.
+/// Handle the interaction based on which button was pressed, surfacing any
+/// failure to the user as an ephemeral error notice before returning it to be
+/// logged, so a button press never silently does nothing.
 pub async fn component(
+    ctx: &Context,
+    interaction: &ComponentInteraction,
+    db: &Database,
+) -> AppResult {
+    let result = dispatch(ctx, interaction, db).await;
+    if let Err(ref why) = result {
+        report_failure(ctx, interaction, why).await;
+    }
+    result
+}
+
+/// Surfaces a failed interaction to the user as an ephemeral error notice,
+/// trying a followup first (for an already-acknowledged interaction) and falling
+/// back to an initial response. Logs if neither can be sent.
+async fn report_failure(ctx: &Context, interaction: &ComponentInteraction, why: &AppError) {
+    let message = why.user_message();
+    if interaction
+        .create_followup(&ctx.http, error_followup(message.clone()))
+        .await
+        .is_ok()
+    {
+        return;
+    }
+    if let Err(report_why) = interaction
+        .create_response(&ctx.http, error_response(message))
+        .await
+        .context(SendResponseSnafu)
+    {
+        warn!(
+            custom_id = %interaction.data.custom_id,
+            "failed to show the error notice:\n{}",
+            render_diagnostic(report_why)
+        );
+    }
+}
+
+/// Parses the pressed component and dispatches to the matching button handler.
+async fn dispatch(
     ctx: &Context,
     interaction: &ComponentInteraction,
     db: &Database,

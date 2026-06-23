@@ -41,3 +41,7 @@ pub const MAX_RESULTS: usize = 25;
 
 /// How long a transient confirmation or notice message lingers before it is deleted.
 pub const TRANSIENT_LINGER: Duration = Duration::from_secs(5);
+
+/// The accent colour of a user-facing error container (Discord's danger red), so
+/// a failure reads as an error rather than as the character speaking.
+pub const ERROR_COLOUR: u32 = 0x00ED_4245;

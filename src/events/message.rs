@@ -6,10 +6,15 @@
 use crate::{
     AppResult,
     database::Database,
-    error::SendMessageSnafu,
+    error::{AppError, EditMessageSnafu, SendMessageSnafu},
+    error_display::error_message_edit,
     events::lookup::history_and_character_of,
     events::streaming::{MessageSink, prepare_request, stream_and_finalize},
-    models::{character::Character, history::History},
+    models::{
+        character::{Character, CharacterOption},
+        history::History,
+    },
+    util::render_diagnostic,
 };
 use poise::serenity_prelude::{Context, Message};
 use serenity::all::ReactionType;
@@ -44,19 +49,49 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
         .await
         .context(SendMessageSnafu)?;
 
-    let (requester, context, mode) = prepare_request(db, &character, &mut history).await?;
-
-    let sink = MessageSink {
-        ctx,
-        history: &mut history,
-        character: &character,
-        message: &mut bot_message,
-        db,
-        options: &options,
-    };
-    stream_and_finalize(&requester, &context, None, mode, sink).await?;
+    // the placeholder is now live, so a later failure must replace it with an
+    // error notice rather than leaving the user staring at a frozen placeholder.
+    if let Err(why) = reply_into(ctx, db, &character, &mut history, &mut bot_message, &options).await
+    {
+        report_reply_failure(ctx, &mut bot_message, &why).await;
+        return Err(why);
+    }
 
     Ok(())
+}
+
+/// Streams the character's reply into the already-posted placeholder message.
+async fn reply_into(
+    ctx: &Context,
+    db: &Database,
+    character: &Character,
+    history: &mut History,
+    bot_message: &mut Message,
+    options: &[CharacterOption],
+) -> AppResult {
+    let (requester, context, mode) = prepare_request(db, character, history).await?;
+    let sink = MessageSink {
+        ctx,
+        history,
+        character,
+        message: bot_message,
+        db,
+        options,
+    };
+    stream_and_finalize(&requester, &context, None, mode, sink).await
+}
+
+/// Replaces the in-flight placeholder with the error notice when a reply fails
+/// after the placeholder was posted, logging if even the notice cannot be shown.
+async fn report_reply_failure(ctx: &Context, bot_message: &mut Message, why: &AppError) {
+    let edit = error_message_edit(why.user_message());
+    if let Err(report_why) = bot_message.edit(ctx, edit).await.context(EditMessageSnafu) {
+        warn!(
+            message_id = %bot_message.id,
+            "failed to show the error notice:\n{}",
+            render_diagnostic(report_why)
+        );
+    }
 }
 
 /// Checks the mentions/replied to message of the new message, and reacts with the corresponding user emoji.
