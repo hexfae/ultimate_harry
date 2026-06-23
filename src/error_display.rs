@@ -6,6 +6,7 @@
 //! to the surface that failed: a message edit for an in-flight chat reply, or an
 //! ephemeral interaction response/followup for a button press.
 
+use poise::CreateReply;
 use serenity::all::{
     CreateComponent, CreateContainer, CreateContainerComponent, CreateInteractionResponse,
     CreateInteractionResponseFollowup, CreateInteractionResponseMessage, CreateTextDisplay,
@@ -47,6 +48,15 @@ pub fn error_response(message: String) -> CreateInteractionResponse<'static> {
 /// failure that happens after the interaction has already been acknowledged.
 pub fn error_followup(message: String) -> CreateInteractionResponseFollowup<'static> {
     CreateInteractionResponseFollowup::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .ephemeral(true)
+        .components(error_components(message))
+}
+
+/// Builds an ephemeral poise reply showing the error container, for a slash
+/// command that failed.
+pub fn error_reply(message: String) -> CreateReply<'static> {
+    CreateReply::default()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .ephemeral(true)
         .components(error_components(message))

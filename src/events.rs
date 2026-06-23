@@ -7,16 +7,15 @@ pub mod ready;
 pub mod streaming;
 
 use crate::{
-    app_state::AppState, error::AppError, traits::SayEphemeral as _, util::render_diagnostic,
+    app_state::AppState, error::AppError, error_display::error_reply, util::render_diagnostic,
 };
 use alloc::sync::Arc;
-use miette::{IntoDiagnostic as _, Report, Result};
+use miette::{IntoDiagnostic as _, Result};
 use poise::{FrameworkError, builtins};
 use serenity::{
     all::{Context, EventHandler as EventHandlerTrait, FullEvent, Interaction},
     async_trait,
 };
-use strip_ansi_escapes::strip_str;
 use tracing::error;
 
 /// The bot's event handler.
@@ -77,23 +76,67 @@ impl EventHandlerTrait for EventHandler {
 }
 
 /// The bot's error handler.
-#[expect(
-    clippy::print_stderr,
-    reason = "color printing is broken when logging with tracing"
-)]
+///
+/// Logs the full diagnostic for developers but shows the user only a clean
+/// Swedish error notice (the same red error container as the chat surface),
+/// never the raw diagnostic dump, and keeps the user-reachable framework errors
+/// in Swedish rather than poise's English built-in messages.
 pub async fn on_error(framework_error: FrameworkError<'_, AppState, AppError>) -> Result<()> {
     match framework_error {
         FrameworkError::Command { error, ctx, .. } => {
-            let report = format!("{:?}", Report::from(error));
+            let notice = error.user_message();
             error!(
                 command = %ctx.command().qualified_name,
                 user_id = %ctx.author().id,
-                "in command"
+                "in command:\n{}",
+                render_diagnostic(error)
             );
-            eprintln!("{report}");
-            ctx.say_ephemeral(format!("```\n{}```", strip_str(report)))
-                .await
-                .into_diagnostic()?;
+            send_error(ctx, notice).await?;
+        }
+        other => report_framework_error(other).await?,
+    }
+    Ok(())
+}
+
+/// Shows the user the red error container ephemerally for a failed command.
+async fn send_error(ctx: crate::Context<'_>, message: String) -> Result<()> {
+    ctx.send(error_reply(message)).await.into_diagnostic()?;
+    Ok(())
+}
+
+/// Handles the non-command framework errors, surfacing the user-reachable ones
+/// (a missing subcommand, an unparseable argument, a command panic) as Swedish
+/// notices and leaving the rest to poise's built-in handler.
+#[expect(
+    clippy::cognitive_complexity,
+    reason = "a flat dispatch over framework-error variants whose tracing macros the lint overcounts"
+)]
+async fn report_framework_error(
+    framework_error: FrameworkError<'_, AppState, AppError>,
+) -> Result<()> {
+    match framework_error {
+        FrameworkError::SubcommandRequired { ctx } => {
+            send_error(ctx, "Du måste välja ett underkommando.".to_owned()).await?;
+        }
+        FrameworkError::ArgumentParse {
+            error, input, ctx, ..
+        } => {
+            error!(
+                command = %ctx.command().qualified_name,
+                "could not parse an argument: {error} (input: {input:?})"
+            );
+            send_error(
+                ctx,
+                "Ogiltigt argument, kontrollera värdet och försök igen.".to_owned(),
+            )
+            .await?;
+        }
+        FrameworkError::CommandPanic { payload, ctx, .. } => {
+            error!(
+                command = %ctx.command().qualified_name,
+                "command panicked: {payload:?}"
+            );
+            send_error(ctx, "Ett internt fel inträffade.".to_owned()).await?;
         }
         other => {
             if let Err(why) = builtins::on_error(other).await {
