@@ -4,11 +4,13 @@ mod character;
 mod edit;
 mod next;
 mod pin;
+mod stop;
 mod swipe;
 mod tts;
 
 use crate::{
     AppResult,
+    cancellation::Cancellations,
     database::Database,
     error::{AppError, SendResponseSnafu},
     error_display::{error_followup, error_response},
@@ -26,6 +28,7 @@ use character::character as character_fn;
 use edit::edit;
 use next::next;
 use pin::pin;
+use stop::stop;
 use swipe::swipe;
 use tts::tts;
 
@@ -59,6 +62,8 @@ pub enum InteractionKind {
     Pin,
     /// Speak this reply aloud as a TTS audio attachment.
     Tts,
+    /// Stop this reply mid-stream, keeping whatever has streamed so far.
+    Stop,
     /// Send a new reply to this reply as the given character.
     Character,
     /// Confirm performing the desired operation.
@@ -100,8 +105,9 @@ pub async fn component(
     ctx: &Context,
     interaction: &ComponentInteraction,
     db: &Database,
+    cancellations: &Cancellations,
 ) -> AppResult {
-    let result = dispatch(ctx, interaction, db).await;
+    let result = dispatch(ctx, interaction, db, cancellations).await;
     if let Err(ref why) = result {
         report_failure(ctx, interaction, why).await;
     }
@@ -142,6 +148,7 @@ async fn dispatch(
     ctx: &Context,
     interaction: &ComponentInteraction,
     db: &Database,
+    cancellations: &Cancellations,
 ) -> AppResult {
     let ultimate_interaction = TryInto::<Interaction>::try_into(interaction)?;
 
@@ -149,6 +156,12 @@ async fn dispatch(
 
     if matches!(kind, InteractionKind::Confirm | InteractionKind::Cancel) {
         return Ok(());
+    }
+
+    // stopping needs no history load: it just cancels the in-flight stream, which
+    // re-renders the frozen reply itself.
+    if kind == InteractionKind::Stop {
+        return stop(ctx, interaction, id, cancellations).await;
     }
 
     let Some((history, character)) = history_and_character_of(id, db).await? else {
@@ -159,7 +172,9 @@ async fn dispatch(
         InteractionKind::Previous => {
             swipe(ctx, interaction, id, db, history, character, History::previous).await?;
         }
-        InteractionKind::Next => next(ctx, interaction, id, db, history, character).await?,
+        InteractionKind::Next => {
+            next(ctx, interaction, id, db, history, character, cancellations).await?;
+        }
         InteractionKind::Edit => edit(ctx, interaction, id, db, history, character).await?,
         InteractionKind::Undo => {
             swipe(ctx, interaction, id, db, history, character, History::undo).await?;
@@ -169,10 +184,14 @@ async fn dispatch(
         }
         InteractionKind::Pin => pin(ctx, interaction, db, history, character).await?,
         InteractionKind::Tts => tts(ctx, interaction, db, history, character).await?,
-        InteractionKind::Character => character_fn(ctx, interaction, db, history).await?,
-        // these only ever fire on the ephemeral /gubbe visa paginator, collected
-        // by that command's own collector, never on a chat message's history
-        InteractionKind::Confirm
+        InteractionKind::Character => {
+            character_fn(ctx, interaction, db, history, cancellations).await?;
+        }
+        // stop is handled above, before the history load; the rest only ever fire
+        // on the ephemeral /gubbe visa paginator, collected by that command's own
+        // collector, never on a chat message's history
+        InteractionKind::Stop
+        | InteractionKind::Confirm
         | InteractionKind::Cancel
         | InteractionKind::OlderVersion
         | InteractionKind::NewerVersion
@@ -183,7 +202,7 @@ async fn dispatch(
 
 impl InteractionKind {
     /// Every interaction kind, the basis for tag round-tripping and the round-trip test.
-    const ALL: [Self; 13] = [
+    const ALL: [Self; 14] = [
         Self::Previous,
         Self::Next,
         Self::Edit,
@@ -191,6 +210,7 @@ impl InteractionKind {
         Self::Redo,
         Self::Pin,
         Self::Tts,
+        Self::Stop,
         Self::Character,
         Self::Confirm,
         Self::Cancel,
@@ -210,6 +230,7 @@ impl InteractionKind {
             Self::Redo => "redo",
             Self::Pin => "pinn",
             Self::Tts => "tala",
+            Self::Stop => "stop",
             Self::Character => "char",
             Self::Confirm => "conf",
             Self::Cancel => "canc",

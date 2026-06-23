@@ -5,6 +5,7 @@
 
 use crate::{
     AppResult,
+    cancellation::Cancellations,
     database::Database,
     error::{AppError, EditMessageSnafu, SendMessageSnafu},
     error_display::error_message_edit,
@@ -23,7 +24,12 @@ use alloc::collections::BTreeMap;
 use tracing::warn;
 
 /// Handle a new message being sent.
-pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> AppResult {
+pub async fn message(
+    ctx: &Context,
+    user_message: &Message,
+    db: &Database,
+    cancellations: &Cancellations,
+) -> AppResult {
     react_to_mentions_and_replies(ctx, user_message, db).await;
     if user_message.author.bot() {
         return Ok(());
@@ -51,7 +57,8 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
 
     // the placeholder is now live, so a later failure must replace it with an
     // error notice rather than leaving the user staring at a frozen placeholder.
-    if let Err(why) = reply_into(ctx, db, &character, &mut history, &mut bot_message, &options).await
+    if let Err(why) =
+        reply_into(ctx, db, cancellations, &character, &mut history, &mut bot_message, &options).await
     {
         report_reply_failure(ctx, &mut bot_message, &why).await;
         return Err(why);
@@ -64,6 +71,7 @@ pub async fn message(ctx: &Context, user_message: &Message, db: &Database) -> Ap
 async fn reply_into(
     ctx: &Context,
     db: &Database,
+    cancellations: &Cancellations,
     character: &Character,
     history: &mut History,
     bot_message: &mut Message,
@@ -77,7 +85,7 @@ async fn reply_into(
         db,
         options,
     };
-    stream_and_finalize(None, sink).await
+    stream_and_finalize(None, cancellations, sink).await
 }
 
 /// Replaces the in-flight placeholder with the error notice when a reply fails

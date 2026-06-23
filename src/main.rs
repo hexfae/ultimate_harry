@@ -3,6 +3,7 @@
 extern crate alloc;
 
 mod app_state;
+mod cancellation;
 mod commands;
 mod components;
 mod constants;

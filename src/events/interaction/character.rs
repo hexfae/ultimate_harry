@@ -2,6 +2,7 @@
 
 use crate::{
     AppResult,
+    cancellation::Cancellations,
     database::Database,
     error::{SendMessageSnafu, SendResponseSnafu},
     events::streaming::{MessageSink, stream_and_finalize},
@@ -17,6 +18,7 @@ pub async fn character(
     interaction: &ComponentInteraction,
     db: &Database,
     mut history: History,
+    cancellations: &Cancellations,
 ) -> AppResult {
     let ComponentInteractionDataKind::StringSelect { ref values } = interaction.data.kind else {
         return Ok(());
@@ -63,7 +65,7 @@ pub async fn character(
         db,
         options: &options,
     };
-    stream_and_finalize(Some(prompt), sink).await?;
+    stream_and_finalize(Some(prompt), cancellations, sink).await?;
 
     db.record_character_spawn(new_character.id(), interaction.user.id)
         .await?;

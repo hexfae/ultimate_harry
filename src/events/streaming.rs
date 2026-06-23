@@ -9,6 +9,7 @@
 
 use crate::{
     AppResult,
+    cancellation::Cancellations,
     constants::CHARACTER_LIMIT,
     database::Database,
     error::{EditMessageSnafu, EditResponseSnafu, StreamingSnafu},
@@ -28,6 +29,7 @@ use serenity::futures::StreamExt as _;
 use snafu::ResultExt as _;
 use std::time::Instant;
 use tokio::time::{MissedTickBehavior, interval};
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
 /// How many times to re-request the LLM when it returns an empty completion.
@@ -102,6 +104,10 @@ async fn persist_reply(
 /// is still empty and [`progress`](ReplySink::progress) once tokens arrive. The
 /// futures are `Send` so the loop stays usable from the event handler.
 pub trait ReplySink {
+    /// The Discord message ID of the reply being streamed, used to key its stop
+    /// token in the cancellation registry.
+    fn message_id(&self) -> MessageId;
+
     /// Prepare the LLM request (requester, conversation context, attachment mode)
     /// for this reply, from the sink's own character and history.
     fn prepare(
@@ -137,6 +143,10 @@ pub struct MessageSink<'a> {
 }
 
 impl ReplySink for MessageSink<'_> {
+    fn message_id(&self) -> MessageId {
+        self.message.id
+    }
+
     async fn prepare(&mut self) -> AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)> {
         prepare_request(self.db, self.character, self.history).await
     }
@@ -207,6 +217,10 @@ pub struct InteractionSink<'a> {
 }
 
 impl ReplySink for InteractionSink<'_> {
+    fn message_id(&self) -> MessageId {
+        self.id
+    }
+
     async fn prepare(&mut self) -> AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)> {
         prepare_request(self.db, self.character, self.history).await
     }
@@ -281,7 +295,17 @@ pub async fn prepare_request(
 /// failure to prepare the request is treated like any other reply-ending failure
 /// (a timeout or a stream error): it renders as the red error choice, with the
 /// buttons kept live so the user can swipe/next to retry, rather than aborting.
-pub async fn stream_and_finalize<S: ReplySink>(prompt: Option<String>, mut sink: S) -> AppResult {
+///
+/// The reply's stop token is registered in `cancellations` for the duration of
+/// the stream (and removed when the returned guard drops), so the Stop button
+/// can end the stream from another task.
+pub async fn stream_and_finalize<S: ReplySink>(
+    prompt: Option<String>,
+    cancellations: &Cancellations,
+    mut sink: S,
+) -> AppResult {
+    let guard = cancellations.begin(sink.message_id());
+    let token = guard.token();
     let (requester, context, mode) = match sink.prepare().await {
         Ok(prepared) => prepared,
         Err(why) => {
@@ -291,7 +315,7 @@ pub async fn stream_and_finalize<S: ReplySink>(prompt: Option<String>, mut sink:
         }
     };
     let now = Instant::now();
-    let reply = stream_into(&requester, &context, prompt, mode, now, &mut sink).await?;
+    let reply = stream_into(&requester, &context, prompt, mode, now, &token, &mut sink).await?;
     sink.finalize(reply, now.elapsed()).await
 }
 
@@ -312,6 +336,9 @@ async fn finalize_failed<S: ReplySink>(sink: S) -> AppResult {
 /// While the reply is empty the sink renders a placeholder; once tokens arrive
 /// it renders the growing reply. Empty completions are re-requested up to
 /// [`MAX_ATTEMPTS`] times; `start` measures the silence window across attempts.
+///
+/// Cancelling `token` (via the Stop button) ends the stream immediately, keeping
+/// whatever has streamed so far as a genuine reply.
 #[expect(
     clippy::cognitive_complexity,
     reason = "the select loop, retry/timeout/limit handling and their logging are one cohesive flow that the module deliberately keeps together"
@@ -322,6 +349,7 @@ pub async fn stream_into<S: ReplySink>(
     prompt: Option<String>,
     mode: AttachmentMode,
     start: Instant,
+    token: &CancellationToken,
     sink: &mut S,
 ) -> AppResult<Reply> {
     let mut total = String::new();
@@ -345,6 +373,10 @@ pub async fn stream_into<S: ReplySink>(
 
         loop {
             tokio::select! {
+                () = token.cancelled() => {
+                    debug!("user stopped the stream, keeping the partial reply");
+                    break 'attempts;
+                }
                 result = stream.next() => {
                     let item = match result.transpose().context(StreamingSnafu) {
                         Ok(item) => item,

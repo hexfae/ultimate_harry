@@ -3,6 +3,7 @@
 use super::swipe::swipe;
 use crate::{
     AppResult,
+    cancellation::Cancellations,
     database::Database,
     error::SendResponseSnafu,
     events::streaming::{InteractionSink, stream_and_finalize},
@@ -20,6 +21,7 @@ pub async fn next(
     db: &Database,
     mut history: History,
     character: Character,
+    cancellations: &Cancellations,
 ) -> AppResult {
     if history.is_on_last_choice() {
         let options = db.character_menu_options().await?;
@@ -41,7 +43,7 @@ pub async fn next(
             db,
             options: &options,
         };
-        stream_and_finalize(None, sink).await?;
+        stream_and_finalize(None, cancellations, sink).await?;
     } else {
         swipe(ctx, interaction, id, db, history, character, History::next).await?;
     }

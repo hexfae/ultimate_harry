@@ -40,7 +40,10 @@ impl EventHandlerTrait for EventHandler {
                 let user_message = new_message.clone();
                 data.tasks.clone().spawn(async move {
                     let state: Arc<AppState> = reply_ctx.data();
-                    if let Err(why) = message::message(&reply_ctx, &user_message, &state.db).await {
+                    if let Err(why) =
+                        message::message(&reply_ctx, &user_message, &state.db, &state.cancellations)
+                            .await
+                    {
                         error!(
                             message_id = %user_message.id,
                             channel_id = %user_message.channel_id,
@@ -59,7 +62,14 @@ impl EventHandlerTrait for EventHandler {
                 let pressed = component.clone();
                 data.tasks.clone().spawn(async move {
                     let state: Arc<AppState> = reply_ctx.data();
-                    if let Err(why) = interaction::component(&reply_ctx, &pressed, &state.db).await {
+                    if let Err(why) = interaction::component(
+                        &reply_ctx,
+                        &pressed,
+                        &state.db,
+                        &state.cancellations,
+                    )
+                    .await
+                    {
                         error!(
                             custom_id = %pressed.data.custom_id,
                             message_id = %pressed.message.id,

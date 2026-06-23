@@ -19,7 +19,8 @@ use serenity::all::{
 use crate::{
     components::emoji_button,
     constants::{
-        CHARACTER_LIMIT, EDIT, ERROR_COLOUR, ERROR_HEADING, NEXT, PIN, PREVIOUS, REDO, SPEAK, UNDO,
+        CHARACTER_LIMIT, EDIT, ERROR_COLOUR, ERROR_HEADING, NEXT, PIN, PREVIOUS, REDO, SPEAK, STOP,
+        UNDO,
     },
     database::Database,
     events::interaction::InteractionKind,
@@ -268,6 +269,21 @@ impl History {
         format!("-# {pages}{similarity}{elapsed}{len}{edit_pages}")
     }
 
+    /// The body text shown for the chosen reply: its own content, or a
+    /// placeholder when the content is empty. An empty choice with no prior
+    /// turns is the seeded skip-greeting option (shown with a hint); once a turn
+    /// is under way an empty choice is a reply stopped before its first token
+    /// (shown as the "…" placeholder).
+    fn body_text<'a>(&self, content: &'a str) -> &'a str {
+        if !content.is_empty() {
+            content
+        } else if self.previous_messages().is_empty() {
+            "(ingen hälsning, ditt meddelande blir det första)"
+        } else {
+            "…"
+        }
+    }
+
     /// Converts the history to a full response with buttons and choices.
     pub async fn to_response<'a, M: Into<MessageId>>(
         &'a self,
@@ -320,13 +336,9 @@ impl History {
                 .components(container);
         }
 
-        // discord rejects a whitespace-only text display; an empty finished choice is the
-        // "skip the greeting" swipe option, so show a hint explaining what selecting it does
-        let text = if content.is_empty() {
-            "(ingen hälsning, ditt meddelande blir det första)"
-        } else {
-            content
-        };
+        // discord rejects a whitespace-only text display, so an empty choice
+        // renders a placeholder: the skip-greeting hint or the stalled "…"
+        let text = self.body_text(content);
         let (first, second) = match text.split_once('\n') {
             Some((first, second)) => (first, Some(second)),
             None => (text, None),
@@ -397,6 +409,7 @@ fn create_buttons<'a>(
     let redo_id = InteractionKind::Redo.custom_id(id);
     let pin_id = InteractionKind::Pin.custom_id(id);
     let tts_id = InteractionKind::Tts.custom_id(id);
+    let stop_id = InteractionKind::Stop.custom_id(id);
     let char_id = InteractionKind::Character.custom_id(id);
 
     let mut components = vec![
@@ -414,6 +427,7 @@ fn create_buttons<'a>(
                 emoji_button(edit_msg_id, EDIT).disabled(!finished),
                 emoji_button(pin_id, PIN).disabled(!finished),
                 emoji_button(tts_id, SPEAK).disabled(!finished || !speakable),
+                emoji_button(stop_id, STOP).disabled(finished),
             ]
             .into(),
         )),
@@ -533,6 +547,57 @@ mod tests {
             history.footer_text(&character, 1, None),
             "-# 2/2 | tog 1.0s | 1/3900",
             "the page counter shows the second of two choices"
+        );
+    }
+
+    /// A reply with content renders that content as its body.
+    #[test]
+    fn body_text_uses_the_content_when_present() {
+        let character = character();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(&character, "hello", 1.0)))
+            .build();
+        assert_eq!(
+            history.body_text("hello"),
+            "hello",
+            "present content is shown as-is"
+        );
+    }
+
+    /// An empty choice with no prior turns is the seeded skip-greeting option,
+    /// shown with the hint explaining what selecting it does.
+    #[test]
+    fn body_text_shows_skip_greeting_hint_without_prior_turns() {
+        let character = character();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(&character, "", 0.0)))
+            .build();
+        assert_eq!(
+            history.body_text(""),
+            "(ingen hälsning, ditt meddelande blir det första)",
+            "an empty greeting choice explains the skip-greeting option"
+        );
+    }
+
+    /// An empty choice mid-conversation is a reply stopped before its first
+    /// token, shown as the "…" placeholder rather than the skip-greeting hint.
+    #[test]
+    fn body_text_shows_ellipsis_for_a_stopped_reply() {
+        let character = character();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(&character, "", 0.0)))
+            .previous(vec![Message::new_user("Bob", "hej")])
+            .build();
+        assert_eq!(
+            history.body_text(""),
+            "…",
+            "a reply stopped before its first token shows the placeholder glyph"
         );
     }
 }

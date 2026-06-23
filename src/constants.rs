@@ -18,6 +18,8 @@ pub const REDO: &str = "↪️";
 pub const PIN: &str = "📌";
 /// The emoji used for speaking a reply aloud via text-to-speech.
 pub const SPEAK: &str = "🔊";
+/// The emoji used for stopping an in-flight reply mid-stream.
+pub const STOP: &str = "⛔";
 /// The emoji used for deleting a character.
 pub const DELETE: &str = "🗑";
 /// The emoji used for restoring a deleted character.
