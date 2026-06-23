@@ -122,18 +122,46 @@ pub enum AppError {
 }
 
 impl AppError {
-    /// The Swedish, user-facing rendering of this error: its display message and,
-    /// when present, its help hint on a small second line.
+    /// The Swedish, user-facing rendering of this error: its display message, its
+    /// help hint when present, and a uniform retry line when the failure is
+    /// [`retryable`](Self::retryable), each on its own small line.
     ///
     /// Unlike [`render_diagnostic`](crate::util::render_diagnostic) (which is for
     /// logs), this carries no diagnostic code, source location, or source chain,
     /// so it can be shown to a user as a clean error notice.
     #[must_use]
     pub fn user_message(&self) -> String {
-        let display = self.to_string();
-        match Diagnostic::help(self) {
-            Some(help) => format!("{display}\n-# {help}"),
-            None => display,
+        let help = Diagnostic::help(self)
+            .map(|help| format!("\n-# {help}"))
+            .unwrap_or_default();
+        let retry = if self.retryable() {
+            "\n-# Du kan försöka igen."
+        } else {
+            ""
+        };
+        format!("{self}{help}{retry}")
+    }
+
+    /// Whether retrying the same action might succeed (a transient Discord, network,
+    /// or storage failure) rather than being a permanent condition (a stale button,
+    /// a missing record, or a misconfiguration). Drives the retry hint in
+    /// [`user_message`](Self::user_message).
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        match self {
+            Self::Database { source } => source.retryable(),
+            Self::Llm { source } => source.retryable(),
+            Self::SendMessage { .. }
+            | Self::SendResponse { .. }
+            | Self::EditResponse { .. }
+            | Self::EditMessage { .. }
+            | Self::RetrieveMessage { .. }
+            | Self::ShowModal { .. }
+            | Self::Streaming { .. } => true,
+            Self::UnknownInteraction { .. }
+            | Self::DeleteMessage { .. }
+            | Self::DeleteResponse { .. }
+            | Self::RegisterCommand { .. } => false,
         }
     }
 }
@@ -187,9 +215,49 @@ impl Diagnostic for AppError {
                 "Interaktionen kan ha gått ut eller redan vara borta",
             )),
             Self::Llm { .. } | Self::Streaming { .. } => {
-                Some(Box::new("Förmodligen OpenRouter's fel, försök igen"))
+                Some(Box::new("Förmodligen OpenRouter's fel"))
             }
             Self::RegisterCommand { .. } => Some(Box::new("¯\\_(ツ)_/¯")),
         }
+    }
+}
+
+/// Tests for the user-facing error rendering and the retryable classification.
+#[cfg(test)]
+mod tests {
+    use super::AppError;
+    use crate::llm::LlmError;
+
+    /// A permanent failure (no vision model configured) is not retryable and its
+    /// user message shows the display and help but no retry hint.
+    #[test]
+    fn permanent_error_has_no_retry_hint() {
+        let error = AppError::Llm {
+            source: LlmError::NoVisionModel,
+        };
+        assert!(!error.retryable(), "a missing vision model is permanent");
+        let message = error.user_message();
+        assert!(
+            message.contains("Ingen synmodell"),
+            "the display message is shown"
+        );
+        assert!(
+            !message.contains("Du kan försöka igen"),
+            "a permanent error offers no retry hint"
+        );
+    }
+
+    /// A transient failure (an empty vision description) is retryable and its user
+    /// message ends with the uniform retry hint.
+    #[test]
+    fn transient_error_has_retry_hint() {
+        let error = AppError::Llm {
+            source: LlmError::EmptyDescription,
+        };
+        assert!(error.retryable(), "an empty description may differ on retry");
+        assert!(
+            error.user_message().contains("Du kan försöka igen"),
+            "a transient error offers a retry hint"
+        );
     }
 }

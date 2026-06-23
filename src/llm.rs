@@ -367,11 +367,21 @@ pub enum LlmError {
     NoVisionModel,
     /// The vision model returned an empty description.
     #[snafu(display("Synmodellen gav ingen beskrivning"))]
-    #[diagnostic(
-        help("Försök igen eller byt synmodell."),
-        code(llm::empty_description)
-    )]
+    #[diagnostic(help("Prova en annan synmodell."), code(llm::empty_description))]
     EmptyDescription,
+}
+
+impl LlmError {
+    /// Whether retrying might succeed (a transient network or empty-response
+    /// failure) rather than a permanent misconfiguration (a bad client or no
+    /// vision model configured).
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::ListModels { .. } | Self::DescribeImage { .. } | Self::EmptyDescription { .. }
+        )
+    }
 }
 
 /// Tests for the `OpenRouter` response parsing helpers.

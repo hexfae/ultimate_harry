@@ -588,7 +588,7 @@ pub enum DatabaseError {
     /// Getting a record failed.
     #[snafu(display("Kunde inte hämta från databasen: {source}"))]
     #[diagnostic(
-        help("Försök igen eller kontrollera att posten finns"),
+        help("Kontrollera att posten finns"),
         code(database::get)
     )]
     Get {
@@ -598,7 +598,7 @@ pub enum DatabaseError {
     /// Inserting a record failed.
     #[snafu(display("Kunde inte infoga i databasen: {source}"))]
     #[diagnostic(
-        help("Försök igen eller kontrollera att datat är korrekt"),
+        help("Kontrollera att datat är korrekt"),
         code(database::insert)
     )]
     Insert {
@@ -608,7 +608,7 @@ pub enum DatabaseError {
     /// Deleting a record failed.
     #[snafu(display("Kunde inte ta bort från databasen: {source}"))]
     #[diagnostic(
-        help("Försök igen eller kontrollera att posten finns"),
+        help("Kontrollera att posten finns"),
         code(database::delete)
     )]
     Delete {
@@ -618,7 +618,7 @@ pub enum DatabaseError {
     /// Updating a record failed.
     #[snafu(display("Kunde inte uppdatera databasen: {source}"))]
     #[diagnostic(
-        help("Försök igen eller kontrollera att posten finns"),
+        help("Kontrollera att posten finns"),
         code(database::update)
     )]
     Update {
@@ -642,7 +642,7 @@ pub enum DatabaseError {
     /// Setting the bot's AI model settings failed.
     #[snafu(display("Kunde inte spara modellinställningar: {source}"))]
     #[diagnostic(
-        help("Försök igen eller kontrollera att inställningarna är giltiga"),
+        help("Kontrollera att inställningarna är giltiga"),
         code(database::set_model_settings)
     )]
     SetModelSettings {
@@ -652,13 +652,30 @@ pub enum DatabaseError {
     /// Setting the bot's pin Discord channel failed.
     #[snafu(display("Kunde inte spara kanal för pins: {source}"))]
     #[diagnostic(
-        help("Försök igen eller kontrollera att kanalen är giltig"),
+        help("Kontrollera att kanalen är giltig"),
         code(database::set_pins_channel)
     )]
     SetPinsChannel {
         /// The source of the error.
         source: StoreError,
     },
+}
+
+impl DatabaseError {
+    /// Whether retrying might succeed (a transient storage failure) rather than a
+    /// permanent condition (an inaccessible directory or a record that is absent).
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Get { .. }
+                | Self::Insert { .. }
+                | Self::Delete { .. }
+                | Self::Update { .. }
+                | Self::SetModelSettings { .. }
+                | Self::SetPinsChannel { .. }
+        )
+    }
 }
 
 /// A low-level storage failure underlying a [`DatabaseError`]: a filesystem error or a JSON
