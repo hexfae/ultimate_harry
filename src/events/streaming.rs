@@ -379,6 +379,10 @@ pub async fn stream_into<S: ReplySink>(
 
         loop {
             tokio::select! {
+                // biased so a stop press always wins the race against an
+                // arriving token batch or a render tick, rather than being
+                // out-voted by tokio's random branch selection
+                biased;
                 () = token.cancelled() => {
                     debug!("user stopped the stream, keeping the partial reply");
                     break 'attempts;
