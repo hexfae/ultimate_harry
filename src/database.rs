@@ -97,22 +97,44 @@ impl Database {
         Ok(Self(db))
     }
 
-    /// Returns every character currently stored, regardless of visibility.
-    async fn all_characters(&self) -> Result<Vec<Character>, DatabaseError> {
+    /// Upserts a single record in its own write transaction, selecting the error
+    /// variant via `context` so each caller keeps its own error message.
+    async fn upsert_one<R, C>(&self, record: R, context: C) -> Result<(), DatabaseError>
+    where
+        R: ToInput,
+        C: IntoError<DatabaseError, Source = NativeError> + Copy,
+    {
+        let write = self.0.rw_transaction().context(context)?;
+        write.upsert(record).context(context)?;
+        write.commit().context(context)
+    }
+
+    /// Scans and collects every record of a table in its own read transaction.
+    async fn scan_all<R: ToInput>(&self) -> Result<Vec<R>, DatabaseError> {
         let read = self.0.r_transaction().context(GetSnafu)?;
         read.scan()
-            .primary::<Character>()
+            .primary::<R>()
             .context(GetSnafu)?
             .all()
             .context(GetSnafu)?
-            .collect::<Result<Vec<Character>, NativeError>>()
+            .collect::<Result<Vec<R>, NativeError>>()
             .context(GetSnafu)
+    }
+
+    /// Fetches a single record by primary key in its own read transaction.
+    async fn get_one<R: ToInput>(&self, key: String) -> Result<Option<R>, DatabaseError> {
+        let read = self.0.r_transaction().context(GetSnafu)?;
+        read.get().primary::<R>(key).context(GetSnafu)
+    }
+
+    /// Returns every character currently stored, regardless of visibility.
+    async fn all_characters(&self) -> Result<Vec<Character>, DatabaseError> {
+        self.scan_all().await
     }
 
     /// Returns a single character by its ID.
     pub async fn character(&self, id: &str) -> Result<Option<Character>, DatabaseError> {
-        let read = self.0.r_transaction().context(GetSnafu)?;
-        read.get().primary(id.to_owned()).context(GetSnafu)
+        self.get_one(id.to_owned()).await
     }
 
     /// Returns up to 25 characters, sorted by the most similar ones to the given name.
@@ -185,9 +207,7 @@ impl Database {
 
     /// Inserts a character.
     pub async fn insert_character(&self, character: Character) -> Result<(), DatabaseError> {
-        let write = self.0.rw_transaction().context(InsertSnafu)?;
-        write.upsert(character).context(InsertSnafu)?;
-        write.commit().context(InsertSnafu)
+        self.upsert_one(character, InsertSnafu).await
     }
 
     /// Loads the character `id`, applies `apply`, and upserts it in a single
@@ -319,12 +339,7 @@ impl Database {
         &self,
         id: T,
     ) -> Result<Option<History>, DatabaseError> {
-        let maybe_stored = {
-            let read = self.0.r_transaction().context(GetSnafu)?;
-            read.get()
-                .primary::<StoredHistory>(id.into().to_string())
-                .context(GetSnafu)?
-        };
+        let maybe_stored = self.get_one::<StoredHistory>(id.into().to_string()).await?;
         let Some(stored) = maybe_stored else {
             return Ok(None);
         };
@@ -401,12 +416,7 @@ impl Database {
         message_id: &str,
         descriptions: &[DescribedAttachment],
     ) -> Result<(), DatabaseError> {
-        let stored = {
-            let read = self.0.r_transaction().context(GetSnafu)?;
-            read.get()
-                .primary::<Message>(message_id.to_owned())
-                .context(GetSnafu)?
-        };
+        let stored = self.get_one::<Message>(message_id.to_owned()).await?;
         let Some(mut message) = stored else {
             return Ok(());
         };
@@ -426,21 +436,12 @@ impl Database {
             emoji,
             user_id: id.into().to_string(),
         };
-        let write = self.0.rw_transaction().context(InsertSnafu)?;
-        write.upsert(user_emoji).context(InsertSnafu)?;
-        write.commit().context(InsertSnafu)
+        self.upsert_one(user_emoji, InsertSnafu).await
     }
 
     /// Returns all set user emoji.
     pub async fn user_emoji(&self) -> Result<Vec<UserEmoji>, DatabaseError> {
-        let read = self.0.r_transaction().context(GetSnafu)?;
-        read.scan()
-            .primary::<UserEmoji>()
-            .context(GetSnafu)?
-            .all()
-            .context(GetSnafu)?
-            .collect::<Result<Vec<UserEmoji>, NativeError>>()
-            .context(GetSnafu)
+        self.scan_all().await
     }
 
     /// Updates or inserts the bot's AI model settings.
@@ -452,9 +453,7 @@ impl Database {
             id: SINGLETON_KEY.to_owned(),
             settings: model_settings,
         };
-        let write = self.0.rw_transaction().context(SetModelSettingsSnafu)?;
-        write.upsert(stored).context(SetModelSettingsSnafu)?;
-        write.commit().context(SetModelSettingsSnafu)
+        self.upsert_one(stored, SetModelSettingsSnafu).await
     }
 
     /// Sets a character's AI model settings override.
@@ -603,9 +602,7 @@ impl Database {
             id: SINGLETON_KEY.to_owned(),
             channel_id,
         };
-        let write = self.0.rw_transaction().context(SetPinsChannelSnafu)?;
-        write.upsert(pin_channel).context(SetPinsChannelSnafu)?;
-        write.commit().context(SetPinsChannelSnafu)?;
+        self.upsert_one(pin_channel, SetPinsChannelSnafu).await?;
         Ok(channel_id)
     }
 
@@ -629,9 +626,7 @@ impl Database {
             user_id: user_id.into().to_string(),
             name,
         };
-        let write = self.0.rw_transaction().context(InsertSnafu)?;
-        write.upsert(user_name).context(InsertSnafu)?;
-        write.commit().context(InsertSnafu)
+        self.upsert_one(user_name, InsertSnafu).await
     }
 }
 
