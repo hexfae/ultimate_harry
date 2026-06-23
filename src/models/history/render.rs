@@ -41,57 +41,67 @@ const EMPTY_AVATAR: &str = "https://upload.wikimedia.org/wikipedia/commons/c/ca/
 )]
 impl History {
     /// Converts the history to a placeholder interaction response.
-    pub fn to_placeholder_interaction<'a>(
+    pub fn to_placeholder_interaction<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
+        id: M,
         options: &[CharacterOption],
     ) -> CreateInteractionResponse<'a> {
         CreateInteractionResponse::UpdateMessage(
-            self.to_placeholder(character, Duration::ZERO, options)
+            self.to_placeholder(character, id, Duration::ZERO, options)
                 .to_slash_initial_response(CreateInteractionResponseMessage::new()),
         )
     }
 
     /// Converts the history to a placeholder interaction response edit.
-    pub fn to_placeholder_interaction_edit<'a>(
+    pub fn to_placeholder_interaction_edit<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
+        id: M,
         elapsed: Duration,
         options: &[CharacterOption],
     ) -> EditInteractionResponse<'a> {
-        self.to_placeholder(character, elapsed, options)
+        self.to_placeholder(character, id, elapsed, options)
             .to_slash_initial_response_edit(EditInteractionResponse::new())
     }
 
     /// Converts the history to a placeholder message.
+    ///
+    /// The reply has no Discord ID yet (it is about to be sent), so its Stop
+    /// button is keyed on a placeholder ID; the first streaming tick re-renders
+    /// it via [`to_placeholder_message_edit`](Self::to_placeholder_message_edit)
+    /// with the real ID before the user can press it.
     pub fn to_placeholder_message<'a>(
         &self,
         character: &'a Character,
         replying_to: &DiscordMessage,
         options: &[CharacterOption],
     ) -> CreateMessage<'a> {
-        self.to_placeholder(character, Duration::ZERO, options)
+        self.to_placeholder(character, MessageId::new(1), Duration::ZERO, options)
             .to_prefix(replying_to.into())
             .reference_message(replying_to)
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
     /// Converts the history to a placeholder message edit.
-    pub fn to_placeholder_message_edit<'a>(
+    pub fn to_placeholder_message_edit<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
+        id: M,
         elapsed: Duration,
         options: &[CharacterOption],
     ) -> EditMessage<'a> {
-        self.to_placeholder(character, elapsed, options)
+        self.to_placeholder(character, id, elapsed, options)
             .to_prefix_edit(EditMessage::new())
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
-    /// Converts the history to a placeholder.
-    fn to_placeholder<'a>(
+    /// Converts the history to a placeholder, keying its buttons (the live Stop
+    /// button in particular) on the reply's message `id`.
+    fn to_placeholder<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
+        id: M,
         elapsed: Duration,
         options: &[CharacterOption],
     ) -> CreateReply<'a> {
@@ -114,8 +124,14 @@ impl History {
 
         // nothing has streamed in yet, so there is nothing to speak; the speak
         // button is disabled anyway while unfinished
-        let components =
-            create_buttons(1, self.has_finished, has_previous, has_edit, false, options);
+        let components = create_buttons(
+            id.into().into(),
+            self.has_finished,
+            has_previous,
+            has_edit,
+            false,
+            options,
+        );
 
         let container = vec![CreateComponent::Container(CreateContainer::new(
             [title, components, footer].concat(),
