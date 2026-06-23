@@ -9,12 +9,9 @@ use miette::{Diagnostic, SourceSpan};
 use nanorand::Rng as _;
 use native_db::{
     Builder, Database as NativeDatabase, Models, ToInput, db_type::Error as NativeError,
-    transaction::RTransaction,
 };
-use nonempty::NonEmpty;
 use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
 use snafu::{IntoError, OptionExt as _, ResultExt as _, Snafu};
-use std::collections::HashMap;
 use std::sync::OnceLock;
 use tracing::{error, warn};
 
@@ -23,28 +20,11 @@ use crate::llm::ModelSettings;
 use crate::models::{
     character::{Character, CharacterOption},
     config::{GlobalModelSettings, PinChannel, SINGLETON_KEY, UserEmoji, UserName},
-    history::{History, StoredHistory, scaffolding},
-    message::{DescribedAttachment, Message},
+    history::{History, StoredHistory},
 };
 
 /// The path of the embedded `native_db` database file.
 const DATABASE_PATH: &str = "harry_database.db";
-
-/// Resolves a single message ID against an open read transaction, warning (and
-/// returning `None`) when the message is missing from the table.
-async fn resolve_message(
-    read: &RTransaction<'_>,
-    id: &str,
-) -> Result<Option<Message>, DatabaseError> {
-    let found = read
-        .get()
-        .primary::<Message>(id.to_owned())
-        .context(GetSnafu)?;
-    if found.is_none() {
-        warn!("history references a missing message: {id}");
-    }
-    Ok(found)
-}
 
 /// A newtype wrapper around a `native_db` database.
 pub struct Database(NativeDatabase<'static>);
@@ -65,7 +45,6 @@ async fn models() -> Result<&'static Models, DatabaseError> {
     let mut models = Models::new();
     models.define::<Character>().context(DefineModelSnafu)?;
     models.define::<StoredHistory>().context(DefineModelSnafu)?;
-    models.define::<Message>().context(DefineModelSnafu)?;
     models.define::<GlobalModelSettings>().context(DefineModelSnafu)?;
     models.define::<PinChannel>().context(DefineModelSnafu)?;
     models.define::<UserName>().context(DefineModelSnafu)?;
@@ -330,7 +309,7 @@ impl Database {
         Ok(Some(superseded))
     }
 
-    /// Returns a chat history by its ID, hydrating its choice messages from the message table.
+    /// Returns a chat history by its ID, embedding its messages.
     pub async fn history<T: Into<MessageId>>(
         &self,
         id: T,
@@ -339,54 +318,15 @@ impl Database {
         let Some(stored) = maybe_stored else {
             return Ok(None);
         };
-        let Some(choices) = NonEmpty::from_vec(self.messages(&stored.choices).await?) else {
-            warn!("history {} has no resolvable choices", stored.id);
+        let history_id = stored.id.clone();
+        let Some(history) = History::hydrate(stored) else {
+            warn!("history {history_id} has no resolvable choices");
             return Ok(None);
         };
-        Ok(Some(History::hydrate(stored, choices)))
+        Ok(Some(history))
     }
 
-    /// Resolves a list of message IDs into messages, in order, skipping any that are missing.
-    pub async fn messages(&self, ids: &[String]) -> Result<Vec<Message>, DatabaseError> {
-        let read = self.0.r_transaction().context(GetSnafu)?;
-        let mut messages = Vec::with_capacity(ids.len());
-        for id in ids {
-            if let Some(message) = resolve_message(&read, id).await? {
-                messages.push(message);
-            }
-        }
-        Ok(messages)
-    }
-
-    /// Builds the full LLM context for a history: the character's scaffolding followed by the
-    /// previous messages, in order.
-    ///
-    /// Previous messages just pushed this turn live in the history's `pending` buffer (not yet in
-    /// the table), so those are taken from memory and the rest are resolved from the message table.
-    pub async fn build_context(
-        &self,
-        history: &History,
-        character: &Character,
-    ) -> Result<Vec<Message>, DatabaseError> {
-        let mut context = scaffolding(character);
-        let pending: HashMap<&str, &Message> = history
-            .pending()
-            .iter()
-            .map(|message| (message.id(), message))
-            .collect();
-        let read = self.0.r_transaction().context(GetSnafu)?;
-        for id in history.previous_ids() {
-            if let Some(message) = pending.get(id.as_str()) {
-                context.push((*message).clone());
-            } else if let Some(message) = resolve_message(&read, id).await? {
-                context.push(message);
-            }
-        }
-        Ok(context)
-    }
-
-    /// Updates or inserts a chat history, writing its choice and pending messages to the message
-    /// table and storing the history as message-ID lists.
+    /// Updates or inserts a chat history, storing the full messages inline in a single record.
     ///
     /// Each handler loads its own [`History`], mutates it, and saves it here across a separate
     /// transaction, so two near-simultaneous button presses on the same reply race and the last
@@ -394,32 +334,7 @@ impl Database {
     /// version guard, because the bot serves a handful of users and the worst case is a single
     /// dropped mutation, never corruption (every write is a whole, valid record).
     pub async fn upsert_history(&self, history: History) -> Result<(), DatabaseError> {
-        let (stored, messages) = history.into_stored();
-        let write = self.0.rw_transaction().context(InsertSnafu)?;
-        for message in messages {
-            write.upsert(message).context(InsertSnafu)?;
-        }
-        write.upsert(stored).context(InsertSnafu)?;
-        write.commit().context(InsertSnafu)
-    }
-
-    /// Merges vision-model descriptions into a stored message, keyed by attachment URL.
-    ///
-    /// Loads the message from the table, adds any descriptions for attachments it owns, and writes
-    /// it back. A message that is not yet stored (still pending this turn) is a no-op.
-    pub async fn cache_attachment_descriptions(
-        &self,
-        message_id: &str,
-        descriptions: &[DescribedAttachment],
-    ) -> Result<(), DatabaseError> {
-        let stored = self.get_one::<Message>(message_id.to_owned()).await?;
-        let Some(mut message) = stored else {
-            return Ok(());
-        };
-        message.add_descriptions(descriptions);
-        let write = self.0.rw_transaction().context(UpdateSnafu)?;
-        write.upsert(message).context(UpdateSnafu)?;
-        write.commit().context(UpdateSnafu)
+        self.upsert_one(history.into_stored(), InsertSnafu).await
     }
 
     /// Updates or inserts a user's emoji.
@@ -713,22 +628,15 @@ pub enum DatabaseError {
     },
 }
 
-/// Characterization tests pinning the transaction methods that the
-/// load-mutate-upsert and message-resolution refactors touch. They run against
-/// an ephemeral in-memory database.
+/// Characterization tests pinning the load-mutate-upsert transaction methods.
+/// They run against an ephemeral in-memory database.
 #[cfg(test)]
 mod tests {
     use super::Database;
     use core::ptr;
-    use core::slice::from_ref;
     use crate::llm::ModelSettings;
-    use crate::models::{
-        character::Character,
-        history::{History, scaffolding},
-        message::{DescribedAttachment, Message, Role},
-    };
-    use nonempty::NonEmpty;
-    use serenity::all::{MessageId, UserId};
+    use crate::models::character::Character;
+    use serenity::all::UserId;
 
     /// Builds a minimal visible character with the given ID and name.
     fn character(id: &str, name: &str) -> Character {
@@ -892,166 +800,6 @@ mod tests {
         assert!(
             original.is_some(),
             "the original version is left intact"
-        );
-    }
-
-    /// `messages` resolves IDs in order and silently skips any that are missing.
-    #[tokio::test]
-    async fn messages_resolve_in_order_and_skip_missing() {
-        let opened = Database::in_memory().await;
-        assert!(
-            opened.is_ok(),
-            "opening an in-memory database should succeed"
-        );
-        let Ok(db) = opened else { return };
-        let first = Message::new_system("first");
-        let second = Message::new_system("second");
-        let (first_id, second_id) = (first.id().to_owned(), second.id().to_owned());
-
-        let history = History::builder()
-            .id(MessageId::new(1))
-            .character("char-id")
-            .choices({
-                let mut choices = NonEmpty::new(first);
-                choices.push(second);
-                choices
-            })
-            .build();
-        assert!(
-            db.upsert_history(history).await.is_ok(),
-            "writing the messages should succeed"
-        );
-
-        let ids = vec![first_id.clone(), "missing".to_owned(), second_id.clone()];
-        let resolved = db.messages(&ids).await.unwrap_or_default();
-        let resolved_ids = resolved
-            .iter()
-            .map(|message| message.id().to_owned())
-            .collect::<Vec<String>>();
-        assert_eq!(
-            resolved_ids,
-            vec![first_id, second_id],
-            "messages resolve in request order, skipping the missing ID"
-        );
-    }
-
-    /// `cache_attachment_descriptions` persists a description onto an already-stored message and
-    /// is a harmless no-op for a message that is not in the table.
-    #[tokio::test]
-    async fn cache_attachment_descriptions_persists_onto_stored_messages() {
-        let opened = Database::in_memory().await;
-        assert!(
-            opened.is_ok(),
-            "opening an in-memory database should succeed"
-        );
-        let Ok(db) = opened else { return };
-
-        let image_message = Message::builder()
-            .id(MessageId::new(7))
-            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
-            .attachments(vec!["https://cdn/cat.png".to_owned()])
-            .build();
-        let message_id = image_message.id().to_owned();
-        let history = History::builder()
-            .id(MessageId::new(1))
-            .character("char-id")
-            .choices(NonEmpty::new(image_message))
-            .build();
-        assert!(
-            db.upsert_history(history).await.is_ok(),
-            "storing the image message should succeed"
-        );
-
-        let descriptions = vec![DescribedAttachment {
-            url: "https://cdn/cat.png".to_owned(),
-            description: "en katt".to_owned(),
-        }];
-        assert!(
-            db.cache_attachment_descriptions(&message_id, &descriptions)
-                .await
-                .is_ok(),
-            "caching descriptions should succeed"
-        );
-
-        let reloaded = db
-            .messages(from_ref(&message_id))
-            .await
-            .unwrap_or_default();
-        let described = reloaded
-            .first()
-            .and_then(|message| message.description_for("https://cdn/cat.png"));
-        assert_eq!(
-            described,
-            Some("en katt"),
-            "the cached description is persisted onto the stored message"
-        );
-
-        let missing = db
-            .cache_attachment_descriptions("not-stored", &descriptions)
-            .await;
-        assert!(
-            missing.is_ok(),
-            "caching onto a missing message is a no-op, not an error"
-        );
-    }
-
-    /// `build_context` prefixes the character scaffolding, then resolves each
-    /// previous ID, preferring the in-memory pending buffer over the table and
-    /// skipping missing IDs.
-    #[tokio::test]
-    async fn build_context_prefixes_scaffolding_and_prefers_pending() {
-        let opened = Database::in_memory().await;
-        assert!(
-            opened.is_ok(),
-            "opening an in-memory database should succeed"
-        );
-        let Ok(db) = opened else { return };
-        let character = character("char-id", "Harry");
-
-        let table_message = Message::new_user("Alice", "from the table");
-        let table_id = table_message.id().to_owned();
-        let choice = Message::new_system("greeting");
-        let table_history = History::builder()
-            .id(MessageId::new(1))
-            .character("char-id")
-            .choices(NonEmpty::new(choice))
-            .pending(vec![table_message])
-            .previous(vec![table_id.clone()])
-            .build();
-        assert!(
-            db.upsert_history(table_history).await.is_ok(),
-            "writing the table message should succeed"
-        );
-
-        let pending_message = Message::new_user("Bob", "from pending");
-        let pending_id = pending_message.id().to_owned();
-        let context_history = History::builder()
-            .id(MessageId::new(2))
-            .character("char-id")
-            .choices(NonEmpty::new(Message::new_system("greeting")))
-            .pending(vec![pending_message])
-            .previous(vec![pending_id.clone(), table_id.clone(), "missing".to_owned()])
-            .build();
-
-        let context = db
-            .build_context(&context_history, &character)
-            .await
-            .unwrap_or_default();
-        let scaffolding_len = scaffolding(&character).len();
-        assert_eq!(
-            context.len(),
-            scaffolding_len.saturating_add(2),
-            "context is scaffolding plus the two resolvable previous messages"
-        );
-        let tail_ids = context
-            .iter()
-            .skip(scaffolding_len)
-            .map(|message| message.id().to_owned())
-            .collect::<Vec<String>>();
-        assert_eq!(
-            tail_ids,
-            vec![pending_id, table_id],
-            "the pending message is taken from memory, the other from the table, missing skipped"
         );
     }
 

@@ -3,36 +3,28 @@
 //! A new [`History`] is saved per bot reply, keyed by that reply's Discord message ID, so a button
 //! interaction or a user reply can find the conversation from the message it acted on.
 //!
-//! ## Normalized storage
+//! ## Self-contained storage
 //!
-//! History is stored in two pieces so the same message is never written twice and the derivable
-//! scaffolding is never written at all:
+//! A history embeds the full messages it owns, so each stored record is a complete, readable record
+//! of one branch of a conversation:
 //!
-//! - Each [`Message`] lives once in its own `native_db` table, keyed by its ID.
-//! - [`StoredHistory`] (the persisted form) holds only ordered ID lists: `previous` (the chat
-//!   context) and `choices` (the swipeable replies for this turn).
+//! - [`StoredHistory`] (the persisted form) holds the full `previous` messages (the chat context)
+//!   and the full `choices` (the swipeable replies for this turn), inline.
 //! - The system-prompt scaffolding (the Swedish roleplay framing built by [`scaffolding`]) is not
 //!   stored; it is rebuilt from the character at request time. Characters are versioned and a
 //!   history references a specific version, so the rebuilt scaffolding always matches.
 //!
-//! This replaced an older design where every history stored the whole conversation (plus
-//! scaffolding) inline, which duplicated messages across the many histories of one conversation and
-//! grew quadratically.
+//! Sibling histories of one conversation overlap (each branch carries its own root-to-node path),
+//! which is accepted: the bot serves a handful of users and a self-contained, openable record is
+//! worth the duplication.
 //!
 //! ## In-memory vs stored
 //!
 //! [`History`] (this in-memory form, used by the chat loop, interaction handlers, and rendering)
-//! differs from [`StoredHistory`]:
-//!
-//! - `choices` are hydrated into full [`Message`]s, because the swipe/edit/undo/redo/regenerate
-//!   handlers operate on them directly. Rendering also only needs `choices` + the character.
-//! - `previous` stays as IDs; the full messages are resolved (and the scaffolding prepended) only
-//!   when building the LLM context, via [`Database::build_context`](crate::database::Database::build_context).
-//! - `pending` buffers messages pushed this turn so they can be written to the message table on the
-//!   next save.
-//!
-//! [`History::into_stored`] (on save) and [`History::hydrate`] (on load) bridge the two forms;
-//! `Database::history` / `Database::upsert_history` perform the message-table resolution.
+//! differs from [`StoredHistory`] only in carrying the transient `has_finished` flag (used while
+//! streaming) and a [`NonEmpty`] choices list. [`History::into_stored`] (on save) and
+//! [`History::hydrate`] (on load) bridge the two forms; the LLM context is assembled by
+//! [`History::build_context`], which prepends the rebuilt scaffolding to the `previous` messages.
 
 use bon::Builder;
 use native_db::{ToKey as _, native_db};
@@ -75,7 +67,7 @@ const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du in
 /// A log of messages between the user and a character.
 ///
 /// This is the in-memory form used by the chat loop, interaction handlers, and rendering.
-/// It is persisted as a [`StoredHistory`] (which holds message IDs, not inline messages); the
+/// It is persisted as a [`StoredHistory`] (which embeds the full messages inline); the
 /// system-prompt scaffolding is never stored, but rebuilt from the character via [`scaffolding`].
 #[derive(Debug, Clone, Builder)]
 pub struct History {
@@ -95,16 +87,12 @@ pub struct History {
     /// This is used to create embeds while streaming a response.
     #[builder(default = true)]
     has_finished: bool,
-    /// The IDs of the previous messages (the chat context), resolved from the message table on
-    /// demand. Contains no scaffolding.
+    /// The previous messages (the chat context), in order. Contains no scaffolding.
     #[builder(default)]
-    previous: Vec<String>,
-    /// Messages introduced this turn that must be persisted on save. Not part of the stored shape.
-    #[builder(default)]
-    pending: Vec<Message>,
+    previous: Vec<Message>,
 }
 
-/// The persisted form of a [`History`]: only message IDs, no inline messages and no scaffolding.
+/// The persisted form of a [`History`]: the full messages inline, no scaffolding.
 #[derive(Debug, Serialize, Deserialize)]
 #[native_model(id = 2, version = 1, with = crate::codec::Json)]
 #[native_db]
@@ -118,10 +106,10 @@ pub struct StoredHistory {
     pub id: String,
     /// The ulid ID of the currently responding character.
     pub character: String,
-    /// The IDs of the previous messages (the chat context), in order.
-    pub previous: Vec<String>,
-    /// The IDs of the current swipeable responses.
-    pub choices: Vec<String>,
+    /// The previous messages (the chat context), in order.
+    pub previous: Vec<Message>,
+    /// The current swipeable responses.
+    pub choices: Vec<Message>,
     /// The index of the current chosen response.
     pub current: usize,
 }
@@ -274,11 +262,9 @@ impl History {
         self.character = character;
     }
 
-    /// Appends a message to the chat context and queues it for persistence on the next save.
+    /// Appends a message to the chat context. It is saved as part of the history on the next save.
     pub fn push<M: Into<Message>>(&mut self, value: M) {
-        let message = value.into();
-        self.previous.push(message.id().to_owned());
-        self.pending.push(message);
+        self.previous.push(value.into());
     }
 
     /// Resets the choices, removing all but the first choice, and resets the current index to 0.
@@ -339,68 +325,61 @@ impl History {
         self.set_finished(false);
     }
 
-    /// Returns the IDs of the previous messages (the chat context), in order.
+    /// Returns the previous messages (the chat context), in order.
     #[must_use]
-    pub fn previous_ids(&self) -> &[String] {
+    pub fn previous_messages(&self) -> &[Message] {
         &self.previous
     }
 
-    /// Returns the messages queued for persistence (those pushed this turn, not yet in the table).
-    #[must_use]
-    pub fn pending(&self) -> &[Message] {
-        &self.pending
-    }
-
-    /// Merges image descriptions into the pending messages so they are saved with the turn.
+    /// Merges image descriptions into the context messages so they are saved with the turn.
     ///
-    /// A pending message (the user's just-sent message) is not yet in the message table, so caching
-    /// onto the table is a no-op for it; applying here instead lets [`Self::into_stored`] persist the
-    /// description on the very first reply. Each message only takes descriptions for its own
+    /// Replaces the old store-side caching: each previous message takes descriptions for its own
+    /// attachments, so a first-turn image is persisted on the very first reply and older images keep
+    /// their descriptions across turns. Each message only takes descriptions for its own
     /// attachments, so passing the whole set is safe.
     pub fn apply_descriptions(&mut self, descriptions: &[DescribedAttachment]) {
-        for message in &mut self.pending {
+        for message in &mut self.previous {
             message.add_descriptions(descriptions);
         }
     }
 
-    /// Converts the in-memory history into its persisted form plus the messages that must be
-    /// written to the message table (the queued `pending` messages and the current choices).
+    /// Builds the full LLM context: the character's rebuilt scaffolding followed by the previous
+    /// messages, in order.
     #[must_use]
-    pub fn into_stored(self) -> (StoredHistory, Vec<Message>) {
-        let choices = self
-            .choices
-            .iter()
-            .map(|message| message.id().to_owned())
-            .collect();
-        let mut messages = self.pending;
-        messages.extend(self.choices);
-        let stored = StoredHistory {
+    pub fn build_context(&self, character: &Character) -> Vec<Message> {
+        let mut context = scaffolding(character);
+        context.extend(self.previous.iter().cloned());
+        context
+    }
+
+    /// Converts the in-memory history into its persisted form, embedding the full messages inline.
+    #[must_use]
+    pub fn into_stored(self) -> StoredHistory {
+        StoredHistory {
             id: self.id,
             character: self.character,
             previous: self.previous,
-            choices,
+            choices: self.choices.into_iter().collect(),
             current: self.current,
-        };
-        (stored, messages)
+        }
     }
 
-    /// Rebuilds an in-memory history from its persisted form and its resolved choice messages.
+    /// Rebuilds an in-memory history from its persisted form, returning `None` if it stored no
+    /// choices (a corrupt record), since a history must have at least one swipeable reply.
     #[must_use]
-    pub fn hydrate(stored: StoredHistory, choices: NonEmpty<Message>) -> Self {
-        // choices can be shorter than the stored list if some message records failed to resolve,
-        // so clamp the chosen index to what is actually available rather than dangling past the end
+    pub fn hydrate(stored: StoredHistory) -> Option<Self> {
+        let choices = NonEmpty::from_vec(stored.choices)?;
+        // clamp the chosen index to what is actually available rather than dangling past the end
         let current = stored.current.min(choices.len().saturating_sub(1));
-        Self {
+        Some(Self {
             id: stored.id,
             character: stored.character,
             choices,
             current,
             has_finished: true,
             previous: stored.previous,
-            pending: Vec::new(),
-        }
+        })
     }
-
 }
 
 /// Creates a new [`History`] from a character and message ID.
@@ -438,10 +417,10 @@ mod tests {
     use nonempty::NonEmpty;
     use serenity::all::{MessageId, UserId};
 
-    /// `apply_descriptions` reaches the pending messages, so a first-turn image description is
+    /// `apply_descriptions` reaches the context messages, so a first-turn image description is
     /// carried into the persisted turn rather than lost.
     #[test]
-    fn apply_descriptions_reaches_pending_messages() {
+    fn apply_descriptions_reaches_context_messages() {
         let user = Message::builder()
             .id(MessageId::new(5))
             .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
@@ -451,7 +430,7 @@ mod tests {
             .id(MessageId::new(1))
             .character("char")
             .choices(NonEmpty::new(Message::new_system("greeting")))
-            .pending(vec![user])
+            .previous(vec![user])
             .build();
 
         history.apply_descriptions(&[DescribedAttachment {
@@ -461,11 +440,11 @@ mod tests {
 
         assert_eq!(
             history
-                .pending()
+                .previous_messages()
                 .first()
                 .and_then(|message| message.description_for("https://cdn/x.png")),
             Some("en bild"),
-            "the description reaches the pending message so it persists with the turn"
+            "the description reaches the context message so it persists with the turn"
         );
     }
 
@@ -482,6 +461,15 @@ mod tests {
     /// Returns the content of a scaffolding message's first part.
     fn first_part_content(message: &Message) -> &str {
         message.chosen_revision().head().content()
+    }
+
+    /// Collects the IDs of a history's previous (context) messages, in order.
+    fn previous_ids(history: &History) -> Vec<String> {
+        history
+            .previous_messages()
+            .iter()
+            .map(|message| message.id().to_owned())
+            .collect()
     }
 
     /// Builds a history with `count` swipeable choices.
@@ -556,60 +544,48 @@ mod tests {
         );
     }
 
-    /// `into_stored` emits ID lists plus pending-then-choice messages, and `hydrate` rebuilds
-    /// the in-memory history from them unchanged.
+    /// `into_stored` embeds the full messages inline, and `hydrate` rebuilds the in-memory history
+    /// from them unchanged.
     #[test]
     fn into_stored_then_hydrate_preserves_history() {
         let choice_one = Message::new_system("choice one");
         let choice_two = Message::new_system("choice two");
-        let pending_one = Message::new_user("Alice", "hello");
-        let choice_ids = vec![choice_one.id().to_owned(), choice_two.id().to_owned()];
         let choice_two_id = choice_two.id().to_owned();
-        let pending_id = pending_one.id().to_owned();
-        let previous_ids = vec!["prev-a".to_owned(), "prev-b".to_owned()];
+        let previous_one = Message::new_user("Alice", "hello");
+        let previous_ids = vec![previous_one.id().to_owned()];
 
-        let mut choices = NonEmpty::new(choice_one.clone());
-        choices.push(choice_two.clone());
-        let mut hydrate_choices = NonEmpty::new(choice_one);
-        hydrate_choices.push(choice_two);
+        let mut choices = NonEmpty::new(choice_one);
+        choices.push(choice_two);
 
         let history = History::builder()
             .id(MessageId::new(42))
             .character("character-id")
             .choices(choices)
             .current(1_usize)
-            .previous(previous_ids.clone())
-            .pending(vec![pending_one])
+            .previous(vec![previous_one])
             .build();
 
-        let (stored, messages) = history.into_stored();
+        let stored = history.into_stored();
         assert_eq!(stored.id, "42", "the message ID is preserved as the key");
         assert_eq!(
             stored.character, "character-id",
             "the character ID is preserved"
         );
+        assert_eq!(stored.choices.len(), 2, "both choices are stored inline");
         assert_eq!(
-            stored.choices, choice_ids,
-            "stored choices are the choice IDs in order"
-        );
-        assert_eq!(
-            stored.previous, previous_ids,
-            "stored previous are the context IDs in order"
+            stored
+                .previous
+                .iter()
+                .map(|message| message.id().to_owned())
+                .collect::<Vec<String>>(),
+            previous_ids,
+            "the previous messages are stored inline in order"
         );
         assert_eq!(stored.current, 1, "the chosen index is preserved");
 
-        let message_ids = messages
-            .iter()
-            .map(|message| message.id().to_owned())
-            .collect::<Vec<String>>();
-        let mut expected_ids = vec![pending_id];
-        expected_ids.extend(choice_ids.iter().cloned());
-        assert_eq!(
-            message_ids, expected_ids,
-            "into_stored writes pending messages first, then the choices"
-        );
-
-        let hydrated = History::hydrate(stored, hydrate_choices);
+        let maybe_hydrated = History::hydrate(stored);
+        assert!(maybe_hydrated.is_some(), "a history with choices hydrates");
+        let Some(hydrated) = maybe_hydrated else { return };
         assert_eq!(hydrated.id(), "42", "hydrate restores the message ID");
         assert_eq!(
             hydrated.character(),
@@ -622,13 +598,13 @@ mod tests {
             "hydrate restores the chosen index"
         );
         assert_eq!(
-            hydrated.previous_ids(),
-            previous_ids.as_slice(),
-            "hydrate restores the context IDs"
-        );
-        assert!(
-            hydrated.pending().is_empty(),
-            "a freshly hydrated history has nothing pending"
+            hydrated
+                .previous_messages()
+                .iter()
+                .map(|message| message.id().to_owned())
+                .collect::<Vec<String>>(),
+            previous_ids,
+            "hydrate restores the context messages"
         );
         assert_eq!(
             hydrated.chosen_message().id(),
@@ -637,26 +613,79 @@ mod tests {
         );
     }
 
-    /// When some stored choices fail to resolve, the rehydrated choice list is shorter than the
-    /// stored `current` index, so hydrate must clamp it to the last available choice rather than
-    /// leaving it dangling past the end.
+    /// A stored history with no choices is a corrupt record, so `hydrate` returns `None` rather than
+    /// fabricating an empty choices list.
+    #[test]
+    fn hydrate_rejects_a_history_without_choices() {
+        let stored = StoredHistory {
+            id: "42".to_owned(),
+            character: "character-id".to_owned(),
+            previous: Vec::new(),
+            choices: Vec::new(),
+            current: 0,
+        };
+        assert!(
+            History::hydrate(stored).is_none(),
+            "a history with no choices does not hydrate"
+        );
+    }
+
+    /// `hydrate` clamps a stored `current` index that points past the available choices to the last
+    /// choice rather than leaving it dangling past the end.
     #[test]
     fn hydrate_clamps_current_past_the_available_choices() {
         let stored = StoredHistory {
             id: "42".to_owned(),
             character: "character-id".to_owned(),
             previous: Vec::new(),
-            choices: vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
-            current: 2,
+            choices: vec![
+                Message::new_system("first choice"),
+                Message::new_system("second choice"),
+            ],
+            current: 5,
         };
-        let mut choices = NonEmpty::new(Message::new_system("only choice"));
-        choices.push(Message::new_system("second choice"));
 
-        let hydrated = History::hydrate(stored, choices);
+        let maybe_hydrated = History::hydrate(stored);
+        assert!(maybe_hydrated.is_some(), "a history with choices hydrates");
+        let Some(hydrated) = maybe_hydrated else { return };
         assert_eq!(
             hydrated.current_choice(),
             1,
-            "current is clamped to the last resolvable choice, not the stored index"
+            "current is clamped to the last choice, not the stored index"
+        );
+    }
+
+    /// `build_context` prepends the character scaffolding to the previous messages, in order.
+    #[test]
+    fn build_context_prepends_scaffolding_to_previous() {
+        let character = character();
+        let first = Message::new_user("Alice", "hello");
+        let second = Message::new_assistant("hi there", &character);
+        let first_id = first.id().to_owned();
+        let second_id = second.id().to_owned();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(Message::new_system("greeting")))
+            .previous(vec![first, second])
+            .build();
+
+        let context = history.build_context(&character);
+        let scaffolding_len = scaffolding(&character).len();
+        assert_eq!(
+            context.len(),
+            scaffolding_len.saturating_add(2),
+            "context is the scaffolding plus the two previous messages"
+        );
+        let tail_ids = context
+            .iter()
+            .skip(scaffolding_len)
+            .map(|message| message.id().to_owned())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            tail_ids,
+            vec![first_id, second_id],
+            "the previous messages follow the scaffolding in order"
         );
     }
 
@@ -756,14 +785,9 @@ mod tests {
             "the current index resets to the first choice"
         );
         assert_eq!(
-            history.previous_ids(),
-            [chosen_id, user_id].as_slice(),
+            previous_ids(&history),
+            [chosen_id, user_id],
             "the chosen reply then the user message are appended to the context"
-        );
-        assert_eq!(
-            history.pending().len(),
-            2,
-            "both pushed messages are queued for persistence"
         );
         assert!(
             !history.has_finished,
@@ -800,8 +824,8 @@ mod tests {
             "the current index resets to the first choice"
         );
         assert_eq!(
-            history.previous_ids(),
-            [chosen_id, system_id].as_slice(),
+            previous_ids(&history),
+            [chosen_id, system_id],
             "the chosen reply then the hand-off system prompt are appended to the context"
         );
         assert!(
@@ -845,14 +869,9 @@ mod tests {
         history.begin_new_turn(user);
 
         assert_eq!(
-            history.previous_ids(),
-            [greeting_id, user_id].as_slice(),
+            previous_ids(&history),
+            [greeting_id, user_id],
             "the greeting then the user message form the context"
-        );
-        assert_eq!(
-            history.pending().len(),
-            2,
-            "both the greeting and the user message are queued"
         );
     }
 
@@ -875,14 +894,9 @@ mod tests {
         history.begin_new_turn(user);
 
         assert_eq!(
-            history.previous_ids(),
-            [user_id].as_slice(),
+            previous_ids(&history),
+            [user_id],
             "the greeting is omitted; the user message is the first context turn"
-        );
-        assert_eq!(
-            history.pending().len(),
-            1,
-            "only the user message is queued"
         );
     }
 }

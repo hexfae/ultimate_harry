@@ -249,8 +249,8 @@ pub async fn prepare_request(
     history: &mut History,
 ) -> AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)> {
     let requester = LlmManager::new(db.resolved_model_settings(character).await);
-    let mut context = db.build_context(history, character).await?;
-    let mode = resolve_attachments(db, &requester, history, &mut context).await;
+    let mut context = history.build_context(character);
+    let mode = resolve_attachments(&requester, history, &mut context).await;
     Ok((requester, context, mode))
 }
 

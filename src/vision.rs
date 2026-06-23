@@ -6,7 +6,6 @@
 use tracing::warn;
 
 use crate::{
-    database::Database,
     llm::LlmManager,
     models::{
         history::History,
@@ -20,7 +19,6 @@ use crate::{
 /// When vision support cannot be determined, falls back to describing: a text description is
 /// accepted by any model, whereas an image hard-fails (404) on a text-only one.
 pub async fn resolve_attachments(
-    db: &Database,
     requester: &LlmManager,
     history: &mut History,
     context: &mut [Message],
@@ -34,14 +32,13 @@ pub async fn resolve_attachments(
         Err(why) => warn!("could not check vision support, describing images to be safe: {why}"),
     }
     let described = describe_images(requester, context).await;
-    apply_and_cache(db, history, context, &described).await;
+    apply_descriptions(history, context, &described);
     AttachmentMode::Describe
 }
 
-/// Merges `described` into the in-memory `context`, into the history's pending messages (so a
-/// first-turn image is saved with the reply), and onto already-stored messages (for future turns).
-async fn apply_and_cache(
-    db: &Database,
+/// Merges `described` into the in-memory `context` (for this request) and into the history's context
+/// messages, so the descriptions are saved with the turn and reused on future turns.
+fn apply_descriptions(
     history: &mut History,
     context: &mut [Message],
     described: &[DescribedAttachment],
@@ -53,14 +50,6 @@ async fn apply_and_cache(
         message.add_descriptions(described);
     }
     history.apply_descriptions(described);
-    for message in context.iter().filter(|message| message.has_image_attachment()) {
-        if let Err(why) = db
-            .cache_attachment_descriptions(message.id(), described)
-            .await
-        {
-            warn!("could not cache image descriptions: {why}");
-        }
-    }
 }
 
 /// Asks the vision model to describe each unique undescribed image URL found across `context`.
