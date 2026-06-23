@@ -1,6 +1,8 @@
 //! The LLM manager for generating responses from AI models.
 
-use crate::models::message::{AttachmentMode, EncodedAudio, Message as ChatMessage};
+use crate::models::message::{
+    AttachmentMode, EncodedAudio, Message as ChatMessage, audio_format_from_url,
+};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use core::pin::Pin;
 use miette::Diagnostic;
@@ -25,7 +27,8 @@ const MODELS_URL: &str = "https://openrouter.ai/api/v1/models";
 const CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
 /// The instruction given to the vision model when describing an image.
-const DESCRIBE_PROMPT: &str = "Describe the image in as much detail as possible. Write the description in Swedish.";
+const DESCRIBE_PROMPT: &str =
+    "Describe the image in as much detail as possible. Write the description in Swedish.";
 
 /// The instruction given to the audio model when transcribing a voice message.
 const TRANSCRIBE_PROMPT: &str = "Transcribe the spoken audio verbatim, keeping the transcription in the original spoken language (do not translate it). Briefly describe any non-speech sounds in square brackets. Reply with only the transcription, no explanation.";
@@ -235,7 +238,11 @@ impl LlmManager {
         cache: &'static Mutex<HashMap<(String, String), bool>>,
     ) -> Result<bool, LlmError> {
         let key = (self.settings.model.clone(), modality.to_owned());
-        if let Some(cached) = cache.lock().ok().and_then(|locked| locked.get(&key).copied()) {
+        if let Some(cached) = cache
+            .lock()
+            .ok()
+            .and_then(|locked| locked.get(&key).copied())
+        {
             return Ok(cached);
         }
         let response = reqwest::get(MODELS_URL).await.context(ListModelsSnafu)?;
@@ -334,7 +341,10 @@ impl LlmManager {
             .send()
             .await
             .context(AddTagsSnafu)?;
-        let parsed = response.json::<ChatResponse>().await.context(AddTagsSnafu)?;
+        let parsed = response
+            .json::<ChatResponse>()
+            .await
+            .context(AddTagsSnafu)?;
         extract_description(&parsed).context(EmptyTagsSnafu)
     }
 }
@@ -357,24 +367,8 @@ pub async fn fetch_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
     Ok(EncodedAudio {
         url: url.to_owned(),
         data,
-        format: audio_format_from_url(url),
+        format: audio_format_from_url(url).unwrap_or(AudioMediaType::OGG),
     })
-}
-
-/// Detects the audio media type from a URL's extension, defaulting to `OGG` (Discord voice notes).
-fn audio_format_from_url(url: &str) -> AudioMediaType {
-    let path = url.split('?').next().unwrap_or(url);
-    let extension = path
-        .rsplit_once('.')
-        .map_or(String::new(), |(_, ext)| ext.to_ascii_lowercase());
-    match extension.as_str() {
-        "mp3" => AudioMediaType::MP3,
-        "wav" => AudioMediaType::WAV,
-        "m4a" => AudioMediaType::M4A,
-        "aac" => AudioMediaType::AAC,
-        "flac" => AudioMediaType::FLAC,
-        _ => AudioMediaType::OGG,
-    }
 }
 
 /// Whether the model with `model_id` lists `modality` among its accepted input modalities.
@@ -504,14 +498,14 @@ pub enum LlmError {
     #[diagnostic(help("Prova en annan synmodell."), code(llm::empty_description))]
     EmptyDescription,
     /// Failed to download the voice message before transcribing it.
-    #[snafu(display("Kunde inte hämta röstmeddelandet: {source}"))]
+    #[snafu(display("Kunde inte hämta ljudet: {source}"))]
     #[diagnostic(help("Kontrollera att filen finns kvar."), code(llm::fetch_audio))]
     FetchAudio {
         /// The source of the error.
         source: reqwest::Error,
     },
     /// Failed to transcribe a voice message with the audio model.
-    #[snafu(display("Kunde inte transkribera röstmeddelandet: {source}"))]
+    #[snafu(display("Kunde inte transkribera ljudet: {source}"))]
     #[diagnostic(
         help("Kontrollera att ljudmodellen och API-nyckeln är giltiga."),
         code(llm::transcribe_audio)
@@ -567,11 +561,7 @@ impl LlmError {
 /// Tests for the `OpenRouter` response parsing helpers.
 #[cfg(test)]
 mod tests {
-    use super::{
-        ChatResponse, ModelsResponse, audio_format_from_url, extract_description,
-        model_supports_modality,
-    };
-    use rig::message::AudioMediaType;
+    use super::{ChatResponse, ModelsResponse, extract_description, model_supports_modality};
 
     /// A model supports a modality only when it lists it among its input modalities.
     #[test]
@@ -607,31 +597,12 @@ mod tests {
         );
     }
 
-    /// The audio format is taken from the URL extension, defaulting to OGG for Discord voice notes.
-    #[test]
-    fn audio_format_is_detected_from_the_url() {
-        assert_eq!(
-            audio_format_from_url("https://cdn/voice.ogg"),
-            AudioMediaType::OGG,
-            "an .ogg attachment is OGG"
-        );
-        assert_eq!(
-            audio_format_from_url("https://cdn/clip.MP3?ex=123"),
-            AudioMediaType::MP3,
-            "an .mp3 attachment is MP3, case-insensitively and ignoring the query string"
-        );
-        assert_eq!(
-            audio_format_from_url("https://cdn/unknown"),
-            AudioMediaType::OGG,
-            "an unknown extension defaults to OGG"
-        );
-    }
-
     /// The first choice's trimmed content is taken as the description.
     #[test]
     fn extract_description_reads_the_first_choice() {
-        let parsed =
-            serde_json::from_str::<ChatResponse>(r#"{"choices":[{"message":{"content":"  en hund  "}}]}"#);
+        let parsed = serde_json::from_str::<ChatResponse>(
+            r#"{"choices":[{"message":{"content":"  en hund  "}}]}"#,
+        );
         assert!(parsed.is_ok(), "the chat response should parse");
         let Ok(response) = parsed else { return };
         assert_eq!(

@@ -23,14 +23,11 @@ use ulid::Ulid;
 
 use crate::models::character::Character;
 
-/// Discord voice messages are uploaded as `.ogg` attachments.
-const PROBABLE_DISCORD_VOICE_RECORDING: &str = ".ogg";
-
 /// Placeholder text fed to a non-vision model when an image has no cached description.
 const UNDESCRIBED_IMAGE: &str = "[Bild kunde inte tolkas]";
 
 /// Placeholder text fed to a model when a voice message could not be transcribed or encoded.
-const UNDESCRIBED_AUDIO: &str = "[Röstmeddelande kunde inte tolkas]";
+const UNDESCRIBED_AUDIO: &str = "[Ljud kunde inte tolkas]";
 
 /// Whether one kind of attachment is sent to the model natively or as cached text.
 ///
@@ -338,7 +335,10 @@ impl Message {
     #[must_use]
     pub fn to_rig_messages(&self, mode: AttachmentMode) -> Vec<RigMessage> {
         let chosen = self.chosen_revision();
-        let last_user = chosen.0.iter().rposition(|part| matches!(part.role, Role::User));
+        let last_user = chosen
+            .0
+            .iter()
+            .rposition(|part| matches!(part.role, Role::User));
 
         let mut messages: Vec<RigMessage> = chosen
             .0
@@ -424,7 +424,7 @@ impl Message {
         self.attachments
             .iter()
             .map(|url| {
-                if is_voice_url(url) {
+                if is_audio_url(url) {
                     self.render_audio(url, mode.audio)
                 } else {
                     self.render_image(url, mode.image)
@@ -445,7 +445,7 @@ impl Message {
             ),
             MediaMode::Describe => AttachmentRender::Text(self.description_for(url).map_or_else(
                 || UNDESCRIBED_AUDIO.to_owned(),
-                |transcription| format!("[Röstmeddelande: {transcription}]"),
+                |transcription| format!("[Ljud: {transcription}]"),
             )),
         }
     }
@@ -466,7 +466,7 @@ impl Message {
     pub fn undescribed_image_urls(&self) -> Vec<String> {
         self.attachments
             .iter()
-            .filter(|url| !is_voice_url(url))
+            .filter(|url| !is_audio_url(url))
             .filter(|url| self.description_for(url).is_none())
             .cloned()
             .collect()
@@ -475,13 +475,13 @@ impl Message {
     /// Whether this message has at least one image (non-voice) attachment.
     #[must_use]
     pub fn has_image_attachment(&self) -> bool {
-        self.attachments.iter().any(|url| !is_voice_url(url))
+        self.attachments.iter().any(|url| !is_audio_url(url))
     }
 
     /// Whether this message has at least one voice (audio) attachment.
     #[must_use]
     pub fn has_audio_attachment(&self) -> bool {
-        self.attachments.iter().any(|url| is_voice_url(url))
+        self.attachments.iter().any(|url| is_audio_url(url))
     }
 
     /// All voice attachment URLs on this message.
@@ -489,7 +489,7 @@ impl Message {
     pub fn audio_attachment_urls(&self) -> Vec<String> {
         self.attachments
             .iter()
-            .filter(|url| is_voice_url(url))
+            .filter(|url| is_audio_url(url))
             .cloned()
             .collect()
     }
@@ -499,7 +499,7 @@ impl Message {
     pub fn undescribed_audio_urls(&self) -> Vec<String> {
         self.attachments
             .iter()
-            .filter(|url| is_voice_url(url))
+            .filter(|url| is_audio_url(url))
             .filter(|url| self.description_for(url).is_none())
             .cloned()
             .collect()
@@ -566,7 +566,6 @@ impl Parts {
     pub const fn head(&self) -> &Part {
         &self.0.head
     }
-
 }
 
 impl Part {
@@ -586,9 +585,29 @@ impl From<(Character, String, Duration)> for Message {
     }
 }
 
-/// Whether `url` points at a Discord voice recording (an `.ogg` attachment).
-fn is_voice_url(url: &str) -> bool {
-    url.contains(PROBABLE_DISCORD_VOICE_RECORDING)
+/// The audio media type for `url`'s extension, or `None` when it is not a recognized audio file.
+///
+/// Discord voice messages are `.ogg`; users may also upload other common audio files, most
+/// notably `.mp3`. The query string is ignored and the extension matched case-insensitively.
+pub fn audio_format_from_url(url: &str) -> Option<AudioMediaType> {
+    let path = url.split('?').next().unwrap_or(url);
+    let extension = path
+        .rsplit_once('.')
+        .map(|(_, ext)| ext.to_ascii_lowercase())?;
+    match extension.as_str() {
+        "ogg" | "oga" | "opus" => Some(AudioMediaType::OGG),
+        "mp3" => Some(AudioMediaType::MP3),
+        "wav" => Some(AudioMediaType::WAV),
+        "m4a" => Some(AudioMediaType::M4A),
+        "aac" => Some(AudioMediaType::AAC),
+        "flac" => Some(AudioMediaType::FLAC),
+        _ => None,
+    }
+}
+
+/// Whether `url` points at a recognized audio attachment (a voice message or an audio file).
+fn is_audio_url(url: &str) -> bool {
+    audio_format_from_url(url).is_some()
 }
 
 /// Splits `text` into one [`Part`] per line, taking each line's role from its
@@ -855,7 +874,9 @@ mod tests {
     fn bot_author_forces_the_assistant_role() {
         let parts = parts_from_lines("system: still assistant\nplain line", "Harry", true);
         assert!(
-            parts.iter().all(|part| matches!(part.role, Role::Assistant)),
+            parts
+                .iter()
+                .all(|part| matches!(part.role, Role::Assistant)),
             "every line from a bot author is an assistant part"
         );
     }
@@ -881,10 +902,7 @@ mod tests {
     }
 
     /// Builds a user message carrying the given attachment URLs and cached audio encodings.
-    fn message_with_encoded_audio(
-        attachments: Vec<String>,
-        encoded: Vec<EncodedAudio>,
-    ) -> Message {
+    fn message_with_encoded_audio(attachments: Vec<String>, encoded: Vec<EncodedAudio>) -> Message {
         Message::builder()
             .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
             .attachments(attachments)
@@ -922,11 +940,12 @@ mod tests {
     /// Native audio falls back to a placeholder when the clip was not encoded (download failed).
     #[test]
     fn render_native_audio_falls_back_when_unencoded() {
-        let message = message_with_attachments(vec!["https://cdn/voice.ogg".to_owned()], Vec::new());
+        let message =
+            message_with_attachments(vec!["https://cdn/voice.ogg".to_owned()], Vec::new());
         assert_eq!(
             message.render_attachments(both(MediaMode::Native)),
             vec![AttachmentRender::Text(
-                "[Röstmeddelande kunde inte tolkas]".to_owned()
+                "[Ljud kunde inte tolkas]".to_owned()
             )],
             "an unencoded voice note falls back to a placeholder under native mode"
         );
@@ -955,7 +974,7 @@ mod tests {
             message.render_attachments(both(MediaMode::Describe)),
             vec![
                 AttachmentRender::Text("[Bild: en katt]".to_owned()),
-                AttachmentRender::Text("[Röstmeddelande: hej där]".to_owned()),
+                AttachmentRender::Text("[Ljud: hej där]".to_owned()),
             ],
             "describe mode swaps a described image and a transcribed voice note for their text"
         );
@@ -975,7 +994,7 @@ mod tests {
             message.render_attachments(both(MediaMode::Describe)),
             vec![
                 AttachmentRender::Text("[Bild kunde inte tolkas]".to_owned()),
-                AttachmentRender::Text("[Röstmeddelande kunde inte tolkas]".to_owned()),
+                AttachmentRender::Text("[Ljud kunde inte tolkas]".to_owned()),
             ],
             "undescribed attachments fall back to their own placeholders"
         );
@@ -1001,7 +1020,7 @@ mod tests {
             }),
             vec![
                 AttachmentRender::Image("https://cdn/img.png".to_owned()),
-                AttachmentRender::Text("[Röstmeddelande: hej]".to_owned()),
+                AttachmentRender::Text("[Ljud: hej]".to_owned()),
             ],
             "a native-image, describe-audio mode renders each modality on its own terms"
         );
@@ -1057,28 +1076,62 @@ mod tests {
         );
     }
 
-    /// `.ogg` attachments are classified as voice, other attachments as images.
+    /// Recognized audio extensions are classified as audio, everything else as images.
     #[test]
     fn audio_and_image_attachments_are_classified_by_extension() {
         let message = message_with_attachments(
             vec![
                 "https://cdn/img.png".to_owned(),
                 "https://cdn/voice.ogg".to_owned(),
+                "https://cdn/clip.mp3".to_owned(),
             ],
             Vec::new(),
         );
         assert!(
             message.has_audio_attachment(),
-            "an .ogg attachment is a voice attachment"
+            "an .ogg or .mp3 attachment is an audio attachment"
         );
         assert!(
             message.has_image_attachment(),
-            "a non-.ogg attachment is an image attachment"
+            "a non-audio attachment is an image attachment"
         );
         assert_eq!(
             message.audio_attachment_urls(),
-            vec!["https://cdn/voice.ogg".to_owned()],
-            "only the voice attachment is listed as audio"
+            vec![
+                "https://cdn/voice.ogg".to_owned(),
+                "https://cdn/clip.mp3".to_owned()
+            ],
+            "both the .ogg and the .mp3 are listed as audio, the .png is not"
+        );
+    }
+
+    /// Audio formats are detected from common extensions; non-audio extensions yield `None`.
+    #[test]
+    fn audio_format_is_detected_from_common_extensions() {
+        assert_eq!(
+            super::audio_format_from_url("https://cdn/voice.ogg"),
+            Some(AudioMediaType::OGG),
+            "an .ogg attachment is OGG audio"
+        );
+        assert_eq!(
+            super::audio_format_from_url("https://cdn/clip.MP3?ex=123"),
+            Some(AudioMediaType::MP3),
+            "an .mp3 is MP3 audio, case-insensitively and ignoring the query string"
+        );
+        assert_eq!(
+            super::audio_format_from_url("https://cdn/song.wav"),
+            Some(AudioMediaType::WAV),
+            "a .wav is WAV audio"
+        );
+        assert_eq!(
+            super::audio_format_from_url("https://cdn/img.png"),
+            None,
+            "an image extension is not audio"
+        );
+        assert_eq!(
+            super::audio_format_from_url("https://cdn/noext"),
+            None,
+            "a URL without an extension is not audio"
         );
     }
 

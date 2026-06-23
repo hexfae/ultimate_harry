@@ -31,7 +31,7 @@ pub async fn model(
     #[description = "Modellen som beskriver bilder för modeller utan syn"]
     vision_model: Option<String>,
     #[rename = "ljud-modell"]
-    #[description = "Modellen som transkriberar röstmeddelanden för modeller utan ljud"]
+    #[description = "Modellen som transkriberar ljud för modeller utan ljud"]
     audio_model: Option<String>,
 ) -> AppResult {
     let db = &ctx.data().db;
@@ -63,6 +63,8 @@ pub async fn model(
     model_settings.apply_overrides(overrides);
     db.set_character_model_settings(character.id(), model_settings)
         .await?;
-    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral("Klart!")
+        .await
+        .context(SendMessageSnafu)?;
     Ok(())
 }
