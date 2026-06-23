@@ -8,8 +8,8 @@ use snafu::{ResultExt as _, Snafu};
 /// The `ElevenLabs` text-to-speech endpoint, to which the voice ID is appended.
 const TTS_URL_BASE: &str = "https://api.elevenlabs.io/v1/text-to-speech/";
 
-/// The default `ElevenLabs` model, chosen for its Swedish support.
-const DEFAULT_TTS_MODEL: &str = "eleven_multilingual_v2";
+/// The default `ElevenLabs` model: Eleven v3, the expressive model that interprets audio tags.
+const DEFAULT_TTS_MODEL: &str = "eleven_v3";
 
 /// The default `ElevenLabs` model used to synthesize speech.
 fn default_tts_model() -> String {
@@ -153,6 +153,12 @@ impl TtsManager {
     }
 }
 
+/// Whether `text` has anything worth speaking, so the button can skip synthesizing
+/// an empty reply (such as the "skip the greeting" choice), which `ElevenLabs` rejects.
+pub fn is_speakable(text: &str) -> bool {
+    !text.trim().is_empty()
+}
+
 /// The full `ElevenLabs` text-to-speech URL for the given voice.
 fn tts_url(voice_id: &str) -> String {
     format!("{TTS_URL_BASE}{voice_id}")
@@ -225,7 +231,7 @@ impl TtsError {
 /// Tests for voice resolution and request construction.
 #[cfg(test)]
 mod tests {
-    use super::{TtsError, TtsOverrides, TtsSettings, tts_request_body, tts_url};
+    use super::{TtsError, TtsOverrides, TtsSettings, is_speakable, tts_request_body, tts_url};
     use crate::models::character::Character;
     use serenity::all::UserId;
 
@@ -363,6 +369,17 @@ mod tests {
             body.get("model_id").and_then(serde_json::Value::as_str),
             Some("eleven_multilingual_v2"),
             "the model is sent as model_id"
+        );
+    }
+
+    /// Empty or whitespace-only replies are not speakable, so the button skips the call.
+    #[test]
+    fn blank_text_is_not_speakable() {
+        assert!(is_speakable("hej"), "real text is speakable");
+        assert!(!is_speakable(""), "empty text is not speakable");
+        assert!(
+            !is_speakable("   \n\t  "),
+            "whitespace-only text is not speakable"
         );
     }
 

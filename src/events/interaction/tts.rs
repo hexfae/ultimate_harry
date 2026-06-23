@@ -20,6 +20,8 @@ const AUDIO_FILENAME: &str = "uppläsning.mp3";
 ///
 /// The voice is the character's own linked voice, falling back to the configured
 /// generic default; with neither, it fails with a notice rather than staying silent.
+/// An empty reply has nothing to speak, but the button is disabled in that case (see
+/// the render in `history/render.rs`), so this is never reached for blank text.
 /// Synthesis can take longer than Discord's three-second window, so the interaction
 /// is deferred before the (slow) request is made.
 pub async fn tts(

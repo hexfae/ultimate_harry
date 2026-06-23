@@ -24,6 +24,7 @@ use crate::{
     database::Database,
     events::interaction::InteractionKind,
     models::character::{Character, CharacterOption},
+    tts::is_speakable,
 };
 
 use super::History;
@@ -110,7 +111,10 @@ impl History {
 
         let title = vec![character_title_section(character, "…")].into();
 
-        let components = create_buttons(1, self.has_finished, has_previous, has_edit, options);
+        // nothing has streamed in yet, so there is nothing to speak; the speak
+        // button is disabled anyway while unfinished
+        let components =
+            create_buttons(1, self.has_finished, has_previous, has_edit, false, options);
 
         let container = vec![CreateComponent::Container(CreateContainer::new(
             [title, components, footer].concat(),
@@ -291,6 +295,7 @@ impl History {
             self.has_finished,
             self.has_multiple_choices(),
             self.chosen_has_edit(),
+            is_speakable(content),
             options,
         );
 
@@ -373,11 +378,16 @@ where
 }
 
 /// Creates button components for the history message.
+#[expect(
+    clippy::fn_params_excessive_bools,
+    reason = "each bool is the independent enabled state of one of the message's buttons"
+)]
 fn create_buttons<'a>(
     id: u64,
     finished: bool,
     previous: bool,
     edit: bool,
+    speakable: bool,
     options: &[CharacterOption],
 ) -> Cow<'a, [CreateContainerComponent<'a>]> {
     let prev_msg_id = InteractionKind::Previous.custom_id(id);
@@ -403,7 +413,7 @@ fn create_buttons<'a>(
             vec![
                 emoji_button(edit_msg_id, EDIT).disabled(!finished),
                 emoji_button(pin_id, PIN).disabled(!finished),
-                emoji_button(tts_id, SPEAK).disabled(!finished),
+                emoji_button(tts_id, SPEAK).disabled(!finished || !speakable),
             ]
             .into(),
         )),
