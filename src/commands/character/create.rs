@@ -39,17 +39,17 @@ pub async fn create(ctx: ApplicationContext<'_>) -> AppResult {
 
     let character = Character::from((first_modal, second_modal, ctx.author().id));
 
-    let success_message = ctx
-        .say_ephemeral(created(&character))
-        .await
-        .context(SendMessageSnafu)?;
+    // persist the character before announcing it, so the user is never told it was
+    // created when the insert (or the notice teardown) failed.
+    let notice = created(&character);
+    ctx.data().db.insert_character(character).await?;
+
+    let success_message = ctx.say_ephemeral(notice).await.context(SendMessageSnafu)?;
     sleep(TRANSIENT_LINGER).await;
     success_message
         .delete(Context::Application(ctx))
         .await
         .context(DeleteMessageSnafu)?;
-
-    ctx.data().db.insert_character(character).await?;
 
     Ok(())
 }
