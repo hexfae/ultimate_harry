@@ -30,6 +30,9 @@ pub async fn model(
     #[rename = "syn-modell"]
     #[description = "Modellen som beskriver bilder för modeller utan syn"]
     vision_model: Option<String>,
+    #[rename = "ljud-modell"]
+    #[description = "Modellen som transkriberar röstmeddelanden för modeller utan ljud"]
+    audio_model: Option<String>,
 ) -> AppResult {
     let db = &ctx.data().db;
     let characters: Vec<Character> = db.characters_by_similarity(name).await?;
@@ -43,6 +46,7 @@ pub async fn model(
         api_key,
         temperature,
         vision_model,
+        audio_model,
     };
     let mut model_settings = db.resolved_model_settings(character).await;
     if overrides.is_empty() {

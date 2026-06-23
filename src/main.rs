@@ -11,12 +11,12 @@ mod error;
 mod error_display;
 mod events;
 mod llm;
+mod media;
 mod models;
 mod phrases;
 mod traits;
 mod tts;
 mod util;
-mod vision;
 
 use crate::{
     app_state::AppState,

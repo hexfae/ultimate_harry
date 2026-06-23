@@ -19,7 +19,7 @@ use crate::{
         message::{AttachmentMode, Message as ChatMessage},
     },
     util::report_error,
-    vision::resolve_attachments,
+    media::resolve_attachments,
 };
 use core::time::Duration;
 use poise::serenity_prelude::{ComponentInteraction, Context, Message, MessageId};

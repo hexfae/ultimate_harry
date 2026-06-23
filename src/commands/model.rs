@@ -21,12 +21,16 @@ pub async fn model(
     #[rename = "syn-modell"]
     #[description = "Modellen som beskriver bilder för modeller utan syn"]
     vision_model: Option<String>,
+    #[rename = "ljud-modell"]
+    #[description = "Modellen som transkriberar röstmeddelanden för modeller utan ljud"]
+    audio_model: Option<String>,
 ) -> AppResult {
     let overrides = ModelOverrides {
         model,
         api_key,
         temperature,
         vision_model,
+        audio_model,
     };
     let mut model_settings = ctx.data().db.model_settings().await;
     if overrides.is_empty() {

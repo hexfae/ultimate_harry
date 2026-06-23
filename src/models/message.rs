@@ -11,7 +11,10 @@ use nonempty::NonEmpty;
 use rig::{
     OneOrMany,
     agent::Text,
-    message::{AssistantContent, Message as RigMessage, UserContent},
+    message::{
+        AssistantContent, Audio, AudioMediaType, DocumentSourceKind, Message as RigMessage,
+        UserContent,
+    },
 };
 use serde::{Deserialize, Serialize};
 use serenity::all::{Message as DiscordMessage, MessageId, UserId};
@@ -26,36 +29,74 @@ const PROBABLE_DISCORD_VOICE_RECORDING: &str = ".ogg";
 /// Placeholder text fed to a non-vision model when an image has no cached description.
 const UNDESCRIBED_IMAGE: &str = "[Bild kunde inte tolkas]";
 
-/// Whether a message's image attachments are sent to the LLM as images or as text descriptions.
+/// Placeholder text fed to a model when a voice message could not be transcribed or encoded.
+const UNDESCRIBED_AUDIO: &str = "[Röstmeddelande kunde inte tolkas]";
+
+/// Whether one kind of attachment is sent to the model natively or as cached text.
 ///
-/// `Image` is the normal path; `Describe` is used when the active model lacks vision and a separate
-/// vision model has described the images instead.
+/// `Native` is the normal path (an image URL or base64 audio); `Describe` is used when the active
+/// model lacks the matching input modality and a separate model has described or transcribed the
+/// attachment instead.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub enum AttachmentMode {
-    /// Send image attachments to the model as images.
+pub enum MediaMode {
+    /// Send the attachment to the model in its native form.
     #[default]
-    Image,
-    /// Replace image attachments with their cached text descriptions.
+    Native,
+    /// Replace the attachment with its cached text (an image description or audio transcription).
     Describe,
 }
 
+/// How a message's attachments are sent to the LLM, decided independently per modality.
+///
+/// Images and audio are separate: a model may accept images but not audio (most vision models do),
+/// so each modality carries its own [`MediaMode`].
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct AttachmentMode {
+    /// How image attachments are sent.
+    pub image: MediaMode,
+    /// How audio attachments (Discord voice messages) are sent.
+    pub audio: MediaMode,
+}
+
 /// A cached vision-model description of a single attachment, looked up by its URL.
+///
+/// Used both for image descriptions and for voice-message transcriptions; the stored `description`
+/// is the raw text, and the renderer wraps it differently per attachment kind.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DescribedAttachment {
     /// The attachment URL this describes.
     pub url: String,
-    /// The vision model's text description of the attachment.
+    /// The model's text description (an image caption or an audio transcription).
     pub description: String,
 }
 
+/// A base64-encoded voice attachment, looked up by its URL.
+///
+/// Filled transiently when the active model accepts audio, so the clip can be sent natively;
+/// never persisted (the bytes live only for the duration of one request).
+#[derive(Debug, Clone, PartialEq)]
+pub struct EncodedAudio {
+    /// The attachment URL this encodes.
+    pub url: String,
+    /// The base64-encoded audio bytes.
+    pub data: String,
+    /// The audio media type, as detected from the URL.
+    pub format: AudioMediaType,
+}
+
 /// How one attachment is rendered into LLM content under a given [`AttachmentMode`].
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 enum AttachmentRender {
     /// Sent as an image URL.
     Image(String),
-    /// Sent as an audio URL (Discord voice messages).
-    Audio(String),
-    /// Sent as plain text (a description or a placeholder).
+    /// Sent as base64-encoded audio (Discord voice messages on an audio-capable model).
+    Audio {
+        /// The base64-encoded audio bytes.
+        data: String,
+        /// The audio media type.
+        format: AudioMediaType,
+    },
+    /// Sent as plain text (a description, a transcription, or a placeholder).
     Text(String),
 }
 
@@ -98,6 +139,11 @@ pub struct Message {
     #[builder(default)]
     #[serde(default)]
     described: Vec<DescribedAttachment>,
+    /// Base64-encoded voice attachments, keyed by URL. Filled transiently when the active model
+    /// accepts audio so the clip can be sent natively; never persisted.
+    #[builder(default)]
+    #[serde(skip)]
+    encoded_audio: Vec<EncodedAudio>,
     /// The message "revision," 0 is the original (unedited) message, 1 is the
     /// first edit, 2 is the second edit, etc.
     #[builder(default)]
@@ -347,8 +393,12 @@ impl Message {
                 AttachmentRender::Image(url) => {
                     media.push(UserContent::image_url(&url, None, None));
                 }
-                AttachmentRender::Audio(url) => {
-                    media.push(UserContent::audio_url(&url, None));
+                AttachmentRender::Audio { data, format } => {
+                    media.push(UserContent::Audio(Audio {
+                        data: DocumentSourceKind::Base64(data),
+                        media_type: Some(format),
+                        ..Default::default()
+                    }));
                 }
                 AttachmentRender::Text(description) => {
                     if !text.is_empty() {
@@ -367,27 +417,48 @@ impl Message {
         RigMessage::User { content }
     }
 
-    /// Renders this message's attachments under `mode`: voice notes stay audio, while images are
-    /// either kept as images or swapped for their cached description (or a placeholder).
+    /// Renders this message's attachments under `mode`, deciding per modality: a voice note is sent
+    /// as native audio (when encoded) or as its cached transcription; an image is sent as an image
+    /// URL or as its cached description. A missing encoding or text falls back to a placeholder.
     fn render_attachments(&self, mode: AttachmentMode) -> Vec<AttachmentRender> {
         self.attachments
             .iter()
             .map(|url| {
-                if url.contains(PROBABLE_DISCORD_VOICE_RECORDING) {
-                    AttachmentRender::Audio(url.clone())
+                if is_voice_url(url) {
+                    self.render_audio(url, mode.audio)
                 } else {
-                    match mode {
-                        AttachmentMode::Image => AttachmentRender::Image(url.clone()),
-                        AttachmentMode::Describe => AttachmentRender::Text(
-                            self.description_for(url).map_or_else(
-                                || UNDESCRIBED_IMAGE.to_owned(),
-                                |description| format!("[Bild: {description}]"),
-                            ),
-                        ),
-                    }
+                    self.render_image(url, mode.image)
                 }
             })
             .collect()
+    }
+
+    /// Renders a single voice attachment under `mode`.
+    fn render_audio(&self, url: &str, mode: MediaMode) -> AttachmentRender {
+        match mode {
+            MediaMode::Native => self.encoded_audio_for(url).map_or_else(
+                || AttachmentRender::Text(UNDESCRIBED_AUDIO.to_owned()),
+                |encoded| AttachmentRender::Audio {
+                    data: encoded.data.clone(),
+                    format: encoded.format.clone(),
+                },
+            ),
+            MediaMode::Describe => AttachmentRender::Text(self.description_for(url).map_or_else(
+                || UNDESCRIBED_AUDIO.to_owned(),
+                |transcription| format!("[Röstmeddelande: {transcription}]"),
+            )),
+        }
+    }
+
+    /// Renders a single image attachment under `mode`.
+    fn render_image(&self, url: &str, mode: MediaMode) -> AttachmentRender {
+        match mode {
+            MediaMode::Native => AttachmentRender::Image(url.to_owned()),
+            MediaMode::Describe => AttachmentRender::Text(self.description_for(url).map_or_else(
+                || UNDESCRIBED_IMAGE.to_owned(),
+                |description| format!("[Bild: {description}]"),
+            )),
+        }
     }
 
     /// The non-voice attachment URLs that do not yet have a cached description.
@@ -395,7 +466,7 @@ impl Message {
     pub fn undescribed_image_urls(&self) -> Vec<String> {
         self.attachments
             .iter()
-            .filter(|url| !url.contains(PROBABLE_DISCORD_VOICE_RECORDING))
+            .filter(|url| !is_voice_url(url))
             .filter(|url| self.description_for(url).is_none())
             .cloned()
             .collect()
@@ -404,9 +475,57 @@ impl Message {
     /// Whether this message has at least one image (non-voice) attachment.
     #[must_use]
     pub fn has_image_attachment(&self) -> bool {
+        self.attachments.iter().any(|url| !is_voice_url(url))
+    }
+
+    /// Whether this message has at least one voice (audio) attachment.
+    #[must_use]
+    pub fn has_audio_attachment(&self) -> bool {
+        self.attachments.iter().any(|url| is_voice_url(url))
+    }
+
+    /// All voice attachment URLs on this message.
+    #[must_use]
+    pub fn audio_attachment_urls(&self) -> Vec<String> {
         self.attachments
             .iter()
-            .any(|url| !url.contains(PROBABLE_DISCORD_VOICE_RECORDING))
+            .filter(|url| is_voice_url(url))
+            .cloned()
+            .collect()
+    }
+
+    /// The voice attachment URLs that do not yet have a cached transcription.
+    #[must_use]
+    pub fn undescribed_audio_urls(&self) -> Vec<String> {
+        self.attachments
+            .iter()
+            .filter(|url| is_voice_url(url))
+            .filter(|url| self.description_for(url).is_none())
+            .cloned()
+            .collect()
+    }
+
+    /// The cached base64 encoding for the voice attachment at `url`, if one has been made.
+    #[must_use]
+    pub fn encoded_audio_for(&self, url: &str) -> Option<&EncodedAudio> {
+        self.encoded_audio
+            .iter()
+            .find(|encoded| encoded.url.as_str() == url)
+    }
+
+    /// Merges in any encodings whose URL matches one of this message's attachments, skipping URLs
+    /// that are already encoded.
+    pub fn add_encoded_audio(&mut self, new: &[EncodedAudio]) {
+        for encoded in new {
+            let owned = self
+                .attachments
+                .iter()
+                .any(|url| url.as_str() == encoded.url.as_str());
+            let already = self.encoded_audio_for(&encoded.url).is_some();
+            if owned && !already {
+                self.encoded_audio.push(encoded.clone());
+            }
+        }
     }
 
     /// The cached description for `url`, if one has been generated.
@@ -465,6 +584,11 @@ impl From<(Character, String, Duration)> for Message {
             .elapsed(time_taken)
             .build()
     }
+}
+
+/// Whether `url` points at a Discord voice recording (an `.ogg` attachment).
+fn is_voice_url(url: &str) -> bool {
+    url.contains(PROBABLE_DISCORD_VOICE_RECORDING)
 }
 
 /// Splits `text` into one [`Part`] per line, taking each line's role from its
@@ -541,10 +665,10 @@ impl From<(String, String, Role)> for Parts {
 #[cfg(test)]
 mod tests {
     use super::{
-        AttachmentMode, AttachmentRender, DescribedAttachment, Message, Part, Parts, Role,
-        parts_from_lines,
+        AttachmentMode, AttachmentRender, DescribedAttachment, EncodedAudio, MediaMode, Message,
+        Part, Parts, Role, parts_from_lines,
     };
-    use rig::message::Message as RigMessage;
+    use rig::message::{AudioMediaType, Message as RigMessage};
 
     /// Builds a system message edited twice, leaving two revisions on top of the original.
     fn message_with_two_edits() -> Message {
@@ -639,7 +763,7 @@ mod tests {
                     .build(),
             ])
             .build();
-        let rig_messages = message.to_rig_messages(AttachmentMode::Image);
+        let rig_messages = message.to_rig_messages(AttachmentMode::default());
         assert_eq!(rig_messages.len(), 3, "each part maps to one rig message");
         assert!(
             matches!(rig_messages.first(), Some(RigMessage::System { .. })),
@@ -748,9 +872,98 @@ mod tests {
             .build()
     }
 
-    /// Image mode keeps images as images and voice notes as audio.
+    /// The attachment mode with both modalities set to `mode`.
+    const fn both(mode: MediaMode) -> AttachmentMode {
+        AttachmentMode {
+            image: mode,
+            audio: mode,
+        }
+    }
+
+    /// Builds a user message carrying the given attachment URLs and cached audio encodings.
+    fn message_with_encoded_audio(
+        attachments: Vec<String>,
+        encoded: Vec<EncodedAudio>,
+    ) -> Message {
+        Message::builder()
+            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .attachments(attachments)
+            .encoded_audio(encoded)
+            .build()
+    }
+
+    /// Native mode keeps an image as an image URL and an encoded voice note as base64 audio.
     #[test]
-    fn render_image_mode_keeps_images_and_audio() {
+    fn render_native_mode_keeps_images_and_encoded_audio() {
+        let message = message_with_encoded_audio(
+            vec![
+                "https://cdn/img.png".to_owned(),
+                "https://cdn/voice.ogg".to_owned(),
+            ],
+            vec![EncodedAudio {
+                url: "https://cdn/voice.ogg".to_owned(),
+                data: "AAAA".to_owned(),
+                format: AudioMediaType::OGG,
+            }],
+        );
+        assert_eq!(
+            message.render_attachments(both(MediaMode::Native)),
+            vec![
+                AttachmentRender::Image("https://cdn/img.png".to_owned()),
+                AttachmentRender::Audio {
+                    data: "AAAA".to_owned(),
+                    format: AudioMediaType::OGG,
+                },
+            ],
+            "native mode sends images as URLs and encoded voice notes as base64 audio"
+        );
+    }
+
+    /// Native audio falls back to a placeholder when the clip was not encoded (download failed).
+    #[test]
+    fn render_native_audio_falls_back_when_unencoded() {
+        let message = message_with_attachments(vec!["https://cdn/voice.ogg".to_owned()], Vec::new());
+        assert_eq!(
+            message.render_attachments(both(MediaMode::Native)),
+            vec![AttachmentRender::Text(
+                "[Röstmeddelande kunde inte tolkas]".to_owned()
+            )],
+            "an unencoded voice note falls back to a placeholder under native mode"
+        );
+    }
+
+    /// Describe mode swaps a described image and a transcribed voice note for their cached text.
+    #[test]
+    fn render_describe_mode_uses_cached_descriptions() {
+        let message = message_with_attachments(
+            vec![
+                "https://cdn/img.png".to_owned(),
+                "https://cdn/voice.ogg".to_owned(),
+            ],
+            vec![
+                DescribedAttachment {
+                    url: "https://cdn/img.png".to_owned(),
+                    description: "en katt".to_owned(),
+                },
+                DescribedAttachment {
+                    url: "https://cdn/voice.ogg".to_owned(),
+                    description: "hej där".to_owned(),
+                },
+            ],
+        );
+        assert_eq!(
+            message.render_attachments(both(MediaMode::Describe)),
+            vec![
+                AttachmentRender::Text("[Bild: en katt]".to_owned()),
+                AttachmentRender::Text("[Röstmeddelande: hej där]".to_owned()),
+            ],
+            "describe mode swaps a described image and a transcribed voice note for their text"
+        );
+    }
+
+    /// Describe mode falls back to per-kind placeholders for an undescribed image and voice note.
+    #[test]
+    fn render_describe_mode_falls_back_for_undescribed_attachments() {
         let message = message_with_attachments(
             vec![
                 "https://cdn/img.png".to_owned(),
@@ -759,46 +972,38 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(
-            message.render_attachments(AttachmentMode::Image),
+            message.render_attachments(both(MediaMode::Describe)),
             vec![
-                AttachmentRender::Image("https://cdn/img.png".to_owned()),
-                AttachmentRender::Audio("https://cdn/voice.ogg".to_owned()),
+                AttachmentRender::Text("[Bild kunde inte tolkas]".to_owned()),
+                AttachmentRender::Text("[Röstmeddelande kunde inte tolkas]".to_owned()),
             ],
-            "image mode sends images as images and voice notes as audio"
+            "undescribed attachments fall back to their own placeholders"
         );
     }
 
-    /// Describe mode swaps a described image for its text, leaving audio untouched.
+    /// Image and audio modes are independent: an image can stay native while audio is transcribed.
     #[test]
-    fn render_describe_mode_uses_cached_descriptions() {
+    fn render_mixes_native_image_with_described_audio() {
         let message = message_with_attachments(
             vec![
                 "https://cdn/img.png".to_owned(),
                 "https://cdn/voice.ogg".to_owned(),
             ],
             vec![DescribedAttachment {
-                url: "https://cdn/img.png".to_owned(),
-                description: "en katt".to_owned(),
+                url: "https://cdn/voice.ogg".to_owned(),
+                description: "hej".to_owned(),
             }],
         );
         assert_eq!(
-            message.render_attachments(AttachmentMode::Describe),
+            message.render_attachments(AttachmentMode {
+                image: MediaMode::Native,
+                audio: MediaMode::Describe,
+            }),
             vec![
-                AttachmentRender::Text("[Bild: en katt]".to_owned()),
-                AttachmentRender::Audio("https://cdn/voice.ogg".to_owned()),
+                AttachmentRender::Image("https://cdn/img.png".to_owned()),
+                AttachmentRender::Text("[Röstmeddelande: hej]".to_owned()),
             ],
-            "describe mode swaps a described image for its text and leaves audio alone"
-        );
-    }
-
-    /// Describe mode falls back to a placeholder for an image with no cached description.
-    #[test]
-    fn render_describe_mode_falls_back_for_undescribed_images() {
-        let message = message_with_attachments(vec!["https://cdn/img.png".to_owned()], Vec::new());
-        assert_eq!(
-            message.render_attachments(AttachmentMode::Describe),
-            vec![AttachmentRender::Text("[Bild kunde inte tolkas]".to_owned())],
-            "an undescribed image falls back to a placeholder"
+            "a native-image, describe-audio mode renders each modality on its own terms"
         );
     }
 
@@ -852,6 +1057,110 @@ mod tests {
         );
     }
 
+    /// `.ogg` attachments are classified as voice, other attachments as images.
+    #[test]
+    fn audio_and_image_attachments_are_classified_by_extension() {
+        let message = message_with_attachments(
+            vec![
+                "https://cdn/img.png".to_owned(),
+                "https://cdn/voice.ogg".to_owned(),
+            ],
+            Vec::new(),
+        );
+        assert!(
+            message.has_audio_attachment(),
+            "an .ogg attachment is a voice attachment"
+        );
+        assert!(
+            message.has_image_attachment(),
+            "a non-.ogg attachment is an image attachment"
+        );
+        assert_eq!(
+            message.audio_attachment_urls(),
+            vec!["https://cdn/voice.ogg".to_owned()],
+            "only the voice attachment is listed as audio"
+        );
+    }
+
+    /// `undescribed_audio_urls` lists only voice attachments without a cached transcription.
+    #[test]
+    fn undescribed_audio_urls_excludes_images_and_transcribed() {
+        let message = message_with_attachments(
+            vec![
+                "https://cdn/a.ogg".to_owned(),
+                "https://cdn/b.ogg".to_owned(),
+                "https://cdn/img.png".to_owned(),
+            ],
+            vec![DescribedAttachment {
+                url: "https://cdn/a.ogg".to_owned(),
+                description: "transkriberad".to_owned(),
+            }],
+        );
+        assert_eq!(
+            message.undescribed_audio_urls(),
+            vec!["https://cdn/b.ogg".to_owned()],
+            "only untranscribed voice attachments need transcribing"
+        );
+    }
+
+    /// `add_encoded_audio` merges encodings for owned URLs once, ignoring unrelated URLs.
+    #[test]
+    fn add_encoded_audio_merges_matching_urls_without_duplicates() {
+        let mut message =
+            message_with_attachments(vec!["https://cdn/voice.ogg".to_owned()], Vec::new());
+        let encoded = vec![
+            EncodedAudio {
+                url: "https://cdn/voice.ogg".to_owned(),
+                data: "AAAA".to_owned(),
+                format: AudioMediaType::OGG,
+            },
+            EncodedAudio {
+                url: "https://cdn/other.ogg".to_owned(),
+                data: "BBBB".to_owned(),
+                format: AudioMediaType::OGG,
+            },
+        ];
+        message.add_encoded_audio(&encoded);
+        message.add_encoded_audio(&encoded);
+        assert_eq!(
+            message
+                .encoded_audio_for("https://cdn/voice.ogg")
+                .map(|audio| audio.data.as_str()),
+            Some("AAAA"),
+            "the matching url is encoded"
+        );
+        assert!(
+            message.encoded_audio_for("https://cdn/other.ogg").is_none(),
+            "an unrelated url is not encoded onto this message"
+        );
+    }
+
+    /// Native audio sends an encoded voice note as its own base64 audio content part.
+    #[test]
+    fn native_audio_becomes_a_separate_audio_content_part() {
+        let message = message_with_encoded_audio(
+            vec!["https://cdn/voice.ogg".to_owned()],
+            vec![EncodedAudio {
+                url: "https://cdn/voice.ogg".to_owned(),
+                data: "AAAA".to_owned(),
+                format: AudioMediaType::OGG,
+            }],
+        );
+        let voiced = message.to_rig_messages(AttachmentMode::default()).pop();
+        assert!(
+            matches!(voiced, Some(RigMessage::User { .. })),
+            "the message maps to a user message"
+        );
+        let Some(RigMessage::User { content }) = voiced else {
+            return;
+        };
+        assert_eq!(
+            content.iter().count(),
+            2,
+            "native audio sends the text plus the audio as two content parts"
+        );
+    }
+
     /// Describe mode folds the description into one text content, so a text-only model receives a
     /// plain string rather than a multi-part content array (which such models reject).
     #[test]
@@ -863,7 +1172,7 @@ mod tests {
                 description: "en katt".to_owned(),
             }],
         );
-        let described = message.to_rig_messages(AttachmentMode::Describe).pop();
+        let described = message.to_rig_messages(both(MediaMode::Describe)).pop();
         assert!(
             matches!(described, Some(RigMessage::User { .. })),
             "the message maps to a user message"
@@ -882,7 +1191,7 @@ mod tests {
     #[test]
     fn image_mode_keeps_the_image_as_a_separate_content_part() {
         let message = message_with_attachments(vec!["https://cdn/img.png".to_owned()], Vec::new());
-        let imaged = message.to_rig_messages(AttachmentMode::Image).pop();
+        let imaged = message.to_rig_messages(AttachmentMode::default()).pop();
         assert!(
             matches!(imaged, Some(RigMessage::User { .. })),
             "the message maps to a user message"
@@ -909,7 +1218,7 @@ mod tests {
             ))
             .attachments(vec!["https://cdn/img.png".to_owned()])
             .build();
-        let messages = message.to_rig_messages(AttachmentMode::Image);
+        let messages = message.to_rig_messages(AttachmentMode::default());
         assert!(
             matches!(messages.first(), Some(RigMessage::System { .. })),
             "the prefixed line stays a system message"

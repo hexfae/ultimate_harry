@@ -1,8 +1,10 @@
 //! The LLM manager for generating responses from AI models.
 
-use crate::models::message::{AttachmentMode, Message as ChatMessage};
+use crate::models::message::{AttachmentMode, EncodedAudio, Message as ChatMessage};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use core::pin::Pin;
 use miette::Diagnostic;
+use rig::message::AudioMediaType;
 use rig::{
     agent::{AgentBuilder, MultiTurnStreamItem, StreamingError},
     http_client::Error as RigError,
@@ -24,6 +26,9 @@ const CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 
 /// The instruction given to the vision model when describing an image.
 const DESCRIBE_PROMPT: &str = "Beskriv bilden så detaljerat som möjligt på svenska.";
+
+/// The instruction given to the audio model when transcribing a voice message.
+const TRANSCRIBE_PROMPT: &str = "Transcribe the spoken audio verbatim, keeping the transcription in the original spoken language (do not translate it). Briefly describe any non-speech sounds in square brackets. Reply with only the transcription, no explanation.";
 
 /// The instruction given to the tag model when enriching a reply with audio tags.
 const TAG_PROMPT: &str = "You are given a single line of dialogue from a roleplay. Insert ElevenLabs v3 audio tags (square-bracketed, e.g. [laughs], [sighs], [whispers], [angry], [sad]) at fitting points so it sounds expressive when read aloud. Keep all of the original text and its language exactly as given: do not translate, rephrase, or change any words; only add tags. The tags themselves must always be in English, even when the dialogue is in another language. Reply with only the tagged text, no explanation.";
@@ -61,6 +66,12 @@ pub struct ModelSettings {
     /// is sent instead. `None` disables the fallback.
     #[serde(default = "default_vision_model")]
     pub vision_model: Option<String>,
+    /// The model used to transcribe voice messages for models that lack audio input.
+    ///
+    /// When the active model cannot read audio, this model is asked to transcribe each voice
+    /// message and the text is sent instead. `None` disables the fallback.
+    #[serde(default = "default_audio_model")]
+    pub audio_model: Option<String>,
 }
 
 /// The default vision model used to describe images for models without vision.
@@ -69,6 +80,15 @@ pub struct ModelSettings {
     reason = "serde default must produce the Option<String> field type"
 )]
 fn default_vision_model() -> Option<String> {
+    Some("google/gemini-3.1-flash-lite".to_owned())
+}
+
+/// The default audio model used to transcribe voice messages for models without audio input.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "serde default must produce the Option<String> field type"
+)]
+fn default_audio_model() -> Option<String> {
     Some("google/gemini-3.1-flash-lite".to_owned())
 }
 
@@ -82,8 +102,9 @@ impl ModelSettings {
             "inställd"
         };
         let vision_model = self.vision_model.as_deref().unwrap_or("ingen");
+        let audio_model = self.audio_model.as_deref().unwrap_or("ingen");
         format!(
-            "modell: {}\nsynmodell: {vision_model}\ntemperatur: {}\napi-nyckel: {api_key}",
+            "modell: {}\nsynmodell: {vision_model}\nljudmodell: {audio_model}\ntemperatur: {}\napi-nyckel: {api_key}",
             self.model, self.temperature
         )
     }
@@ -102,6 +123,9 @@ impl ModelSettings {
         if let Some(new_vision_model) = overrides.vision_model {
             self.vision_model = Some(new_vision_model);
         }
+        if let Some(new_audio_model) = overrides.audio_model {
+            self.audio_model = Some(new_audio_model);
+        }
     }
 }
 
@@ -119,6 +143,8 @@ pub struct ModelOverrides {
     pub temperature: Option<f32>,
     /// The vision model for image descriptions, if overridden.
     pub vision_model: Option<String>,
+    /// The audio model for voice-message transcriptions, if overridden.
+    pub audio_model: Option<String>,
 }
 
 impl ModelOverrides {
@@ -129,6 +155,7 @@ impl ModelOverrides {
             && self.api_key.is_none()
             && self.temperature.is_none()
             && self.vision_model.is_none()
+            && self.audio_model.is_none()
     }
 }
 
@@ -189,11 +216,26 @@ impl LlmManager {
     /// The per-model answer is cached process-wide so the full model list is fetched at most once
     /// per model rather than on every request.
     pub async fn supports_vision(&self) -> Result<bool, LlmError> {
-        if let Some(cached) = vision_cache()
-            .lock()
-            .ok()
-            .and_then(|cache| cache.get(&self.settings.model).copied())
-        {
+        self.supports_modality("image", modality_cache()).await
+    }
+
+    /// Returns whether the active model can read audio, by checking its `OpenRouter` capabilities.
+    ///
+    /// The per-model answer is cached process-wide, like [`supports_vision`](Self::supports_vision).
+    pub async fn supports_audio(&self) -> Result<bool, LlmError> {
+        self.supports_modality("audio", modality_cache()).await
+    }
+
+    /// Returns whether the active model lists `modality` among its accepted input modalities,
+    /// caching the per-model answer in `cache` so the model list is fetched at most once per
+    /// (model, modality) pair.
+    async fn supports_modality(
+        &self,
+        modality: &str,
+        cache: &'static Mutex<HashMap<(String, String), bool>>,
+    ) -> Result<bool, LlmError> {
+        let key = (self.settings.model.clone(), modality.to_owned());
+        if let Some(cached) = cache.lock().ok().and_then(|locked| locked.get(&key).copied()) {
             return Ok(cached);
         }
         let response = reqwest::get(MODELS_URL).await.context(ListModelsSnafu)?;
@@ -201,9 +243,9 @@ impl LlmManager {
             .json::<ModelsResponse>()
             .await
             .context(ListModelsSnafu)?;
-        let supported = model_supports_vision(&models, &self.settings.model);
-        if let Ok(mut cache) = vision_cache().lock() {
-            cache.insert(self.settings.model.clone(), supported);
+        let supported = model_supports_modality(&models, &self.settings.model, modality);
+        if let Ok(mut locked) = cache.lock() {
+            locked.insert(key, supported);
         }
         Ok(supported)
     }
@@ -239,6 +281,41 @@ impl LlmManager {
         extract_description(&parsed).context(EmptyDescriptionSnafu)
     }
 
+    /// Transcribes the voice message at `url` using the configured audio model, returning its text.
+    ///
+    /// The clip is downloaded and base64-encoded first, since `OpenRouter` accepts audio only as
+    /// base64 `input_audio`, never as a URL.
+    pub async fn transcribe_audio(&self, url: &str) -> Result<String, LlmError> {
+        let audio_model = self
+            .settings
+            .audio_model
+            .as_deref()
+            .context(NoAudioModelSnafu)?;
+        let encoded = fetch_audio_base64(url).await?;
+        let body = serde_json::json!({
+            "model": audio_model,
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": TRANSCRIBE_PROMPT},
+                    {"type": "input_audio", "input_audio": {"data": encoded.data, "format": encoded.format}},
+                ],
+            }],
+        });
+        let response = reqwest::Client::new()
+            .post(CHAT_URL)
+            .bearer_auth(&self.settings.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context(TranscribeAudioSnafu)?;
+        let parsed = response
+            .json::<ChatResponse>()
+            .await
+            .context(TranscribeAudioSnafu)?;
+        extract_description(&parsed).context(EmptyTranscriptionSnafu)
+    }
+
     /// Rewrites `text` with inline `ElevenLabs` v3 audio tags using `model`, for more
     /// expressive text-to-speech. Only the spoken text is enriched; the visible reply
     /// is left untouched by the caller.
@@ -262,15 +339,46 @@ impl LlmManager {
     }
 }
 
-/// Process-wide cache of model id to whether it accepts image input, so the `OpenRouter` model
-/// list is fetched at most once per model.
-fn vision_cache() -> &'static Mutex<HashMap<String, bool>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, bool>>> = OnceLock::new();
+/// Process-wide cache of (model id, modality) to whether the model accepts that input modality, so
+/// the `OpenRouter` model list is fetched at most once per (model, modality) pair.
+fn modality_cache() -> &'static Mutex<HashMap<(String, String), bool>> {
+    static CACHE: OnceLock<Mutex<HashMap<(String, String), bool>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Whether the model with `model_id` lists `image` among its accepted input modalities.
-fn model_supports_vision(models: &ModelsResponse, model_id: &str) -> bool {
+/// Downloads the audio at `url` and base64-encodes it, detecting the format from the URL.
+///
+/// `OpenRouter` accepts audio only as base64 `input_audio`, so this is needed both to transcribe a
+/// voice message and to send it natively to an audio-capable model.
+pub async fn fetch_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
+    let response = reqwest::get(url).await.context(FetchAudioSnafu)?;
+    let bytes = response.bytes().await.context(FetchAudioSnafu)?;
+    let data = STANDARD.encode(&bytes);
+    Ok(EncodedAudio {
+        url: url.to_owned(),
+        data,
+        format: audio_format_from_url(url),
+    })
+}
+
+/// Detects the audio media type from a URL's extension, defaulting to `OGG` (Discord voice notes).
+fn audio_format_from_url(url: &str) -> AudioMediaType {
+    let path = url.split('?').next().unwrap_or(url);
+    let extension = path
+        .rsplit_once('.')
+        .map_or(String::new(), |(_, ext)| ext.to_ascii_lowercase());
+    match extension.as_str() {
+        "mp3" => AudioMediaType::MP3,
+        "wav" => AudioMediaType::WAV,
+        "m4a" => AudioMediaType::M4A,
+        "aac" => AudioMediaType::AAC,
+        "flac" => AudioMediaType::FLAC,
+        _ => AudioMediaType::OGG,
+    }
+}
+
+/// Whether the model with `model_id` lists `modality` among its accepted input modalities.
+fn model_supports_modality(models: &ModelsResponse, model_id: &str, modality: &str) -> bool {
     models
         .data
         .iter()
@@ -280,7 +388,7 @@ fn model_supports_vision(models: &ModelsResponse, model_id: &str) -> bool {
                 .architecture
                 .input_modalities
                 .iter()
-                .any(|modality| modality == "image")
+                .any(|listed| listed == modality)
         })
 }
 
@@ -349,6 +457,7 @@ impl Default for ModelSettings {
             api_key: String::new(),
             temperature: 1.0,
             vision_model: default_vision_model(),
+            audio_model: default_audio_model(),
         }
     }
 }
@@ -394,6 +503,31 @@ pub enum LlmError {
     #[snafu(display("Synmodellen gav ingen beskrivning"))]
     #[diagnostic(help("Prova en annan synmodell."), code(llm::empty_description))]
     EmptyDescription,
+    /// Failed to download the voice message before transcribing it.
+    #[snafu(display("Kunde inte hämta röstmeddelandet: {source}"))]
+    #[diagnostic(help("Kontrollera att filen finns kvar."), code(llm::fetch_audio))]
+    FetchAudio {
+        /// The source of the error.
+        source: reqwest::Error,
+    },
+    /// Failed to transcribe a voice message with the audio model.
+    #[snafu(display("Kunde inte transkribera röstmeddelandet: {source}"))]
+    #[diagnostic(
+        help("Kontrollera att ljudmodellen och API-nyckeln är giltiga."),
+        code(llm::transcribe_audio)
+    )]
+    TranscribeAudio {
+        /// The source of the error.
+        source: reqwest::Error,
+    },
+    /// No audio model is configured to transcribe voice messages.
+    #[snafu(display("Ingen ljudmodell är inställd"))]
+    #[diagnostic(help("Ställ in en ljudmodell med /modell."), code(llm::no_audio_model))]
+    NoAudioModel,
+    /// The audio model returned an empty transcription.
+    #[snafu(display("Ljudmodellen gav ingen transkription"))]
+    #[diagnostic(help("Prova en annan ljudmodell."), code(llm::empty_transcription))]
+    EmptyTranscription,
     /// Failed to enrich the reply with audio tags.
     #[snafu(display("Kunde inte lägga till ljudtaggar: {source}"))]
     #[diagnostic(
@@ -421,6 +555,9 @@ impl LlmError {
             Self::ListModels { .. }
                 | Self::DescribeImage { .. }
                 | Self::EmptyDescription { .. }
+                | Self::FetchAudio { .. }
+                | Self::TranscribeAudio { .. }
+                | Self::EmptyTranscription { .. }
                 | Self::AddTags { .. }
                 | Self::EmptyTags { .. }
         )
@@ -430,30 +567,63 @@ impl LlmError {
 /// Tests for the `OpenRouter` response parsing helpers.
 #[cfg(test)]
 mod tests {
-    use super::{ChatResponse, ModelsResponse, extract_description, model_supports_vision};
+    use super::{
+        ChatResponse, ModelsResponse, audio_format_from_url, extract_description,
+        model_supports_modality,
+    };
+    use rig::message::AudioMediaType;
 
-    /// A model is vision-capable only when it lists `image` among its input modalities.
+    /// A model supports a modality only when it lists it among its input modalities.
     #[test]
-    fn model_supports_vision_checks_image_modality() {
+    fn model_supports_modality_checks_input_modalities() {
         let json = r#"{"data":[
+            {"id":"vendor/multi","architecture":{"input_modalities":["text","image","audio"]}},
             {"id":"vendor/sees","architecture":{"input_modalities":["text","image"]}},
-            {"id":"vendor/blind","architecture":{"input_modalities":["text"]}}
+            {"id":"vendor/text","architecture":{"input_modalities":["text"]}}
         ]}"#;
         let parsed = serde_json::from_str::<ModelsResponse>(json);
         assert!(parsed.is_ok(), "the model list should parse");
         let Ok(models) = parsed else { return };
 
         assert!(
-            model_supports_vision(&models, "vendor/sees"),
+            model_supports_modality(&models, "vendor/sees", "image"),
             "a model listing image input supports vision"
         );
         assert!(
-            !model_supports_vision(&models, "vendor/blind"),
+            !model_supports_modality(&models, "vendor/text", "image"),
             "a model without image input does not support vision"
         );
         assert!(
-            !model_supports_vision(&models, "vendor/missing"),
-            "an unlisted model is treated as having no vision"
+            model_supports_modality(&models, "vendor/multi", "audio"),
+            "a model listing audio input supports audio"
+        );
+        assert!(
+            !model_supports_modality(&models, "vendor/sees", "audio"),
+            "a vision-only model does not support audio"
+        );
+        assert!(
+            !model_supports_modality(&models, "vendor/missing", "audio"),
+            "an unlisted model is treated as supporting no modality"
+        );
+    }
+
+    /// The audio format is taken from the URL extension, defaulting to OGG for Discord voice notes.
+    #[test]
+    fn audio_format_is_detected_from_the_url() {
+        assert_eq!(
+            audio_format_from_url("https://cdn/voice.ogg"),
+            AudioMediaType::OGG,
+            "an .ogg attachment is OGG"
+        );
+        assert_eq!(
+            audio_format_from_url("https://cdn/clip.MP3?ex=123"),
+            AudioMediaType::MP3,
+            "an .mp3 attachment is MP3, case-insensitively and ignoring the query string"
+        );
+        assert_eq!(
+            audio_format_from_url("https://cdn/unknown"),
+            AudioMediaType::OGG,
+            "an unknown extension defaults to OGG"
         );
     }
 

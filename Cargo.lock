@@ -2775,6 +2775,7 @@ dependencies = [
 name = "ultimate_harry"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "bon",
  "jiff",
  "miette",
