@@ -463,6 +463,23 @@ impl Character {
         self.deleted_at = None;
     }
 
+    /// Supersedes `self` with a fresh version atop itself.
+    ///
+    /// Records the editor, stamps the edit time, bumps the version, links the
+    /// new version back to the head, and mints a fresh ULID. Shared prologue of
+    /// [`rollback_to`](Self::rollback_to) and
+    /// [`edit_from_modals`](Self::edit_from_modals); the caller then copies the
+    /// new content fields over the carried-forward stats.
+    fn begin_new_version<E: Into<UserId>>(&mut self, editor: E) {
+        let editor_id = editor.into();
+        self.latest_editor = Some(editor_id);
+        self.all_editors.insert(editor_id);
+        self.edited_at = Some(Zoned::now());
+        self.version = self.version.saturating_add(1);
+        self.previous_version = Some(self.id.clone());
+        self.id = Ulid::new().to_string();
+    }
+
     /// Rolls the character back to the content of an older version `old`.
     ///
     /// Like [`edit_from_modals`](Self::edit_from_modals), this turns `self` (the
@@ -471,13 +488,7 @@ impl Character {
     /// from `old`, bumps the version, and links the new version back to the head.
     /// The caller supersedes the head with this new version.
     pub fn rollback_to<E: Into<UserId>>(&mut self, editor: E, old: &Self) {
-        let editor_id = editor.into();
-        self.latest_editor = Some(editor_id);
-        self.all_editors.insert(editor_id);
-        self.edited_at = Some(Zoned::now());
-        self.version = self.version.saturating_add(1);
-        self.previous_version = Some(self.id.clone());
-        self.id = Ulid::new().to_string();
+        self.begin_new_version(editor);
         self.name.clone_from(&old.name);
         self.greeting.clone_from(&old.greeting);
         self.nickname.clone_from(&old.nickname);
@@ -518,13 +529,7 @@ impl Character {
         modal: EditCharacterModal,
         second_modal: SecondEditCharacterModal,
     ) {
-        let editor_id = editor.into();
-        self.latest_editor = Some(editor_id);
-        self.all_editors.insert(editor_id);
-        self.edited_at = Some(Zoned::now());
-        self.version = self.version.saturating_add(1);
-        self.previous_version = Some(self.id.clone());
-        self.id = Ulid::new().to_string();
+        self.begin_new_version(editor);
         let avatar_url = validate_url(second_modal.avatar);
         // the reason why these can't just be `self.foo = bar` is because
         // if the user doesn't fill in a field, it will be None, and we
