@@ -5,6 +5,7 @@ pub mod delete;
 pub mod edit;
 pub mod model;
 pub mod paginate;
+pub mod render;
 pub mod restore;
 pub mod view;
 

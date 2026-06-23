@@ -8,6 +8,7 @@
 
 use crate::{
     AppResult, Context,
+    commands::character::render::character_embed,
     components::emoji_button,
     constants::{
         CANCEL, NEWER_VERSION, NEXT, OLDER_VERSION, PREVIOUS, ROLLBACK, TRANSIENT_LINGER,
@@ -197,9 +198,7 @@ where
             .get(current_page)
             .unwrap_or_else(|| characters_and_footers.first())
             .clone();
-        let embed = character
-            .into_embed_with_footer_text(footer_text, &ctx.data().db)
-            .await;
+        let embed = character_embed(&character, footer_text, &ctx.data().db).await;
 
         interaction
             .create_response(
@@ -353,7 +352,7 @@ async fn browse_embed(
         version.saturating_add(1),
         chain.len(),
     );
-    shown.into_embed_with_footer_text(footer, &ctx.data().db).await
+    character_embed(&shown, footer, &ctx.data().db).await
 }
 
 /// Rolls the shown character back to the older version currently on screen, then
@@ -408,9 +407,7 @@ async fn send_initial_embed<'a>(
     nav_disabled: bool,
 ) -> AppResult<ReplyHandle<'a>> {
     let id = ctx.id();
-    let embed = character
-        .into_embed_with_footer_text(footer_text, &ctx.data().db)
-        .await;
+    let embed = character_embed(&character, footer_text, &ctx.data().db).await;
     let buttons = create_buttons(id, action_emoji, nav_disabled);
     ctx.send(
         CreateReply::default()

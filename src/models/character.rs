@@ -7,7 +7,7 @@ use bon::Builder;
 use core::fmt::{Display, Formatter, Result as FmtResult, Write as _};
 use tracing::warn;
 use jiff::Zoned;
-use poise::serenity_prelude::all::{Color, CreateEmbed, CreateEmbedFooter, UserId};
+use poise::serenity_prelude::all::{Color, UserId};
 use native_db::{ToKey as _, native_db};
 use native_model::{Model as _, native_model};
 use serde::{Deserialize, Serialize};
@@ -25,32 +25,10 @@ use crate::{
     },
 };
 
-/// E.g. `16 May, Friday, 2025 | 17:41:14 | 2025-05-16`.
-///
-/// See [`jiff::fmt::strtime`] for formatting details.
-const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %T | %F";
-
 /// Compact date format for the "senast använd" leaderboard column.
 ///
 /// See [`jiff::fmt::strtime`] for formatting details.
 const LATEST_CONVERSATION_FORMAT: &str = "%Y-%m-%d %H:%M";
-
-/// Discord's per-field value limit for embeds; longer values are rejected.
-const FIELD_VALUE_LIMIT: usize = 1024;
-
-/// Truncates a character field to Discord's embed field value limit, cutting on
-/// a character boundary and appending an ellipsis when anything was removed.
-fn truncate_field(value: String) -> String {
-    if value.chars().count() <= FIELD_VALUE_LIMIT {
-        return value;
-    }
-    let mut truncated: String = value
-        .chars()
-        .take(FIELD_VALUE_LIMIT.saturating_sub(1))
-        .collect();
-    truncated.push('…');
-    truncated
-}
 
 /// A character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -272,6 +250,48 @@ impl Character {
     #[must_use]
     pub const fn color(&self) -> Option<Color> {
         self.color
+    }
+
+    /// Returns the character's nickname.
+    #[must_use]
+    pub fn nickname(&self) -> Option<&str> {
+        self.nickname.as_deref()
+    }
+
+    /// Returns the character's short description.
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// Returns the character's version number (zero-based).
+    #[must_use]
+    pub const fn version(&self) -> u32 {
+        self.version
+    }
+
+    /// Returns the Discord user ID of the character's original creator.
+    #[must_use]
+    pub const fn creator(&self) -> UserId {
+        self.creator
+    }
+
+    /// Returns the Discord user ID of the latest editor, if any.
+    #[must_use]
+    pub const fn latest_editor(&self) -> Option<UserId> {
+        self.latest_editor
+    }
+
+    /// Returns the time the character was created.
+    #[must_use]
+    pub const fn created_at(&self) -> &Zoned {
+        &self.created_at
+    }
+
+    /// Returns the time this version was created, if it is an edit.
+    #[must_use]
+    pub const fn edited_at(&self) -> Option<&Zoned> {
+        self.edited_at.as_ref()
     }
 
     /// Returns the character's unique ID.
@@ -557,82 +577,6 @@ impl Character {
         if let Some(scenario) = second_modal.scenario {
             self.scenario = Some(scenario);
         }
-    }
-
-    /// Converts the character into a Discord embed with the given footer text.
-    ///
-    /// Builds an embed containing all character information such as name,
-    /// greeting, personality, scenario, and metadata.
-    pub async fn into_embed_with_footer_text<F: Into<String>>(
-        self,
-        footer_text: F,
-        db: &Database,
-    ) -> CreateEmbed<'static> {
-        // resolve everything that borrows `self` before moving fields out of it
-        let title = self.to_string();
-        let conversations = self.formatted_conversations_had(db).await;
-        let creator_name = db.substitute_name(self.creator).await;
-        let editor_name = match &self.latest_editor {
-            Some(editor_id) => Some(db.substitute_name(editor_id).await),
-            None => None,
-        };
-        let created = self.created_at.strftime(GOOD_DATE_FORMAT).to_string();
-        let edited = self
-            .edited_at
-            .as_ref()
-            .map(|time| time.strftime(GOOD_DATE_FORMAT).to_string());
-
-        let mut embed = CreateEmbed::new()
-            .title(title)
-            .field("Hälsning", truncate_field(self.greeting), true)
-            .field("Konversationer", conversations, true)
-            .field("Version", self.version.saturating_add(1).to_string(), true);
-
-        if let Some(nickname) = self.nickname {
-            embed = embed.field("Smeknamn", truncate_field(nickname), true);
-        }
-
-        if let Some(personality) = self.personality {
-            embed = embed.field("Personlighet", truncate_field(personality), true);
-        }
-
-        if let Some(prompt) = self.prompt {
-            embed = embed.field("Prompt", truncate_field(prompt), true);
-        }
-
-        if let Some(system_prompt) = self.system_prompt {
-            embed = embed.field("System Prompt", truncate_field(system_prompt), true);
-        }
-
-        if let Some(scenario) = self.scenario {
-            embed = embed.field("Scenario", truncate_field(scenario), true);
-        }
-
-        embed = embed.field("Skapare", creator_name, true);
-
-        if let Some(name) = editor_name {
-            embed = embed.field("Redigerare", name, true);
-        }
-
-        embed = embed.field("Skapad", created, false);
-        if let Some(edited_text) = edited {
-            embed = embed.field("Redigerad", edited_text, false);
-        }
-        embed = embed
-            .field("ID", self.id, false)
-            .footer(CreateEmbedFooter::new(footer_text.into()));
-
-        if let Some(avatar) = self.avatar {
-            embed = embed.thumbnail(avatar);
-        }
-        if let Some(color) = self.color {
-            embed = embed.color(color);
-        }
-        if let Some(description) = self.description {
-            embed = embed.description(description);
-        }
-        // TODO: previous/next buttons
-        embed
     }
 
 }
