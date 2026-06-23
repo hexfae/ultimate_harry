@@ -27,8 +27,6 @@
 //! [`History::build_context`], which prepends the rebuilt scaffolding to the `previous` messages.
 
 use bon::Builder;
-use native_db::{ToKey as _, native_db};
-use native_model::{Model as _, native_model};
 use nonempty::NonEmpty;
 use serde::{Deserialize, Serialize};
 use serenity::all::{MessageId, UserId};
@@ -94,15 +92,12 @@ pub struct History {
 
 /// The persisted form of a [`History`]: the full messages inline, no scaffolding.
 #[derive(Debug, Serialize, Deserialize)]
-#[native_model(id = 2, version = 1, with = crate::codec::Json)]
-#[native_db]
 #[expect(
     clippy::module_name_repetitions,
     reason = "StoredHistory is the persisted counterpart of History and belongs in this module"
 )]
 pub struct StoredHistory {
-    /// The Discord Message ID of this history, used as the primary key.
-    #[primary_key]
+    /// The Discord Message ID of this history, used as the file name.
     pub id: String,
     /// The ulid ID of the currently responding character.
     pub character: String,

@@ -1,33 +1,97 @@
-//! A convenience wrapper implementing several methods on a `native_db` database.
-#![expect(
-    clippy::unused_async,
-    reason = "the native_db backend is synchronous, but the Database API is kept async for uniformity and to avoid rippling .await removal across every call site"
-)]
+//! A convenience wrapper over a directory of JSON files used as the bot's storage.
 
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use miette::{Diagnostic, SourceSpan};
 use nanorand::Rng as _;
-use native_db::{
-    Builder, Database as NativeDatabase, Models, ToInput, db_type::Error as NativeError,
-};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
 use snafu::{IntoError, OptionExt as _, ResultExt as _, Snafu};
-use std::sync::OnceLock;
+use std::ffi::OsStr;
+use std::io::{self, ErrorKind};
+use std::path::{Path, PathBuf};
+use tokio::fs;
+use tokio::sync::Mutex;
 use tracing::{error, warn};
 
 use crate::constants::MAX_RESULTS;
 use crate::llm::ModelSettings;
 use crate::models::{
     character::{Character, CharacterOption},
-    config::{GlobalModelSettings, PinChannel, SINGLETON_KEY, UserEmoji, UserName},
+    config::UserPrefs,
     history::{History, StoredHistory},
 };
 
-/// The path of the embedded `native_db` database file.
-const DATABASE_PATH: &str = "harry_database.db";
+/// The root directory of the JSON-file database.
+const DATABASE_DIR: &str = "harry_database";
+/// The subdirectory holding one JSON file per character version.
+const CHARACTERS_DIR: &str = "characters";
+/// The subdirectory holding one JSON file per stored chat history.
+const CHATS_DIR: &str = "chats";
+/// The subdirectory holding the bot-global singleton config files.
+const CONFIG_DIR: &str = "config";
+/// The subdirectory holding one JSON file per user's preferences.
+const USERS_DIR: &str = "users";
+/// The config file storing the bot's AI model settings.
+const MODEL_SETTINGS_FILE: &str = "model_settings.json";
+/// The config file storing the bot's pin channel.
+const PIN_CHANNEL_FILE: &str = "pin_channel.json";
 
-/// A newtype wrapper around a `native_db` database.
-pub struct Database(NativeDatabase<'static>);
+/// Reads and deserializes a JSON record from `path`, returning `None` if the file does not exist.
+async fn read_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, StoreError> {
+    let bytes = match fs::read(path).await {
+        Ok(bytes) => bytes,
+        Err(why) if why.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(why) => return Err(StoreError::Io { source: why }),
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .context(DeserializeSnafu)
+}
+
+/// Reads and deserializes every `*.json` file in `dir`, returning an empty vector if the directory
+/// does not exist. Skips the transient `*.json.tmp` files written during an atomic save.
+async fn scan_dir<T: DeserializeOwned>(dir: &Path) -> Result<Vec<T>, StoreError> {
+    let mut entries = match fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(why) if why.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(why) => return Err(StoreError::Io { source: why }),
+    };
+    let mut records = Vec::new();
+    while let Some(entry) = entries.next_entry().await.context(IoSnafu)? {
+        let path = entry.path();
+        if path.extension().and_then(OsStr::to_str) == Some("json")
+            && let Some(record) = read_json(&path).await?
+        {
+            records.push(record);
+        }
+    }
+    Ok(records)
+}
+
+/// Reads a JSON record from `path`, falling back to `default` rather than blocking the bot.
+///
+/// A legitimately absent file defaults silently; a genuine read or parse *failure* (corruption) is
+/// logged at error level under `label`, since it would otherwise surface downstream as a confusing
+/// unrelated error (for example an empty API key).
+async fn read_or<T: DeserializeOwned>(path: &Path, label: &str, default: impl FnOnce() -> T) -> T {
+    match read_json(path).await {
+        Ok(Some(value)) => value,
+        Ok(None) => default(),
+        Err(why) => {
+            error!("failed to read {label}, using default: {why}");
+            default()
+        }
+    }
+}
+
+/// A directory of JSON files used as the bot's storage.
+pub struct Database {
+    /// The root directory under which every record file lives.
+    root: PathBuf,
+    /// Serializes writes so two concurrent saves cannot interleave their temp-file renames.
+    write_lock: Mutex<()>,
+}
 
 impl Debug for Database {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
@@ -35,81 +99,87 @@ impl Debug for Database {
     }
 }
 
-/// Builds the set of `native_db` models for every persisted type, caching it so
-/// the set is defined once and shared across every database opened in the process.
-async fn models() -> Result<&'static Models, DatabaseError> {
-    static MODELS: OnceLock<Models> = OnceLock::new();
-    if let Some(models) = MODELS.get() {
-        return Ok(models);
-    }
-    let mut models = Models::new();
-    models.define::<Character>().context(DefineModelSnafu)?;
-    models.define::<StoredHistory>().context(DefineModelSnafu)?;
-    models.define::<GlobalModelSettings>().context(DefineModelSnafu)?;
-    models.define::<PinChannel>().context(DefineModelSnafu)?;
-    models.define::<UserName>().context(DefineModelSnafu)?;
-    models.define::<UserEmoji>().context(DefineModelSnafu)?;
-    Ok(MODELS.get_or_init(|| models))
-}
-
 impl Database {
-    /// Opens (or creates) the embedded database file.
+    /// Opens (creating if needed) the JSON-file database in the default directory.
     pub async fn new() -> Result<Self, DatabaseError> {
-        let models = models().await?;
-        let db = Builder::new()
-            .create(models, DATABASE_PATH)
-            .context(ConnectSnafu)?;
-        Ok(Self(db))
+        Self::open(PathBuf::from(DATABASE_DIR)).await
     }
 
-    /// Opens an ephemeral in-memory database for tests.
+    /// Opens (creating if needed) the JSON-file database rooted at `root`, ensuring every
+    /// subdirectory exists.
+    async fn open(root: PathBuf) -> Result<Self, DatabaseError> {
+        for subdir in [CHARACTERS_DIR, CHATS_DIR, CONFIG_DIR, USERS_DIR] {
+            fs::create_dir_all(root.join(subdir))
+                .await
+                .context(ConnectSnafu)?;
+        }
+        Ok(Self {
+            root,
+            write_lock: Mutex::new(()),
+        })
+    }
+
+    /// Opens a fresh temporary database in a unique directory for tests.
     #[cfg(test)]
-    async fn in_memory() -> Result<Self, DatabaseError> {
-        let models = models().await?;
-        let db = Builder::new()
-            .create_in_memory(models)
-            .context(ConnectSnafu)?;
-        Ok(Self(db))
+    async fn temporary() -> Result<Self, DatabaseError> {
+        use core::sync::atomic::{AtomicU64, Ordering};
+        use std::{env, process};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = process::id();
+        let root = env::temp_dir().join(format!("harry-test-{pid}-{unique}"));
+        Self::open(root).await
     }
 
-    /// Upserts a single record in its own write transaction, selecting the error
-    /// variant via `context` so each caller keeps its own error message.
-    async fn upsert_one<R, C>(&self, record: R, context: C) -> Result<(), DatabaseError>
-    where
-        R: ToInput,
-        C: IntoError<DatabaseError, Source = NativeError> + Copy,
-    {
-        let write = self.0.rw_transaction().context(context)?;
-        write.upsert(record).context(context)?;
-        write.commit().context(context)
+    /// The path of the file storing the character with the given ID.
+    fn character_path(&self, id: &str) -> PathBuf {
+        self.root.join(CHARACTERS_DIR).join(format!("{id}.json"))
     }
 
-    /// Scans and collects every record of a table in its own read transaction.
-    async fn scan_all<R: ToInput>(&self) -> Result<Vec<R>, DatabaseError> {
-        let read = self.0.r_transaction().context(GetSnafu)?;
-        read.scan()
-            .primary::<R>()
-            .context(GetSnafu)?
-            .all()
-            .context(GetSnafu)?
-            .collect::<Result<Vec<R>, NativeError>>()
-            .context(GetSnafu)
+    /// The path of the file storing the chat history with the given ID.
+    fn chat_path(&self, id: &str) -> PathBuf {
+        self.root.join(CHATS_DIR).join(format!("{id}.json"))
     }
 
-    /// Fetches a single record by primary key in its own read transaction.
-    async fn get_one<R: ToInput>(&self, key: String) -> Result<Option<R>, DatabaseError> {
-        let read = self.0.r_transaction().context(GetSnafu)?;
-        read.get().primary::<R>(key).context(GetSnafu)
+    /// The path of the file storing the given user's preferences.
+    fn user_path(&self, id: &str) -> PathBuf {
+        self.root.join(USERS_DIR).join(format!("{id}.json"))
+    }
+
+    /// The path of the bot's model-settings config file.
+    fn model_settings_path(&self) -> PathBuf {
+        self.root.join(CONFIG_DIR).join(MODEL_SETTINGS_FILE)
+    }
+
+    /// The path of the bot's pin-channel config file.
+    fn pin_channel_path(&self) -> PathBuf {
+        self.root.join(CONFIG_DIR).join(PIN_CHANNEL_FILE)
+    }
+
+    /// Serializes `value` to pretty JSON and writes it to `path` atomically (write to a temp file,
+    /// then rename over the target), so a crash mid-write never leaves a partial file.
+    async fn write_json<T: Serialize + Sync>(&self, path: &Path, value: &T) -> Result<(), StoreError> {
+        let bytes = serde_json::to_vec_pretty(value).context(SerializeSnafu)?;
+        let _guard = self.write_lock.lock().await;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).await.context(IoSnafu)?;
+        }
+        let temp = path.with_extension("json.tmp");
+        fs::write(&temp, &bytes).await.context(IoSnafu)?;
+        fs::rename(&temp, path).await.context(IoSnafu)?;
+        Ok(())
     }
 
     /// Returns every character currently stored, regardless of visibility.
     async fn all_characters(&self) -> Result<Vec<Character>, DatabaseError> {
-        self.scan_all().await
+        scan_dir(&self.root.join(CHARACTERS_DIR))
+            .await
+            .context(GetSnafu)
     }
 
     /// Returns a single character by its ID.
     pub async fn character(&self, id: &str) -> Result<Option<Character>, DatabaseError> {
-        self.get_one(id.to_owned()).await
+        read_json(&self.character_path(id)).await.context(GetSnafu)
     }
 
     /// Returns up to 25 characters, sorted by the most similar ones to the given name.
@@ -182,13 +252,14 @@ impl Database {
 
     /// Inserts a character.
     pub async fn insert_character(&self, character: Character) -> Result<(), DatabaseError> {
-        self.upsert_one(character, InsertSnafu).await
+        self.write_json(&self.character_path(character.id()), &character)
+            .await
+            .context(InsertSnafu)
     }
 
-    /// Loads the character `id`, applies `apply`, and upserts it in a single
-    /// transaction, returning the mutated character. Returns `Ok(None)` if the
-    /// character is missing. `context` selects the error variant for any
-    /// transaction failure, so each caller keeps its own error message.
+    /// Loads the character `id`, applies `apply`, and writes it back, returning the mutated
+    /// character. Returns `Ok(None)` if the character is missing. `context` selects the error
+    /// variant for any failure, so each caller keeps its own error message.
     async fn mutate_character<C>(
         &self,
         id: &str,
@@ -196,19 +267,14 @@ impl Database {
         apply: impl FnOnce(&mut Character),
     ) -> Result<Option<Character>, DatabaseError>
     where
-        C: IntoError<DatabaseError, Source = NativeError> + Copy,
+        C: IntoError<DatabaseError, Source = StoreError> + Copy,
     {
-        let write = self.0.rw_transaction().context(context)?;
-        let Some(mut character) = write
-            .get()
-            .primary::<Character>(id.to_owned())
-            .context(context)?
-        else {
+        let path = self.character_path(id);
+        let Some(mut character) = read_json::<Character>(&path).await.context(context)? else {
             return Ok(None);
         };
         apply(&mut character);
-        write.upsert(character.clone()).context(context)?;
-        write.commit().context(context)?;
+        self.write_json(&path, &character).await.context(context)?;
         Ok(Some(character))
     }
 
@@ -314,8 +380,8 @@ impl Database {
         &self,
         id: T,
     ) -> Result<Option<History>, DatabaseError> {
-        let maybe_stored = self.get_one::<StoredHistory>(id.into().to_string()).await?;
-        let Some(stored) = maybe_stored else {
+        let path = self.chat_path(&id.into().to_string());
+        let Some(stored) = read_json::<StoredHistory>(&path).await.context(GetSnafu)? else {
             return Ok(None);
         };
         let history_id = stored.id.clone();
@@ -326,30 +392,43 @@ impl Database {
         Ok(Some(history))
     }
 
-    /// Updates or inserts a chat history, storing the full messages inline in a single record.
+    /// Updates or inserts a chat history, storing the full messages inline in a single file.
     ///
-    /// Each handler loads its own [`History`], mutates it, and saves it here across a separate
-    /// transaction, so two near-simultaneous button presses on the same reply race and the last
-    /// write wins (a lost swipe/edit). This is accepted: there is no per-conversation lock or
-    /// version guard, because the bot serves a handful of users and the worst case is a single
-    /// dropped mutation, never corruption (every write is a whole, valid record).
+    /// Each handler loads its own [`History`], mutates it, and saves it here separately, so two
+    /// near-simultaneous button presses on the same reply race and the last write wins (a lost
+    /// swipe/edit). This is accepted: there is no per-conversation lock or version guard, because the
+    /// bot serves a handful of users and the worst case is a single dropped mutation, never
+    /// corruption (every write is a whole, valid record renamed into place atomically).
     pub async fn upsert_history(&self, history: History) -> Result<(), DatabaseError> {
-        self.upsert_one(history.into_stored(), InsertSnafu).await
+        let stored = history.into_stored();
+        self.write_json(&self.chat_path(&stored.id), &stored)
+            .await
+            .context(InsertSnafu)
     }
 
-    /// Updates or inserts a user's emoji.
+    /// Updates or inserts a user's emoji, preserving their stored display name.
     pub async fn upsert_user_emoji<T: Into<UserId>>(
         &self,
-        id: T,
+        user_id: T,
         emoji: ReactionType,
     ) -> Result<(), DatabaseError> {
-        let user_emoji = UserEmoji::new(id.into().to_string(), emoji);
-        self.upsert_one(user_emoji, InsertSnafu).await
+        let id = user_id.into().to_string();
+        let path = self.user_path(&id);
+        let mut prefs = read_json::<UserPrefs>(&path)
+            .await
+            .context(GetSnafu)?
+            .unwrap_or_else(|| UserPrefs::new(id));
+        prefs.emoji = Some(emoji);
+        self.write_json(&path, &prefs).await.context(InsertSnafu)
     }
 
-    /// Returns all set user emoji.
-    pub async fn user_emoji(&self) -> Result<Vec<UserEmoji>, DatabaseError> {
-        self.scan_all().await
+    /// Returns every user's set emoji, paired with their Discord user ID.
+    pub async fn user_emoji(&self) -> Result<Vec<(String, ReactionType)>, DatabaseError> {
+        let prefs: Vec<UserPrefs> = scan_dir(&self.root.join(USERS_DIR)).await.context(GetSnafu)?;
+        Ok(prefs
+            .into_iter()
+            .filter_map(|pref| pref.emoji.map(|emoji| (pref.user_id, emoji)))
+            .collect())
     }
 
     /// Updates or inserts the bot's AI model settings.
@@ -357,8 +436,9 @@ impl Database {
         &self,
         model_settings: ModelSettings,
     ) -> Result<(), DatabaseError> {
-        let stored = GlobalModelSettings::new(model_settings);
-        self.upsert_one(stored, SetModelSettingsSnafu).await
+        self.write_json(&self.model_settings_path(), &model_settings)
+            .await
+            .context(SetModelSettingsSnafu)
     }
 
     /// Sets a character's AI model settings override.
@@ -407,76 +487,38 @@ impl Database {
     }
 
     /// Walks `id` to its latest version and applies `apply` to that character,
-    /// upserting the result in a single transaction. `label` names the stat for
-    /// the missing-character warning. Best-effort: warns and returns `Ok` if the
-    /// character is missing.
+    /// writing the result back. `label` names the stat for the missing-character
+    /// warning. Best-effort: warns and returns `Ok` if the character is missing.
     async fn record_on_latest_version(
         &self,
         id: &str,
         label: &str,
         apply: impl FnOnce(&mut Character),
     ) -> Result<(), DatabaseError> {
-        let write = self.0.rw_transaction().context(UpdateSnafu)?;
-        let Some(mut character) = write
-            .get()
-            .primary::<Character>(id.to_owned())
-            .context(UpdateSnafu)?
-        else {
+        let Some(mut character) = self.character(id).await? else {
             warn!("tried to record {label} for a missing character: {id}");
             return Ok(());
         };
         while let Some(next_id) = character.next_version().map(str::to_owned) {
-            let Some(next) = write
-                .get()
-                .primary::<Character>(next_id)
-                .context(UpdateSnafu)?
-            else {
+            let Some(next) = self.character(&next_id).await? else {
                 break;
             };
             character = next;
         }
         apply(&mut character);
-        write.upsert(character).context(UpdateSnafu)?;
-        write.commit().context(UpdateSnafu)
-    }
-
-    /// Reads a singleton-style record by its primary key, returning a default value rather than
-    /// blocking the bot.
-    ///
-    /// A legitimately absent record defaults silently; a genuine transaction or lookup *failure*
-    /// (corruption, lock contention) is logged at error level under `label`, since it would
-    /// otherwise surface downstream as a confusing unrelated error (e.g. an empty API key).
-    fn read_or<T: ToInput, R>(
-        &self,
-        key: String,
-        label: &str,
-        default: impl Fn() -> R,
-        extract: impl FnOnce(T) -> R,
-    ) -> R {
-        let read = match self.0.r_transaction() {
-            Ok(read) => read,
-            Err(why) => {
-                error!("failed to read {label}, using default: {why}");
-                return default();
-            }
-        };
-        match read.get().primary::<T>(key) {
-            Ok(found) => found.map_or_else(&default, extract),
-            Err(why) => {
-                error!("failed to read {label}, using default: {why}");
-                default()
-            }
-        }
+        self.write_json(&self.character_path(character.id()), &character)
+            .await
+            .context(UpdateSnafu)
     }
 
     /// Returns the bot's AI model settings.
     pub async fn model_settings(&self) -> ModelSettings {
-        self.read_or::<GlobalModelSettings, _>(
-            SINGLETON_KEY.to_owned(),
+        read_or(
+            &self.model_settings_path(),
             "model settings",
             ModelSettings::default,
-            GlobalModelSettings::into_settings,
         )
+        .await
     }
 
     /// Returns the character's own model settings, falling back to the
@@ -490,12 +532,7 @@ impl Database {
 
     /// Returns the bot's pin channel.
     pub async fn pins_channel(&self) -> ChannelId {
-        self.read_or::<PinChannel, _>(
-            SINGLETON_KEY.to_owned(),
-            "pin channel",
-            ChannelId::default,
-            |found| found.channel_id(),
-        )
+        read_or(&self.pin_channel_path(), "pin channel", ChannelId::default).await
     }
 
     /// Updates or inserts the bot's pin channel.
@@ -503,54 +540,50 @@ impl Database {
         &self,
         channel_id: ChannelId,
     ) -> Result<ChannelId, DatabaseError> {
-        let pin_channel = PinChannel::new(channel_id);
-        self.upsert_one(pin_channel, SetPinsChannelSnafu).await?;
+        self.write_json(&self.pin_channel_path(), &channel_id)
+            .await
+            .context(SetPinsChannelSnafu)?;
         Ok(channel_id)
     }
 
-    /// Returns a user's display name by their Discord user ID.
+    /// Returns a user's display name by their Discord user ID, defaulting to "User".
     pub async fn substitute_name<T: Into<UserId>>(&self, user_id: T) -> String {
-        self.read_or::<UserName, _>(
-            user_id.into().to_string(),
-            "substitute name",
-            || "User".to_owned(),
-            |found| found.name,
-        )
+        let path = self.user_path(&user_id.into().to_string());
+        read_or(&path, "substitute name", UserPrefs::default)
+            .await
+            .name
+            .unwrap_or_else(|| "User".to_owned())
     }
 
-    /// Updates or inserts a user's display name by their Discord user ID.
+    /// Updates or inserts a user's display name, preserving their stored emoji.
     pub async fn upsert_user_name<T: Into<UserId>>(
         &self,
         user_id: T,
         name: String,
     ) -> Result<(), DatabaseError> {
-        let user_name = UserName::new(user_id.into().to_string(), name);
-        self.upsert_one(user_name, InsertSnafu).await
+        let id = user_id.into().to_string();
+        let path = self.user_path(&id);
+        let mut prefs = read_json::<UserPrefs>(&path)
+            .await
+            .context(GetSnafu)?
+            .unwrap_or_else(|| UserPrefs::new(id));
+        prefs.name = Some(name);
+        self.write_json(&path, &prefs).await.context(InsertSnafu)
     }
 }
 
 /// All errors that can happen when interacting with the database.
 #[derive(Debug, Snafu, Diagnostic)]
 pub enum DatabaseError {
-    /// Defining a database model failed.
-    #[snafu(display("Could not define a database model"))]
+    /// Creating the database directory failed.
+    #[snafu(display("Could not open the database directory"))]
     #[diagnostic(
-        help("This is a programming error: two models likely share a native_model id"),
-        code(database::define_model)
-    )]
-    DefineModel {
-        /// The source of the error.
-        source: NativeError,
-    },
-    /// Opening the database failed.
-    #[snafu(display("Could not open the database"))]
-    #[diagnostic(
-        help("Make sure the database file is accessible and not corrupted"),
+        help("Make sure the database directory is accessible and writable"),
         code(database::connect)
     )]
     Connect {
         /// The source of the error.
-        source: NativeError,
+        source: io::Error,
     },
     /// Getting a record failed.
     #[snafu(display("Kunde inte hämta från databasen: {source}"))]
@@ -560,7 +593,7 @@ pub enum DatabaseError {
     )]
     Get {
         /// The source of the error.
-        source: NativeError,
+        source: StoreError,
     },
     /// Inserting a record failed.
     #[snafu(display("Kunde inte infoga i databasen: {source}"))]
@@ -570,7 +603,7 @@ pub enum DatabaseError {
     )]
     Insert {
         /// The source of the error.
-        source: NativeError,
+        source: StoreError,
     },
     /// Deleting a record failed.
     #[snafu(display("Kunde inte ta bort från databasen: {source}"))]
@@ -580,7 +613,7 @@ pub enum DatabaseError {
     )]
     Delete {
         /// The source of the error.
-        source: NativeError,
+        source: StoreError,
     },
     /// Updating a record failed.
     #[snafu(display("Kunde inte uppdatera databasen: {source}"))]
@@ -590,7 +623,7 @@ pub enum DatabaseError {
     )]
     Update {
         /// The source of the error.
-        source: NativeError,
+        source: StoreError,
     },
     /// No character by the given ID was found.
     #[snafu(display("Ingen sådan karaktär hittades i databasen: {found}"))]
@@ -614,7 +647,7 @@ pub enum DatabaseError {
     )]
     SetModelSettings {
         /// The source of the error.
-        source: NativeError,
+        source: StoreError,
     },
     /// Setting the bot's pin Discord channel failed.
     #[snafu(display("Kunde inte spara kanal för pins: {source}"))]
@@ -624,16 +657,39 @@ pub enum DatabaseError {
     )]
     SetPinsChannel {
         /// The source of the error.
-        source: NativeError,
+        source: StoreError,
     },
 }
 
-/// Characterization tests pinning the load-mutate-upsert transaction methods.
-/// They run against an ephemeral in-memory database.
+/// A low-level storage failure underlying a [`DatabaseError`]: a filesystem error or a JSON
+/// (de)serialization error.
+#[derive(Debug, Snafu)]
+pub enum StoreError {
+    /// A filesystem operation failed.
+    #[snafu(display("filfel: {source}"))]
+    Io {
+        /// The source of the error.
+        source: io::Error,
+    },
+    /// Serializing a record to JSON failed.
+    #[snafu(display("kunde inte serialisera posten: {source}"))]
+    Serialize {
+        /// The source of the error.
+        source: serde_json::Error,
+    },
+    /// Deserializing a record from JSON failed.
+    #[snafu(display("kunde inte tolka posten: {source}"))]
+    Deserialize {
+        /// The source of the error.
+        source: serde_json::Error,
+    },
+}
+
+/// Characterization tests pinning the load-mutate-write methods.
+/// They run against a fresh temporary database directory.
 #[cfg(test)]
 mod tests {
     use super::Database;
-    use core::ptr;
     use crate::llm::ModelSettings;
     use crate::models::character::Character;
     use serenity::all::UserId;
@@ -660,10 +716,10 @@ mod tests {
     /// record becomes invisible.
     #[tokio::test]
     async fn delete_character_soft_deletes_and_returns_the_character() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         insert(&db, character("char-id", "Harry")).await;
@@ -686,10 +742,10 @@ mod tests {
     /// Deleting a missing character returns `None` rather than erroring.
     #[tokio::test]
     async fn delete_character_returns_none_when_missing() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         let deleted = db.delete_character("missing", UserId::new(2)).await;
@@ -702,10 +758,10 @@ mod tests {
     /// `supersede_character` links the old record to the new version's ID.
     #[tokio::test]
     async fn supersede_character_sets_the_next_version() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         insert(&db, character("old-id", "Harry")).await;
@@ -725,10 +781,10 @@ mod tests {
     /// which return None).
     #[tokio::test]
     async fn supersede_character_errors_when_missing() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         let superseded = db
@@ -744,10 +800,10 @@ mod tests {
     /// the updated character; a missing character returns `None`.
     #[tokio::test]
     async fn set_character_model_settings_records_an_override() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         insert(&db, character("char-id", "Harry")).await;
@@ -775,10 +831,10 @@ mod tests {
     /// past an edit in the version chain.
     #[tokio::test]
     async fn record_character_generation_lands_on_the_latest_version() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         let mut old = character("old-id", "Harry");
@@ -807,10 +863,10 @@ mod tests {
     /// returns it visible again; a missing character returns `None`.
     #[tokio::test]
     async fn restore_character_restores_a_deleted_character() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         insert(&db, character("char-id", "Harry")).await;
@@ -842,10 +898,10 @@ mod tests {
     /// never the visible ones.
     #[tokio::test]
     async fn deleted_characters_by_similarity_returns_only_deleted() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         insert(&db, character("visible", "Harry")).await;
@@ -872,10 +928,10 @@ mod tests {
     /// every version oldest to newest regardless of which version it starts from.
     #[tokio::test]
     async fn character_versions_returns_the_chain_oldest_to_newest() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         let mut old = character("v0", "Harry");
@@ -918,10 +974,10 @@ mod tests {
     /// keeps the previous head's accumulated stats, and supersedes that head.
     #[tokio::test]
     async fn rollback_character_supersedes_the_head_with_an_old_version() {
-        let opened = Database::in_memory().await;
+        let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
-            "opening an in-memory database should succeed"
+            "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
         let mut old = Character::builder()
@@ -965,25 +1021,6 @@ mod tests {
         assert!(
             matches!(missing, Ok(None)),
             "rolling back a missing head returns None"
-        );
-    }
-
-    /// The model set is built once and shared: repeated calls return the same
-    /// reference rather than leaking a fresh allocation each time.
-    #[tokio::test]
-    async fn models_are_built_once_and_shared() {
-        let first_models = super::models().await;
-        let second_models = super::models().await;
-        assert!(
-            first_models.is_ok() && second_models.is_ok(),
-            "building the model set should succeed"
-        );
-        let (Ok(first_ref), Ok(second_ref)) = (first_models, second_models) else {
-            return;
-        };
-        assert!(
-            ptr::eq(first_ref, second_ref),
-            "repeated models() calls should return the same shared reference"
         );
     }
 }

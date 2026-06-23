@@ -8,8 +8,6 @@ use core::fmt::{Display, Formatter, Result as FmtResult, Write as _};
 use tracing::warn;
 use jiff::Zoned;
 use poise::serenity_prelude::all::{Color, UserId};
-use native_db::{ToKey as _, native_db};
-use native_model::{Model as _, native_model};
 use serde::{Deserialize, Serialize};
 use crate::constants::MAX_RESULTS;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -32,11 +30,8 @@ const LATEST_CONVERSATION_FORMAT: &str = "%Y-%m-%d %H:%M";
 
 /// A character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
-#[native_model(id = 1, version = 1, with = crate::codec::Json)]
-#[native_db]
 pub struct Character {
-    /// The character's unique ID (a ULID), generated on creation. Used as the primary key.
-    #[primary_key]
+    /// The character's unique ID (a ULID), generated on creation. Used as the file name.
     id: String,
     /// The character's name.
     #[builder(into)]
@@ -102,9 +97,8 @@ pub struct Character {
     emoji: Option<String>,
     /// The Discord user IDs of anyone who has ever edited the character, if any.
     ///
-    /// A `BTreeSet` (not a `HashSet`) so the JSON serialization is deterministic:
-    /// `native_db` re-encodes the stored record on every update and rejects the
-    /// write if the bytes differ from what is on disk.
+    /// A `BTreeSet` (not a `HashSet`) so the JSON serialization is deterministic and the stored
+    /// file stays stable across rewrites (clean diffs, no spurious churn).
     #[builder(default)]
     all_editors: BTreeSet<UserId>,
     /// The Discord user ID of the latest person to edit the character, if any.
@@ -128,9 +122,8 @@ pub struct Character {
     ///
     /// This means the amount of times this character has been "spawned".
     ///
-    /// A `BTreeMap` (not a `HashMap`) so the JSON serialization is deterministic:
-    /// `native_db` re-encodes the stored record on every update and rejects the
-    /// write if the bytes differ from what is on disk.
+    /// A `BTreeMap` (not a `HashMap`) so the JSON serialization is deterministic and the stored
+    /// file stays stable across rewrites (clean diffs, no spurious churn).
     #[builder(default)]
     conversations_had_with_user: BTreeMap<UserId, u32>,
     /// The number of conversations the character has had.

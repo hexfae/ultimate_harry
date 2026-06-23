@@ -65,12 +65,7 @@ async fn react_to_mentions_and_replies(
     new_message: &Message,
     db: &Database,
 ) -> AppResult {
-    let all_emoji: BTreeMap<String, ReactionType> = db
-        .user_emoji()
-        .await?
-        .into_iter()
-        .map(|user_emoji| (user_emoji.user_id, user_emoji.emoji))
-        .collect();
+    let all_emoji: BTreeMap<String, ReactionType> = db.user_emoji().await?.into_iter().collect();
     if new_message.author.bot() {
         return Ok(());
     }
