@@ -25,6 +25,9 @@ const CHAT_URL: &str = "https://openrouter.ai/api/v1/chat/completions";
 /// The instruction given to the vision model when describing an image.
 const DESCRIBE_PROMPT: &str = "Beskriv bilden så detaljerat som möjligt på svenska.";
 
+/// The instruction given to the tag model when enriching a reply with audio tags.
+const TAG_PROMPT: &str = "You are given a single line of dialogue from a roleplay. Insert ElevenLabs v3 audio tags (square-bracketed, e.g. [laughs], [sighs], [whispers], [angry], [sad]) at fitting points so it sounds expressive when read aloud. Keep all of the original text and its language exactly as given: do not translate, rephrase, or change any words; only add tags. The tags themselves must always be in English, even when the dialogue is in another language. Reply with only the tagged text, no explanation.";
+
 /// The LLM manager for generating responses from AI models.
 ///
 /// This struct manages the settings for the AI model and provides methods
@@ -235,6 +238,28 @@ impl LlmManager {
             .context(DescribeImageSnafu)?;
         extract_description(&parsed).context(EmptyDescriptionSnafu)
     }
+
+    /// Rewrites `text` with inline `ElevenLabs` v3 audio tags using `model`, for more
+    /// expressive text-to-speech. Only the spoken text is enriched; the visible reply
+    /// is left untouched by the caller.
+    pub async fn add_audio_tags(&self, text: &str, model: &str) -> Result<String, LlmError> {
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": TAG_PROMPT},
+                {"role": "user", "content": text},
+            ],
+        });
+        let response = reqwest::Client::new()
+            .post(CHAT_URL)
+            .bearer_auth(&self.settings.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context(AddTagsSnafu)?;
+        let parsed = response.json::<ChatResponse>().await.context(AddTagsSnafu)?;
+        extract_description(&parsed).context(EmptyTagsSnafu)
+    }
 }
 
 /// Process-wide cache of model id to whether it accepts image input, so the `OpenRouter` model
@@ -369,6 +394,20 @@ pub enum LlmError {
     #[snafu(display("Synmodellen gav ingen beskrivning"))]
     #[diagnostic(help("Prova en annan synmodell."), code(llm::empty_description))]
     EmptyDescription,
+    /// Failed to enrich the reply with audio tags.
+    #[snafu(display("Kunde inte lägga till ljudtaggar: {source}"))]
+    #[diagnostic(
+        help("Kontrollera att tagg-modellen och API-nyckeln är giltiga."),
+        code(llm::add_tags)
+    )]
+    AddTags {
+        /// The source of the error.
+        source: reqwest::Error,
+    },
+    /// The tag model returned no enriched text.
+    #[snafu(display("Tagg-modellen gav ingen text"))]
+    #[diagnostic(help("Prova en annan tagg-modell."), code(llm::empty_tags))]
+    EmptyTags,
 }
 
 impl LlmError {
@@ -379,7 +418,11 @@ impl LlmError {
     pub const fn retryable(&self) -> bool {
         matches!(
             self,
-            Self::ListModels { .. } | Self::DescribeImage { .. } | Self::EmptyDescription { .. }
+            Self::ListModels { .. }
+                | Self::DescribeImage { .. }
+                | Self::EmptyDescription { .. }
+                | Self::AddTags { .. }
+                | Self::EmptyTags { .. }
         )
     }
 }

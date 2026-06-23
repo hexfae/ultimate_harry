@@ -4,14 +4,17 @@ use crate::{
     AppResult,
     database::Database,
     error::SendResponseSnafu,
+    llm::LlmManager,
     models::{character::Character, history::History},
     tts::{TtsError, TtsManager},
+    util::report_error,
 };
 use serenity::all::{
     ComponentInteraction, Context, CreateAttachment, CreateInteractionResponse,
     CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
 };
 use snafu::ResultExt as _;
+use tracing::warn;
 
 /// The filename of the synthesized audio attachment.
 const AUDIO_FILENAME: &str = "uppläsning.mp3";
@@ -22,6 +25,9 @@ const AUDIO_FILENAME: &str = "uppläsning.mp3";
 /// generic default; with neither, it fails with a notice rather than staying silent.
 /// An empty reply has nothing to speak, but the button is disabled in that case (see
 /// the render in `history/render.rs`), so this is never reached for blank text.
+/// When a tag model is configured and the synthesis model is audio-tag aware, the
+/// spoken text (not the visible reply) is first enriched with `ElevenLabs` v3 audio
+/// tags; a failed enrichment falls back to the plain reply rather than blocking audio.
 /// Synthesis can take longer than Discord's three-second window, so the interaction
 /// is deferred before the (slow) request is made.
 pub async fn tts(
@@ -31,7 +37,8 @@ pub async fn tts(
     history: History,
     character: Character,
 ) -> AppResult {
-    let manager = TtsManager::new(db.tts_settings().await);
+    let settings = db.tts_settings().await;
+    let manager = TtsManager::new(settings.clone());
     let voice = manager.voice_for(&character).ok_or(TtsError::NoVoice)?;
     let text = history
         .chosen_message()
@@ -48,7 +55,22 @@ pub async fn tts(
         .await
         .context(SendResponseSnafu)?;
 
-    let audio = manager.synthesize(&text, &voice).await?;
+    let speak_text = match settings.tag_model_if_enabled() {
+        Some(tag_model) => {
+            let llm = LlmManager::new(db.model_settings().await);
+            match llm.add_audio_tags(&text, tag_model).await {
+                Ok(tagged) => tagged,
+                Err(why) => {
+                    warn!("audio-tag enhancement failed, speaking the plain reply");
+                    report_error(why);
+                    text
+                }
+            }
+        }
+        None => text,
+    };
+
+    let audio = manager.synthesize(&speak_text, &voice).await?;
     let attachment = CreateAttachment::bytes(audio, AUDIO_FILENAME);
 
     interaction

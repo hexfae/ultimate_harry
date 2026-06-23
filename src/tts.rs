@@ -16,6 +16,18 @@ fn default_tts_model() -> String {
     DEFAULT_TTS_MODEL.to_owned()
 }
 
+/// The default `OpenRouter` model used to enrich a reply with audio tags before synthesis.
+const DEFAULT_TAG_MODEL: &str = "google/gemini-3.1-flash-lite";
+
+/// The default audio-tag enhancement model.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "serde default must produce the Option<String> field type"
+)]
+fn default_tag_model() -> Option<String> {
+    Some(DEFAULT_TAG_MODEL.to_owned())
+}
+
 /// The text-to-speech manager for synthesizing spoken replies via `ElevenLabs`.
 #[derive(Debug)]
 pub struct TtsManager {
@@ -35,6 +47,13 @@ pub struct TtsSettings {
     /// The `ElevenLabs` model used to synthesize speech.
     #[serde(default = "default_tts_model")]
     pub model: String,
+    /// The `OpenRouter` model that inserts audio tags into a reply before synthesis.
+    ///
+    /// Enhancement runs only when this is set and the synthesis model is audio-tag
+    /// aware (Eleven v3); `None` (or an empty string) disables it. The enhancement
+    /// uses the `OpenRouter` API key from the model settings, not the `ElevenLabs` key.
+    #[serde(default = "default_tag_model")]
+    pub tag_model: Option<String>,
 }
 
 impl Default for TtsSettings {
@@ -43,6 +62,7 @@ impl Default for TtsSettings {
             api_key: String::new(),
             default_voice: None,
             model: default_tts_model(),
+            tag_model: default_tag_model(),
         }
     }
 }
@@ -57,10 +77,27 @@ impl TtsSettings {
             "inställd"
         };
         let default_voice = self.default_voice.as_deref().unwrap_or("ingen");
+        let tag_model = self.tag_model_if_enabled().unwrap_or("av");
         format!(
-            "röst-modell: {}\nstandardröst: {default_voice}\napi-nyckel: {api_key}",
+            "röst-modell: {}\nstandardröst: {default_voice}\ntagg-modell: {tag_model}\napi-nyckel: {api_key}",
             self.model
         )
+    }
+
+    /// Whether the configured synthesis model interprets audio tags (the Eleven v3 family).
+    fn supports_audio_tags(&self) -> bool {
+        self.model.contains("v3")
+    }
+
+    /// The audio-tag enhancement model to use, or `None` when enhancement does not
+    /// apply: a non-empty tag model must be configured *and* the synthesis model
+    /// must be audio-tag aware (Eleven v3), since tags are meaningless on other models.
+    #[must_use]
+    pub fn tag_model_if_enabled(&self) -> Option<&str> {
+        if !self.supports_audio_tags() {
+            return None;
+        }
+        self.tag_model.as_deref().filter(|model| !model.is_empty())
     }
 
     /// Overrides any field for which a new value is supplied, leaving the rest untouched.
@@ -73,6 +110,9 @@ impl TtsSettings {
         }
         if let Some(new_model) = overrides.model {
             self.model = new_model;
+        }
+        if let Some(new_tag_model) = overrides.tag_model {
+            self.tag_model = Some(new_tag_model);
         }
     }
 
@@ -100,13 +140,18 @@ pub struct TtsOverrides {
     pub default_voice: Option<String>,
     /// The `ElevenLabs` model, if overridden.
     pub model: Option<String>,
+    /// The audio-tag enhancement model, if overridden.
+    pub tag_model: Option<String>,
 }
 
 impl TtsOverrides {
     /// Returns `true` when no override was supplied.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.api_key.is_none() && self.default_voice.is_none() && self.model.is_none()
+        self.api_key.is_none()
+            && self.default_voice.is_none()
+            && self.model.is_none()
+            && self.tag_model.is_none()
     }
 }
 
@@ -253,6 +298,42 @@ mod tests {
             default_voice: default_voice.map(str::to_owned),
             ..TtsSettings::default()
         }
+    }
+
+    /// Builds settings with the given synthesis model and tag model.
+    fn tagging(model: &str, tag_model: Option<&str>) -> TtsSettings {
+        TtsSettings {
+            model: model.to_owned(),
+            tag_model: tag_model.map(str::to_owned),
+            ..TtsSettings::default()
+        }
+    }
+
+    /// Tag enhancement applies only when a tag model is set and the synthesis model
+    /// is the audio-tag-aware Eleven v3.
+    #[test]
+    fn tag_enhancement_requires_v3_and_a_tag_model() {
+        assert_eq!(
+            tagging("eleven_v3", Some("vendor/cheap")).tag_model_if_enabled(),
+            Some("vendor/cheap"),
+            "v3 with a tag model enhances"
+        );
+        assert!(
+            tagging("eleven_multilingual_v2", Some("vendor/cheap"))
+                .tag_model_if_enabled()
+                .is_none(),
+            "a non-v3 model never enhances, even with a tag model set"
+        );
+        assert!(
+            tagging("eleven_v3", None).tag_model_if_enabled().is_none(),
+            "v3 without a tag model does not enhance"
+        );
+        assert!(
+            tagging("eleven_v3", Some(""))
+                .tag_model_if_enabled()
+                .is_none(),
+            "an empty tag model disables enhancement"
+        );
     }
 
     /// A character's own voice takes precedence over the generic default.

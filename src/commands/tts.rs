@@ -18,11 +18,15 @@ pub async fn tts(
     #[rename = "röst-modell"]
     #[description = "ElevenLabs-modellen att använda"]
     model: Option<String>,
+    #[rename = "tagg-modell"]
+    #[description = "Modellen som lägger till ljudtaggar (kräver Eleven v3)"]
+    tag_model: Option<String>,
 ) -> AppResult {
     let overrides = TtsOverrides {
         api_key,
         default_voice,
         model,
+        tag_model,
     };
     let mut tts_settings = ctx.data().db.tts_settings().await;
     if overrides.is_empty() {
