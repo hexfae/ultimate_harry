@@ -9,7 +9,7 @@
 use crate::{
     AppResult, Context,
     commands::character::render::character_embed,
-    components::emoji_button,
+    components::{confirm_interaction_response, emoji_button},
     constants::{
         CANCEL, NEWER_VERSION, NEXT, OLDER_VERSION, PREVIOUS, ROLLBACK, TRANSIENT_LINGER,
     },
@@ -372,15 +372,7 @@ async fn roll_back_to_shown(
         .rollback_character(head.id(), target.id(), ctx.author().id)
         .await?;
 
-    ctx.respond_to_with(&interaction, rolled_back())
-        .await
-        .context(SendMessageSnafu)?;
-    sleep(TRANSIENT_LINGER).await;
-    interaction
-        .delete_response(ctx.http())
-        .await
-        .context(DeleteResponseSnafu)?;
-    Ok(())
+    respond_then_clear(ctx, interaction, rolled_back()).await
 }
 
 /// Creates a collector that listens for any of `tags` keyed on the context's ID.
@@ -478,7 +470,18 @@ fn browse_buttons(
 
 /// Sends a cancellation message in response to `interaction`, then deletes it 5 seconds later.
 pub async fn notify_cancelled(ctx: Context<'_>, interaction: ComponentInteraction) -> AppResult {
-    ctx.respond_to_with(&interaction, cancelled())
+    respond_then_clear(ctx, interaction, cancelled()).await
+}
+
+/// Responds to `interaction` with `text`, then deletes the response after a
+/// short linger. The shared "transient interaction reply" used by the
+/// confirm/cancel and rollback flows.
+pub async fn respond_then_clear<T: AsRef<str>>(
+    ctx: Context<'_>,
+    interaction: ComponentInteraction,
+    text: T,
+) -> AppResult {
+    ctx.respond_to_with(&interaction, text)
         .await
         .context(SendMessageSnafu)?;
     sleep(TRANSIENT_LINGER).await;
@@ -487,4 +490,37 @@ pub async fn notify_cancelled(ctx: Context<'_>, interaction: ComponentInteractio
         .await
         .context(DeleteResponseSnafu)?;
     Ok(())
+}
+
+/// Shows a confirm/cancel prompt on `interaction`, waits for the press, and
+/// returns the response when confirmed. On an explicit cancel it shows the
+/// cancellation notice itself; on cancel or no response it returns `None`.
+pub async fn confirm_prompt<P: Into<String>>(
+    ctx: Context<'_>,
+    interaction: ComponentInteraction,
+    prompt: P,
+) -> AppResult<Option<ComponentInteraction>> {
+    let id = ctx.id();
+    let confirm_id = InteractionKind::Confirm.custom_id(id);
+    interaction
+        .create_response(ctx.http(), confirm_interaction_response(id, prompt.into()))
+        .await
+        .context(SendResponseSnafu)?;
+    let Some(response) = create_collector(
+        ctx,
+        &[
+            InteractionKind::Confirm.as_tag(),
+            InteractionKind::Cancel.as_tag(),
+        ],
+    )
+    .await
+    else {
+        return Ok(None);
+    };
+    if response.data.custom_id == confirm_id {
+        Ok(Some(response))
+    } else {
+        notify_cancelled(ctx, response).await?;
+        Ok(None)
+    }
 }
