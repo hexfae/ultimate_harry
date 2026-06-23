@@ -7,12 +7,7 @@ use bon::Builder;
 use core::fmt::{Display, Formatter, Result as FmtResult, Write as _};
 use tracing::warn;
 use jiff::Zoned;
-use poise::serenity_prelude::{
-    CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage,
-    all::{
-        ButtonStyle, Color, CreateActionRow, CreateButton, CreateEmbed, CreateEmbedFooter, UserId,
-    },
-};
+use poise::serenity_prelude::all::{Color, CreateEmbed, CreateEmbedFooter, UserId};
 use native_db::{ToKey as _, native_db};
 use native_model::{Model as _, native_model};
 use serde::{Deserialize, Serialize};
@@ -23,13 +18,11 @@ use url::Url;
 
 use crate::{
     database::Database,
-    events::interaction::InteractionKind,
     llm::ModelSettings,
     models::modals::{
         CreateCharacterModal, EditCharacterModal, SecondCreateCharacterModal,
         SecondEditCharacterModal,
     },
-    phrases::{no, yes},
 };
 
 /// E.g. `16 May, Friday, 2025 | 17:41:14 | 2025-05-16`.
@@ -642,23 +635,6 @@ impl Character {
         embed
     }
 
-    /// Creates a confirmation interaction response with confirm/cancel buttons.
-    #[must_use]
-    pub fn to_confirm_interaction_response<I, C>(
-        id: I,
-        content: C,
-    ) -> CreateInteractionResponse<'static>
-    where
-        I: Into<u64>,
-        C: Into<String>,
-    {
-        let buttons = create_confirm_buttons(id);
-        CreateInteractionResponse::UpdateMessage(
-            CreateInteractionResponseMessage::new()
-                .content(content.into())
-                .components(buttons),
-        )
-    }
 }
 
 impl From<(CreateCharacterModal, SecondCreateCharacterModal, UserId)> for Character {
@@ -698,24 +674,6 @@ fn validate_url(maybe_url: Option<String>) -> Option<String> {
         .and_then(|url| Url::parse(&url).ok())
         .filter(|url| matches!(url.scheme(), "https" | "http"))
         .map(|url| url.to_string())
-}
-
-/// Creates confirmation buttons with "confirm" and "cancel" actions.
-fn create_confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
-    let id: u64 = into_id.into();
-    let confirm_id = InteractionKind::Confirm.custom_id(id);
-    let cancel_id = InteractionKind::Cancel.custom_id(id);
-    vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
-        vec![
-            CreateButton::new(confirm_id)
-                .style(ButtonStyle::Secondary)
-                .label(yes()),
-            CreateButton::new(cancel_id)
-                .style(ButtonStyle::Secondary)
-                .label(no()),
-        ]
-        .into(),
-    ))]
 }
 
 /// Tests for character similarity ranking.

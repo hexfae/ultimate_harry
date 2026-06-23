@@ -6,6 +6,7 @@ use crate::{
         autocomplete,
         character::paginate::{notify_cancelled, paginate},
     },
+    components::confirm_interaction_response,
     constants::{DELETE, TRANSIENT_LINGER},
     error::{DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
     events::interaction::InteractionKind,
@@ -57,7 +58,7 @@ async fn ask_for_confirmation(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
 ) -> AppResult<Option<ComponentInteraction>> {
-    let reply = Character::to_confirm_interaction_response(ctx.id(), ask_delete());
+    let reply = confirm_interaction_response(ctx.id(), ask_delete());
     interaction
         .create_response(ctx.http(), reply)
         .await
