@@ -505,30 +505,20 @@ mod tests {
         }
     }
 
-    /// Tag enhancement applies only when a tag model is set and the synthesis model
-    /// is the audio-tag-aware Eleven v3.
+    /// `tag_model_if_enabled` keys the enhancement off the configured model,
+    /// delegating to `tag_model_for` (whose full case matrix is covered by
+    /// `tag_model_for_keys_off_the_effective_model`).
     #[test]
-    fn tag_enhancement_requires_v3_and_a_tag_model() {
+    fn tag_model_if_enabled_uses_the_configured_model() {
+        let settings = tagging("eleven_multilingual_v2", Some("vendor/cheap"));
+        assert!(
+            settings.tag_model_if_enabled().is_none(),
+            "a v2 configured model does not enhance"
+        );
         assert_eq!(
-            tagging("eleven_v3", Some("vendor/cheap")).tag_model_if_enabled(),
+            settings.tag_model_for("eleven_v3"),
             Some("vendor/cheap"),
-            "v3 with a tag model enhances"
-        );
-        assert!(
-            tagging("eleven_multilingual_v2", Some("vendor/cheap"))
-                .tag_model_if_enabled()
-                .is_none(),
-            "a non-v3 model never enhances, even with a tag model set"
-        );
-        assert!(
-            tagging("eleven_v3", None).tag_model_if_enabled().is_none(),
-            "v3 without a tag model does not enhance"
-        );
-        assert!(
-            tagging("eleven_v3", Some(""))
-                .tag_model_if_enabled()
-                .is_none(),
-            "an empty tag model disables enhancement"
+            "the same settings enhance a v3 effective model, so it is the configured model that decides"
         );
     }
 
