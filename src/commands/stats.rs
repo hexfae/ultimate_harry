@@ -112,7 +112,12 @@ mod tests {
     /// A character with a last-used time renders it in the compact date format.
     #[test]
     fn the_last_used_time_is_shown_when_present() {
-        let Ok(time) = "2026-06-22T19:33:00[UTC]".parse::<Zoned>() else {
+        let parsed = "2026-06-22T19:33:00[UTC]".parse::<Zoned>();
+        assert!(
+            parsed.is_ok(),
+            "the test timestamp must parse (jiff tzdb available)"
+        );
+        let Ok(time) = parsed else {
             return;
         };
         let last_used = Character::builder()

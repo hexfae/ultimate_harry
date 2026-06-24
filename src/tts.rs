@@ -814,7 +814,12 @@ mod tests {
     #[test]
     fn audio_filename_combines_name_and_request_time() {
         use jiff::civil::date;
-        let Ok(when) = date(2026, 6, 23).at(14, 30, 0, 0).in_tz("Europe/Stockholm") else {
+        let zoned = date(2026, 6, 23).at(14, 30, 0, 0).in_tz("Europe/Stockholm");
+        assert!(
+            zoned.is_ok(),
+            "the test timezone must resolve (jiff tzdb available)"
+        );
+        let Ok(when) = zoned else {
             return;
         };
         assert_eq!(
