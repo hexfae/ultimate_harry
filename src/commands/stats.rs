@@ -48,10 +48,19 @@ fn format_leaderboard(characters: &[Character]) -> String {
     text
 }
 
-/// Formats a count compactly, abbreviating thousands as e.g. `1.2k`.
+/// Formats a count compactly, abbreviating thousands as e.g. `1.2k` and
+/// millions as e.g. `1.5M`.
 fn abbreviate(count: u32) -> String {
     if count < 1000 {
         return count.to_string();
+    }
+    if count >= 1_000_000 {
+        let millions = count.checked_div(1_000_000).unwrap_or(0);
+        let hundred_thousands = count
+            .checked_rem(1_000_000)
+            .and_then(|remainder| remainder.checked_div(100_000))
+            .unwrap_or(0);
+        return format!("{millions}.{hundred_thousands}M");
     }
     let thousands = count.checked_div(1000).unwrap_or(0);
     let hundreds = count
@@ -160,5 +169,13 @@ mod tests {
         assert_eq!(abbreviate(1234), "1.2k");
         assert_eq!(abbreviate(3402), "3.4k");
         assert_eq!(abbreviate(12345), "12.3k");
+    }
+
+    /// Counts of a million or more are abbreviated with an `M` suffix, not `k`.
+    #[test]
+    fn abbreviate_compacts_millions() {
+        assert_eq!(abbreviate(1_000_000), "1.0M");
+        assert_eq!(abbreviate(1_500_000), "1.5M");
+        assert_eq!(abbreviate(12_345_678), "12.3M");
     }
 }
