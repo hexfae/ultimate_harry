@@ -41,27 +41,31 @@ const EMPTY_AVATAR: &str = "https://upload.wikimedia.org/wikipedia/commons/c/ca/
 )]
 impl History {
     /// Converts the history to a placeholder interaction response.
-    pub fn to_placeholder_interaction<'a, M: Into<MessageId>>(
+    pub async fn to_placeholder_interaction<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
         id: M,
+        db: &Database,
         options: &[CharacterOption],
     ) -> CreateInteractionResponse<'a> {
         CreateInteractionResponse::UpdateMessage(
-            self.to_placeholder(character, id, Duration::ZERO, true, options)
+            self.to_placeholder(character, id, Duration::ZERO, true, db, options)
+                .await
                 .to_slash_initial_response(CreateInteractionResponseMessage::new()),
         )
     }
 
     /// Converts the history to a placeholder interaction response edit.
-    pub fn to_placeholder_interaction_edit<'a, M: Into<MessageId>>(
+    pub async fn to_placeholder_interaction_edit<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
         id: M,
         elapsed: Duration,
+        db: &Database,
         options: &[CharacterOption],
     ) -> EditInteractionResponse<'a> {
-        self.to_placeholder(character, id, elapsed, true, options)
+        self.to_placeholder(character, id, elapsed, true, db, options)
+            .await
             .to_slash_initial_response_edit(EditInteractionResponse::new())
     }
 
@@ -72,39 +76,44 @@ impl History {
     /// tick re-renders it via
     /// [`to_placeholder_message_edit`](Self::to_placeholder_message_edit) with
     /// the real ID and enables it. The ID passed here is therefore unused.
-    pub fn to_placeholder_message<'a>(
+    pub async fn to_placeholder_message<'a>(
         &self,
         character: &'a Character,
         replying_to: &DiscordMessage,
+        db: &Database,
         options: &[CharacterOption],
     ) -> CreateMessage<'a> {
-        self.to_placeholder(character, MessageId::new(1), Duration::ZERO, false, options)
+        self.to_placeholder(character, MessageId::new(1), Duration::ZERO, false, db, options)
+            .await
             .to_prefix(replying_to.into())
             .reference_message(replying_to)
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
     /// Converts the history to a placeholder message edit.
-    pub fn to_placeholder_message_edit<'a, M: Into<MessageId>>(
+    pub async fn to_placeholder_message_edit<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
         id: M,
         elapsed: Duration,
+        db: &Database,
         options: &[CharacterOption],
     ) -> EditMessage<'a> {
-        self.to_placeholder(character, id, elapsed, true, options)
+        self.to_placeholder(character, id, elapsed, true, db, options)
+            .await
             .to_prefix_edit(EditMessage::new())
             .allowed_mentions(CreateAllowedMentions::new())
     }
 
     /// Converts the history to a placeholder, keying its buttons (the live Stop
     /// button in particular) on the reply's message `id`.
-    fn to_placeholder<'a, M: Into<MessageId>>(
+    async fn to_placeholder<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
         id: M,
         elapsed: Duration,
         stoppable: bool,
+        db: &Database,
         options: &[CharacterOption],
     ) -> CreateReply<'a> {
         let (has_previous, has_edit) = (false, false);
@@ -125,7 +134,10 @@ impl History {
         let title = vec![character_title_section(character, "…")].into();
 
         // nothing has streamed in yet, so there is nothing to speak; the speak
-        // button is disabled anyway while unfinished
+        // button and voice dropdown are disabled anyway while unfinished, but the
+        // dropdown is still rendered so it is present throughout the stream like
+        // the hand-off menu, rather than popping in only when the reply finishes
+        let voices = db.voice_options().await;
         let components = create_buttons(
             id.into().into(),
             self.has_finished,
@@ -134,7 +146,7 @@ impl History {
             false,
             stoppable,
             options,
-            &[],
+            &voices,
         );
 
         let container = vec![CreateComponent::Container(CreateContainer::new(

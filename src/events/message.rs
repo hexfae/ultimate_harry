@@ -47,7 +47,7 @@ pub async fn message(
     let options = db.character_menu_options().await?;
 
     let placeholder_message =
-        history.to_placeholder_message(&character, user_message, &options);
+        history.to_placeholder_message(&character, user_message, db, &options).await;
 
     let mut bot_message = user_message
         .channel_id

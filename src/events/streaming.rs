@@ -152,12 +152,16 @@ impl ReplySink for MessageSink<'_> {
     }
 
     async fn placeholder(&mut self, elapsed: Duration) -> AppResult {
-        let edit = self.history.to_placeholder_message_edit(
-            self.character,
-            self.message.id,
-            elapsed,
-            self.options,
-        );
+        let edit = self
+            .history
+            .to_placeholder_message_edit(
+                self.character,
+                self.message.id,
+                elapsed,
+                self.db,
+                self.options,
+            )
+            .await;
         self.message
             .edit(self.ctx, edit)
             .await
@@ -229,12 +233,16 @@ impl ReplySink for InteractionSink<'_> {
     }
 
     async fn placeholder(&mut self, elapsed: Duration) -> AppResult {
-        let edit = self.history.to_placeholder_interaction_edit(
-            self.character,
-            self.id,
-            elapsed,
-            self.options,
-        );
+        let edit = self
+            .history
+            .to_placeholder_interaction_edit(
+                self.character,
+                self.id,
+                elapsed,
+                self.db,
+                self.options,
+            )
+            .await;
         self.interaction
             .edit_response(&self.ctx.http, edit)
             .await

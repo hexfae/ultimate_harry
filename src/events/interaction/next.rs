@@ -28,7 +28,9 @@ pub async fn next(
         history.push_choice((character.clone(), String::new(), Duration::ZERO));
         history.set_finished(false);
 
-        let placeholder = history.to_placeholder_interaction(&character, id, &options);
+        let placeholder = history
+            .to_placeholder_interaction(&character, id, db, &options)
+            .await;
         interaction
             .create_response(&ctx.http, placeholder)
             .await
