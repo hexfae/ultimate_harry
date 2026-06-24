@@ -516,7 +516,7 @@ fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
     ];
     options.extend(voices.iter().map(|voice| {
         let mut option = CreateSelectMenuOption::new(voice.name.clone(), voice.voice_id.clone())
-            .description(voice.description.clone());
+            .description(voice.description.chars().take(100).collect::<String>());
         if let Ok(emoji) = ReactionType::try_from(voice.emoji.clone()) {
             option = option.emoji(emoji);
         }
