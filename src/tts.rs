@@ -391,6 +391,65 @@ fn dialogue_request_body(turns: &[DialogueTurn], model: &str) -> serde_json::Val
     })
 }
 
+/// Replaces any turn whose `voice_id` is not in `allowed` with `fallback`, so a
+/// model that invents a voice ID still speaks in a real, configured voice.
+#[must_use]
+pub fn enforce_allowed_voices(
+    turns: Vec<DialogueTurn>,
+    allowed: &[String],
+    fallback: &str,
+) -> Vec<DialogueTurn> {
+    turns
+        .into_iter()
+        .map(|mut turn| {
+            if !allowed.contains(&turn.voice_id) {
+                fallback.clone_into(&mut turn.voice_id);
+            }
+            turn
+        })
+        .collect()
+}
+
+/// A plan for synthesizing assigned dialogue turns.
+pub enum DialoguePlan {
+    /// The turns use at most one distinct voice, so they are spoken as a single
+    /// single-voice request over the joined text.
+    Single {
+        /// The joined text of every turn.
+        text: String,
+        /// The single voice the joined text is spoken in.
+        voice_id: String,
+    },
+    /// The turns use more than one distinct voice, spoken via text-to-dialogue.
+    Multi(Vec<DialogueTurn>),
+}
+
+/// Collapses `turns` to a [`DialoguePlan::Single`] when they use at most one
+/// distinct voice (joining their texts, and using `fallback` when there are no
+/// turns), otherwise keeps them as a [`DialoguePlan::Multi`].
+#[must_use]
+pub fn plan_dialogue(turns: Vec<DialogueTurn>, fallback: &str) -> DialoguePlan {
+    let distinct = {
+        let mut ids: Vec<&str> = turns.iter().map(|turn| turn.voice_id.as_str()).collect();
+        ids.sort_unstable();
+        ids.dedup();
+        ids.len()
+    };
+    if distinct <= 1 {
+        let text = turns
+            .iter()
+            .map(|turn| turn.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let voice_id = turns
+            .first()
+            .map_or_else(|| fallback.to_owned(), |turn| turn.voice_id.clone());
+        DialoguePlan::Single { text, voice_id }
+    } else {
+        DialoguePlan::Multi(turns)
+    }
+}
+
 /// All errors that can happen when synthesizing speech.
 #[derive(Debug, Snafu, Diagnostic)]
 #[expect(
@@ -451,9 +510,18 @@ impl TtsError {
 #[cfg(test)]
 mod tests {
     use super::{
-        DialogueTurn, TtsError, TtsOverrides, TtsSettings, VoiceEntry, audio_filename,
-        dialogue_request_body, is_speakable, tts_request_body, tts_url,
+        DialoguePlan, DialogueTurn, TtsError, TtsOverrides, TtsSettings, VoiceEntry, audio_filename,
+        dialogue_request_body, enforce_allowed_voices, is_speakable, plan_dialogue,
+        tts_request_body, tts_url,
     };
+
+    /// Builds a dialogue turn with the given voice ID and text.
+    fn turn(voice_id: &str, text: &str) -> DialogueTurn {
+        DialogueTurn {
+            voice_id: voice_id.to_owned(),
+            text: text.to_owned(),
+        }
+    }
     use crate::models::character::Character;
     use serenity::all::UserId;
 
@@ -842,6 +910,52 @@ mod tests {
         assert!(
             !is_speakable("   \n\t  "),
             "whitespace-only text is not speakable"
+        );
+    }
+
+    /// An unknown voice ID is rewritten to the fallback, while a known one and the
+    /// turn's text are left untouched.
+    #[test]
+    fn enforce_allowed_voices_replaces_unknown_ids() {
+        let turns = vec![turn("a", "hej"), turn("x", "svar")];
+        let allowed = vec!["a".to_owned(), "b".to_owned()];
+        let fixed = enforce_allowed_voices(turns, &allowed, "b");
+        assert_eq!(
+            fixed.iter().map(|turn| turn.voice_id.as_str()).collect::<Vec<_>>(),
+            vec!["a", "b"],
+            "a known id is kept and an unknown one becomes the fallback"
+        );
+        assert_eq!(
+            fixed.get(1).map(|turn| turn.text.as_str()),
+            Some("svar"),
+            "the rewritten turn keeps its text"
+        );
+    }
+
+    /// Turns using a single distinct voice collapse to a single-voice plan over the
+    /// joined text; an empty turn list falls back to the fallback voice.
+    #[test]
+    fn plan_dialogue_collapses_to_a_single_voice() {
+        let single = plan_dialogue(vec![turn("a", "hej"), turn("a", "då")], "fallback");
+        assert!(
+            matches!(&single, DialoguePlan::Single { voice_id, text } if voice_id == "a" && text == "hej\ndå"),
+            "one distinct voice joins into a single-voice plan"
+        );
+
+        let empty = plan_dialogue(vec![], "fallback");
+        assert!(
+            matches!(&empty, DialoguePlan::Single { voice_id, text } if voice_id == "fallback" && text.is_empty()),
+            "no turns fall back to the fallback voice"
+        );
+    }
+
+    /// Turns using more than one distinct voice stay a multi-voice plan.
+    #[test]
+    fn plan_dialogue_keeps_multiple_voices() {
+        let multi = plan_dialogue(vec![turn("a", "hej"), turn("b", "svar")], "fallback");
+        assert!(
+            matches!(&multi, DialoguePlan::Multi(turns) if turns.len() == 2),
+            "two distinct voices stay a multi-voice plan"
         );
     }
 

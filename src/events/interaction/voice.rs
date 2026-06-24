@@ -7,7 +7,7 @@ use crate::{
     database::Database,
     llm::{LlmManager, VoiceChoice},
     models::{character::Character, history::History},
-    tts::{DialogueTurn, TtsError, TtsManager, TtsSettings},
+    tts::{DialoguePlan, DialogueTurn, TtsError, TtsManager, TtsSettings, enforce_allowed_voices, plan_dialogue},
     util::report_error,
 };
 use serenity::all::{ComponentInteraction, ComponentInteractionDataKind, Context};
@@ -72,24 +72,12 @@ async fn synthesize_auto(
         let speak_text = speak::enrich(db, settings, &settings.model, text).await;
         return manager.synthesize(&speak_text, fallback, &settings.model).await;
     };
-    let distinct = {
-        let mut ids: Vec<&str> = turns.iter().map(|turn| turn.voice_id.as_str()).collect();
-        ids.sort_unstable();
-        ids.dedup();
-        ids.len()
-    };
-    if distinct <= 1 {
-        let joined = turns
-            .iter()
-            .map(|turn| turn.text.as_str())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let voice = turns
-            .first()
-            .map_or(fallback, |turn| turn.voice_id.as_str());
-        return manager.synthesize(&joined, voice, &settings.model).await;
+    match plan_dialogue(turns, fallback) {
+        DialoguePlan::Single { text: joined, voice_id } => {
+            manager.synthesize(&joined, &voice_id, &settings.model).await
+        }
+        DialoguePlan::Multi(spoken) => manager.synthesize_dialogue(&spoken).await,
     }
-    manager.synthesize_dialogue(&turns).await
 }
 
 /// Asks the enricher to split `text` into per-voice turns, validating the
@@ -115,17 +103,7 @@ async fn assign_turns(
     let llm = LlmManager::new(db.model_settings().await);
     let add_tags = settings.tag_model_if_enabled().is_some();
     match llm.assign_voices(text, &model, &choices, add_tags).await {
-        Ok(turns) => Some(
-            turns
-                .into_iter()
-                .map(|mut turn| {
-                    if !allowed.contains(&turn.voice_id) {
-                        fallback.clone_into(&mut turn.voice_id);
-                    }
-                    turn
-                })
-                .collect(),
-        ),
+        Ok(turns) => Some(enforce_allowed_voices(turns, &allowed, fallback)),
         Err(why) => {
             warn!("voice assignment failed, speaking a single voice");
             report_error(why);
