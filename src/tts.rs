@@ -270,28 +270,8 @@ impl TtsManager {
         voice_id: &str,
         model: &str,
     ) -> Result<Vec<u8>, TtsError> {
-        if self.settings.api_key.is_empty() {
-            return MissingApiKeySnafu.fail();
-        }
-        let response = reqwest::Client::new()
-            .post(tts_url(voice_id))
-            .header("xi-api-key", &self.settings.api_key)
-            .json(&tts_request_body(text, model))
-            .send()
+        self.post_audio(tts_url(voice_id), tts_request_body(text, model))
             .await
-            .context(RequestSnafu)?;
-        let status = response.status();
-        if !status.is_success() {
-            return HttpSnafu {
-                status: status.as_u16(),
-            }
-            .fail();
-        }
-        let bytes = response.bytes().await.context(RequestSnafu)?.to_vec();
-        if bytes.is_empty() {
-            return EmptyAudioSnafu.fail();
-        }
-        Ok(bytes)
     }
 
     /// Synthesizes a multi-voice dialogue into MP3 audio bytes via the
@@ -299,13 +279,24 @@ impl TtsManager {
     /// its own voice. Fails early with [`TtsError::MissingApiKey`] when no API
     /// key is configured, like [`synthesize`](Self::synthesize).
     pub async fn synthesize_dialogue(&self, turns: &[DialogueTurn]) -> Result<Vec<u8>, TtsError> {
+        self.post_audio(
+            DIALOGUE_URL.to_owned(),
+            dialogue_request_body(turns, &self.settings.model),
+        )
+        .await
+    }
+
+    /// POSTs `body` to `url` on `ElevenLabs` and returns the MP3 bytes, failing
+    /// early without an API key and validating the response status and that the
+    /// audio is non-empty. Shared by the single-voice and dialogue paths.
+    async fn post_audio(&self, url: String, body: serde_json::Value) -> Result<Vec<u8>, TtsError> {
         if self.settings.api_key.is_empty() {
             return MissingApiKeySnafu.fail();
         }
         let response = reqwest::Client::new()
-            .post(DIALOGUE_URL)
+            .post(url)
             .header("xi-api-key", &self.settings.api_key)
-            .json(&dialogue_request_body(turns, &self.settings.model))
+            .json(&body)
             .send()
             .await
             .context(RequestSnafu)?;
