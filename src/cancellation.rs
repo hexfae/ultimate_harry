@@ -10,7 +10,7 @@
 
 use poise::serenity_prelude::MessageId;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use tokio_util::sync::CancellationToken;
 
 /// A registry mapping a streaming reply's Discord message ID to the token that
@@ -33,9 +33,7 @@ impl Cancellations {
     /// the streaming loop selects on.
     pub fn begin(&self, id: MessageId) -> StreamGuard<'_> {
         let token = CancellationToken::new();
-        if let Ok(mut tokens) = self.tokens.lock() {
-            tokens.insert(id, token.clone());
-        }
+        self.lock().insert(id, token.clone());
         StreamGuard {
             registry: self,
             id,
@@ -45,19 +43,22 @@ impl Cancellations {
 
     /// Cancels the in-flight stream for `id`, if one is registered.
     pub fn cancel(&self, id: MessageId) {
-        let Ok(tokens) = self.tokens.lock() else {
-            return;
-        };
-        if let Some(token) = tokens.get(&id) {
+        if let Some(token) = self.lock().get(&id) {
             token.cancel();
         }
     }
 
     /// Removes the entry for `id`; called by [`StreamGuard`] on drop.
     fn remove(&self, id: MessageId) {
-        if let Ok(mut tokens) = self.tokens.lock() {
-            tokens.remove(&id);
-        }
+        self.lock().remove(&id);
+    }
+
+    /// Locks the token table, recovering the guard if a previous holder
+    /// panicked. The guarded map operations cannot themselves panic, so the map
+    /// is always consistent and a poisoned lock is safe to keep using; silently
+    /// giving up here would instead permanently disable the Stop button.
+    fn lock(&self) -> MutexGuard<'_, HashMap<MessageId, CancellationToken>> {
+        self.tokens.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
