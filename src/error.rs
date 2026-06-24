@@ -236,8 +236,12 @@ impl Diagnostic for AppError {
 /// Tests for the user-facing error rendering and the retryable classification.
 #[cfg(test)]
 mod tests {
-    use super::AppError;
+    use super::{AppError, RegisterCommandSnafu, SendMessageSnafu};
+    use crate::events::interaction::InteractionKind;
     use crate::llm::LlmError;
+    use crate::tts::TtsError;
+    use snafu::IntoError as _;
+    use std::io::Error as IoError;
 
     /// A permanent failure (no vision model configured) is not retryable and its
     /// user message shows the display and help but no retry hint.
@@ -270,5 +274,46 @@ mod tests {
             error.user_message().contains("Du kan försöka igen"),
             "a transient error offers a retry hint"
         );
+    }
+
+    /// Each retryable group keeps its verdict: transient Discord-API failures are
+    /// retryable, misconfiguration and stale buttons are not, and the sub-error
+    /// variants delegate to their own classification.
+    #[test]
+    fn retryable_classification_covers_each_group() {
+        let send = SendMessageSnafu.into_error(serenity::Error::Io(io_error()));
+        assert!(send.retryable(), "a Discord send failure is transient");
+
+        let register = RegisterCommandSnafu.into_error(serenity::Error::Io(io_error()));
+        assert!(
+            !register.retryable(),
+            "a command-registration failure is a permanent misconfiguration"
+        );
+
+        let unknown = InteractionKind::try_from("zzzz").err();
+        assert!(unknown.is_some(), "an unknown tag yields the error we need");
+        let Some(source) = unknown else { return };
+        let stale = AppError::UnknownInteraction { source };
+        assert!(!stale.retryable(), "a stale button is not retryable");
+
+        assert!(
+            AppError::Tts {
+                source: TtsError::EmptyAudio
+            }
+            .retryable(),
+            "an empty-audio TTS failure delegates to retryable"
+        );
+        assert!(
+            !AppError::Tts {
+                source: TtsError::MissingApiKey
+            }
+            .retryable(),
+            "a missing API key delegates to permanent"
+        );
+    }
+
+    /// A throwaway IO error to stand in as a `serenity::Error` source.
+    fn io_error() -> IoError {
+        IoError::other("test")
     }
 }

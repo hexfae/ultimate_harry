@@ -681,9 +681,39 @@ impl LlmError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChatResponse, ModelsResponse, extract_description, model_supports_modality,
+        ChatResponse, LlmError, ModelsResponse, extract_description, model_supports_modality,
         parse_dialogue_turns,
     };
+
+    /// Missing-model misconfigurations are permanent, while empty-response
+    /// failures are transient and may differ on retry.
+    #[test]
+    fn retryable_classification_splits_misconfiguration_from_transient() {
+        assert!(
+            !LlmError::NoVisionModel.retryable(),
+            "no configured vision model is a permanent misconfiguration"
+        );
+        assert!(
+            !LlmError::NoAudioModel.retryable(),
+            "no configured audio model is a permanent misconfiguration"
+        );
+        assert!(
+            LlmError::EmptyDescription.retryable(),
+            "an empty description may differ on retry"
+        );
+        assert!(
+            LlmError::EmptyTranscription.retryable(),
+            "an empty transcription may differ on retry"
+        );
+        assert!(
+            LlmError::EmptyTags.retryable(),
+            "empty tag output may differ on retry"
+        );
+        assert!(
+            LlmError::EmptyVoices.retryable(),
+            "an unusable voice assignment may differ on retry"
+        );
+    }
 
     /// A bare JSON array of turns parses, keeping order, voice, and text.
     #[test]
