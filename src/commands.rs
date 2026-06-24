@@ -6,6 +6,7 @@ pub mod emoji;
 pub mod model;
 pub mod name;
 pub mod pin_channel;
+pub mod say;
 pub mod stats;
 pub mod tts;
 pub mod voice;
@@ -16,6 +17,7 @@ pub use emoji::emoji;
 pub use model::model;
 pub use name::name;
 pub use pin_channel::pin_channel;
+pub use say::say;
 pub use stats::stats;
 pub use tts::tts;
 pub use voice::voice;
@@ -48,6 +50,7 @@ pub fn commands() -> Vec<poise::Command<AppState, AppError>> {
         model(),
         pin_channel(),
         name(),
+        say(),
         stats(),
         tts(),
         voice(),
