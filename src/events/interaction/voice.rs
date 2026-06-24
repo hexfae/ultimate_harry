@@ -5,17 +5,12 @@ use super::speak;
 use crate::{
     AppResult,
     database::Database,
-    error::SendResponseSnafu,
     llm::{LlmManager, VoiceChoice},
     models::{character::Character, history::History},
     tts::{DialogueTurn, TtsError, TtsManager, TtsSettings},
     util::report_error,
 };
-use serenity::all::{
-    ComponentInteraction, ComponentInteractionDataKind, Context, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
-};
-use snafu::ResultExt as _;
+use serenity::all::{ComponentInteraction, ComponentInteractionDataKind, Context};
 use tracing::warn;
 
 /// The select value that requests auto voice assignment rather than a fixed voice.
@@ -44,26 +39,13 @@ pub async fn voice(
     };
 
     let requested_at = speak::requested_now();
-    let settings = db.tts_settings().await;
-    let manager = TtsManager::new(settings.clone());
+    let (settings, manager, text) = speak::setup(db, &history).await;
     let fallback = manager
         .voice_for(&character)
         .or_else(|| settings.voices().first().map(|voice| voice.voice_id.clone()))
         .ok_or(TtsError::NoVoice)?;
-    let text = history
-        .chosen_message()
-        .chosen_revision()
-        .head()
-        .content()
-        .to_owned();
 
-    interaction
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new()),
-        )
-        .await
-        .context(SendResponseSnafu)?;
+    speak::defer(ctx, interaction).await?;
 
     let audio = if selection == AUTO_VALUE {
         synthesize_auto(db, &settings, &manager, &character, &fallback, text).await?

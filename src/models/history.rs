@@ -235,6 +235,12 @@ impl History {
             .unwrap_or_else(|| self.choices.first())
     }
 
+    /// Returns the text of the chosen reply's current revision (its first line).
+    #[must_use]
+    pub fn chosen_content(&self) -> &str {
+        self.chosen_message().chosen_revision().head().content()
+    }
+
     /// Returns the Discord message ID of this history.
     #[must_use]
     pub fn id(&self) -> &str {

@@ -7,13 +7,14 @@ use crate::{
     database::Database,
     error::SendResponseSnafu,
     llm::LlmManager,
-    models::character::Character,
-    tts::{TtsSettings, audio_filename},
+    models::{character::Character, history::History},
+    tts::{TtsManager, TtsSettings, audio_filename},
     util::report_error,
 };
 use jiff::{Timestamp, Zoned};
 use serenity::all::{
-    ComponentInteraction, Context, CreateAttachment, CreateInteractionResponseFollowup,
+    ComponentInteraction, Context, CreateAttachment, CreateInteractionResponse,
+    CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
 };
 use snafu::ResultExt as _;
 use tracing::warn;
@@ -27,6 +28,28 @@ pub(super) fn requested_now() -> Zoned {
     Timestamp::now()
         .in_tz(FILENAME_TIMEZONE)
         .unwrap_or_else(|_| Zoned::now())
+}
+
+/// The TTS settings, a manager over them, and the chosen reply's spoken text,
+/// the shared preamble both read-aloud handlers need before resolving a voice.
+pub(super) async fn setup(db: &Database, history: &History) -> (TtsSettings, TtsManager, String) {
+    let settings = db.tts_settings().await;
+    let manager = TtsManager::new(settings.clone());
+    let text = history.chosen_content().to_owned();
+    (settings, manager, text)
+}
+
+/// Defers the interaction so the slow synthesis request fits within Discord's
+/// three-second response window.
+pub(super) async fn defer(ctx: &Context, interaction: &ComponentInteraction) -> AppResult {
+    interaction
+        .create_response(
+            &ctx.http,
+            CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new()),
+        )
+        .await
+        .context(SendResponseSnafu)?;
+    Ok(())
 }
 
 /// Enriches `text` with v3 audio tags when a tag model is enabled for the

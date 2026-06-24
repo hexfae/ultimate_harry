@@ -4,14 +4,10 @@ use super::speak;
 use crate::{
     AppResult,
     database::Database,
-    error::SendResponseSnafu,
     models::{character::Character, history::History},
-    tts::{TtsError, TtsManager},
+    tts::TtsError,
 };
-use serenity::all::{
-    ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
-};
-use snafu::ResultExt as _;
+use serenity::all::{ComponentInteraction, Context};
 
 /// Speak the chosen reply aloud, posting it as an MP3 followup attachment.
 ///
@@ -32,24 +28,11 @@ pub async fn tts(
     character: Character,
 ) -> AppResult {
     let requested_at = speak::requested_now();
-    let settings = db.tts_settings().await;
-    let manager = TtsManager::new(settings.clone());
+    let (settings, manager, text) = speak::setup(db, &history).await;
     let voice = manager.voice_for(&character).ok_or(TtsError::NoVoice)?;
     let model = settings.solo_model(&voice).to_owned();
-    let text = history
-        .chosen_message()
-        .chosen_revision()
-        .head()
-        .content()
-        .to_owned();
 
-    interaction
-        .create_response(
-            &ctx.http,
-            CreateInteractionResponse::Defer(CreateInteractionResponseMessage::new()),
-        )
-        .await
-        .context(SendResponseSnafu)?;
+    speak::defer(ctx, interaction).await?;
 
     let speak_text = speak::enrich(db, &settings, &model, text).await;
     let audio = manager.synthesize(&speak_text, &voice, &model).await?;
