@@ -88,6 +88,16 @@ async fn read_or<T: DeserializeOwned>(path: &Path, label: &str, default: impl Fn
     }
 }
 
+/// Whether `id` is a safe single path segment: non-empty and free of path
+/// separators or parent-directory components, so it cannot escape its directory
+/// when interpolated into a record's file path. Record IDs are server-minted
+/// ULIDs or numeric Discord snowflakes, but a component interaction can submit
+/// an arbitrary select value, so a client-supplied ID is validated before it
+/// reaches the filesystem.
+fn is_safe_id(id: &str) -> bool {
+    !id.is_empty() && !id.contains(['/', '\\']) && !id.contains("..")
+}
+
 /// A directory of JSON files used as the bot's storage.
 pub struct Database {
     /// The root directory under which every record file lives.
@@ -187,6 +197,9 @@ impl Database {
 
     /// Returns a single character by its ID.
     pub async fn character(&self, id: &str) -> Result<Option<Character>, DatabaseError> {
+        if !is_safe_id(id) {
+            return Ok(None);
+        }
         read_json(&self.character_path(id)).await.context(GetSnafu)
     }
 
@@ -771,10 +784,21 @@ pub enum StoreError {
 /// They run against a fresh temporary database directory.
 #[cfg(test)]
 mod tests {
-    use super::Database;
+    use super::{Database, is_safe_id};
     use crate::llm::CharacterModelSettings;
     use crate::models::character::Character;
     use serenity::all::UserId;
+
+    /// A client-supplied character ID with path-traversal components is rejected,
+    /// so a crafted select value cannot read a file outside the characters dir.
+    #[test]
+    fn is_safe_id_rejects_path_traversal() {
+        assert!(is_safe_id("01J0ABCDEF"), "a plain ULID is a safe id");
+        assert!(is_safe_id("123456789"), "a numeric snowflake is a safe id");
+        assert!(!is_safe_id(""), "an empty id is rejected");
+        assert!(!is_safe_id("../config/tts_settings"), "a parent traversal is rejected");
+        assert!(!is_safe_id("sub/dir"), "a separator is rejected");
+    }
 
     /// Builds a minimal visible character with the given ID and name.
     fn character(id: &str, name: &str) -> Character {
