@@ -8,7 +8,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 30.825783884,
+          "duration": 30.623556466,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -20,7 +20,7 @@
         },
         {
           "phase": "Test",
-          "duration": 0.100821308,
+          "duration": 0.100600091,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -71,7 +71,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.20229133,
+          "duration": 1.252623202,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -83,7 +83,7 @@
         },
         {
           "phase": "Test",
-          "duration": 0.10055576,
+          "duration": 0.100554871,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -128,13 +128,13 @@
           "genre": "FnValue"
         }
       },
-      "summary": "MissedMutant",
+      "summary": "CaughtMutant",
       "log_path": "log/src__models__character__stats.rs_line_37_col_9.log",
       "diff_path": "diff/src__models__character__stats.rs_line_37_col_9.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.252164492,
+          "duration": 1.251862967,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -146,8 +146,10 @@
         },
         {
           "phase": "Test",
-          "duration": 0.100709739,
-          "process_status": "Success",
+          "duration": 0.10081966,
+          "process_status": {
+            "Failure": 101
+          },
           "argv": [
             "cargo",
             "test",
@@ -197,7 +199,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 2.055113494,
+          "duration": 2.004275918,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -209,7 +211,7 @@
         },
         {
           "phase": "Test",
-          "duration": 0.100583939,
+          "duration": 0.100559651,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -260,7 +262,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.251953521,
+          "duration": 1.253038779,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -272,7 +274,7 @@
         },
         {
           "phase": "Test",
-          "duration": 0.100710279,
+          "duration": 0.100647881,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -323,7 +325,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 2.052945751,
+          "duration": 2.052804639,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -335,7 +337,7 @@
         },
         {
           "phase": "Test",
-          "duration": 0.100609069,
+          "duration": 0.10059975,
           "process_status": {
             "Failure": 101
           },
@@ -388,7 +390,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.851488736,
+          "duration": 0.85160718,
           "process_status": "Success",
           "argv": [
             "cargo",
@@ -400,7 +402,7 @@
         },
         {
           "phase": "Test",
-          "duration": 0.100624969,
+          "duration": 0.100587571,
           "process_status": {
             "Failure": 101
           },
@@ -415,12 +417,12 @@
     }
   ],
   "total_mutants": 6,
-  "missed": 4,
-  "caught": 2,
+  "missed": 3,
+  "caught": 3,
   "timeout": 0,
   "unviable": 0,
   "success": 0,
-  "start_time": "2026-06-24T16:02:39.482895599Z",
-  "end_time": "2026-06-24T16:03:21.971079181Z",
+  "start_time": "2026-06-24T16:11:33.806570107Z",
+  "end_time": "2026-06-24T16:12:14.940230133Z",
   "cargo_mutants_version": "27.1.0"
 }

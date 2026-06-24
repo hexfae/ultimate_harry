@@ -518,10 +518,243 @@ pub async fn stream_into<S: ReplySink + Send>(
     })
 }
 
-/// Tests for the character-limit truncation helper.
+/// Tests for the truncation helper and the shared finalize bookkeeping.
+///
+/// The in-stream loop itself (timeout/retry/cancel/character-limit) is not unit
+/// tested here: it consumes a live `rig` stream whose item types are not
+/// constructible without a network, so faking it would buy no real coverage.
+/// What is testable without a network, and what these tests pin, is the
+/// finalize path that turns a finished [`Reply`] into a stored choice: the
+/// `complete == false` to red-error-container mechanism, the generation-stat
+/// counts, and the pre-stream-failure sentinel.
 #[cfg(test)]
 mod tests {
-    use super::truncate_to_chars;
+    use super::{ERROR_MESSAGE, Reply, ReplySink, finalize_failed, truncate_to_chars};
+    use crate::AppResult;
+    use crate::llm::{LlmManager, ModelSettings};
+    use crate::models::character::Character;
+    use crate::models::history::History;
+    use crate::models::message::{AttachmentMode, Message};
+    use core::time::Duration;
+    use nonempty::NonEmpty;
+    use serenity::all::{MessageId, UserId};
+
+    /// The side effects the finalize path is expected to drive, captured so the
+    /// test can assert them after the sink is consumed.
+    #[derive(Default)]
+    struct Records {
+        /// The text passed to the last `store_choice`.
+        stored_text: Option<String>,
+        /// The `(counts, complete)` passed to `persist`.
+        persisted: Option<((u32, u32), bool)>,
+        /// Whether the `before_persist` hook ran.
+        before_persist: bool,
+        /// How many times the reply was rendered.
+        rendered: u32,
+    }
+
+    /// A [`ReplySink`] that records the finalize bookkeeping into borrowed state
+    /// instead of touching Discord, mirroring `MessageSink`'s `store_choice`.
+    struct TestSink<'a> {
+        /// The conversation being finalized.
+        history: &'a mut History,
+        /// The character producing the reply.
+        character: Character,
+        /// Where the driven side effects are recorded.
+        records: &'a mut Records,
+    }
+
+    impl ReplySink for TestSink<'_> {
+        fn message_id(&self) -> MessageId {
+            MessageId::new(1)
+        }
+
+        async fn prepare(&mut self) -> AppResult<(LlmManager, Vec<Message>, AttachmentMode)> {
+            Ok((
+                LlmManager::new(ModelSettings::default()),
+                Vec::new(),
+                AttachmentMode::default(),
+            ))
+        }
+
+        async fn placeholder(&mut self, _elapsed: Duration) -> AppResult {
+            Ok(())
+        }
+
+        fn history(&mut self) -> &mut History {
+            self.history
+        }
+
+        fn character(&self) -> &Character {
+            &self.character
+        }
+
+        fn store_choice(&mut self, choice: (Character, String, Duration)) {
+            self.records.stored_text = Some(choice.1.clone());
+            self.history.set_choices(choice);
+        }
+
+        fn before_persist(&mut self) {
+            self.records.before_persist = true;
+        }
+
+        async fn persist(&mut self, counts: (u32, u32), complete: bool) -> AppResult {
+            self.records.persisted = Some((counts, complete));
+            Ok(())
+        }
+
+        async fn render_and_edit(&mut self) -> AppResult {
+            self.records.rendered = self.records.rendered.saturating_add(1);
+            Ok(())
+        }
+    }
+
+    /// Builds a minimal history with a single placeholder choice to finalize over.
+    fn fresh_history() -> History {
+        History::builder()
+            .id(MessageId::new(1))
+            .character("character-id")
+            .choices(NonEmpty::new(Message::new_system("placeholder")))
+            .current(0_usize)
+            .previous(Vec::new())
+            .build()
+    }
+
+    /// A minimal character for the finalize path.
+    fn test_character() -> Character {
+        Character::builder()
+            .id("character-id".to_owned())
+            .name("Harry")
+            .greeting("hej")
+            .creator(UserId::new(1))
+            .build()
+    }
+
+    /// `counts` reports whitespace-split words and the output tokens, saturating
+    /// rather than wrapping on an enormous token report.
+    #[test]
+    fn counts_reports_words_and_tokens() {
+        let reply = Reply {
+            text: "  hej  på  dig ".to_owned(),
+            output_tokens: 7,
+            complete: true,
+        };
+        assert_eq!(
+            reply.counts(),
+            (3, 7),
+            "three whitespace-separated words and the reported token count"
+        );
+        let huge = Reply {
+            text: String::new(),
+            output_tokens: u64::MAX,
+            complete: true,
+        };
+        assert_eq!(
+            huge.counts(),
+            (0, u32::MAX),
+            "no words, and the token count saturates instead of wrapping"
+        );
+    }
+
+    /// Finalizing a failed reply marks the stored choice as an error (so it
+    /// renders as the red error container) and persists it as non-complete.
+    #[tokio::test]
+    async fn finalize_marks_a_failed_reply_as_an_error() {
+        let mut history = fresh_history();
+        let mut records = Records::default();
+        let sink = TestSink {
+            history: &mut history,
+            character: test_character(),
+            records: &mut records,
+        };
+
+        let reply = Reply {
+            text: "oops".to_owned(),
+            output_tokens: 0,
+            complete: false,
+        };
+        let finalized = sink.finalize(reply, Duration::from_secs(1)).await;
+
+        assert!(finalized.is_ok(), "finalize succeeds");
+        assert!(
+            history.chosen_message().is_error(),
+            "a non-complete reply marks the current choice as an error"
+        );
+        assert_eq!(
+            records.stored_text.as_deref(),
+            Some("oops"),
+            "the reply text is stored as the choice"
+        );
+        assert_eq!(
+            records.persisted,
+            Some(((1, 0), false)),
+            "the failed reply persists as non-complete and is not counted"
+        );
+        assert!(records.before_persist, "the before-persist hook ran");
+        assert_eq!(records.rendered, 1, "the finished reply is rendered once");
+    }
+
+    /// Finalizing a genuine reply leaves the choice unmarked and persists it as
+    /// complete, so its generation stats are recorded.
+    #[tokio::test]
+    async fn finalize_keeps_a_genuine_reply() {
+        let mut history = fresh_history();
+        let mut records = Records::default();
+        let sink = TestSink {
+            history: &mut history,
+            character: test_character(),
+            records: &mut records,
+        };
+
+        let reply = Reply {
+            text: "hej hej".to_owned(),
+            output_tokens: 4,
+            complete: true,
+        };
+        let finalized = sink.finalize(reply, Duration::from_secs(1)).await;
+
+        assert!(finalized.is_ok(), "finalize succeeds");
+        assert!(
+            !history.chosen_message().is_error(),
+            "a complete reply is not marked as an error"
+        );
+        assert_eq!(
+            records.persisted,
+            Some(((2, 4), true)),
+            "a genuine reply persists as complete with its word and token counts"
+        );
+    }
+
+    /// A pre-stream failure finalizes with the generic error sentinel, marking the
+    /// choice as an error exactly like an in-stream failure.
+    #[tokio::test]
+    async fn finalize_failed_renders_the_error_sentinel() {
+        let mut history = fresh_history();
+        let mut records = Records::default();
+        let sink = TestSink {
+            history: &mut history,
+            character: test_character(),
+            records: &mut records,
+        };
+
+        let finalized = finalize_failed(sink).await;
+
+        assert!(finalized.is_ok(), "the failed finalize succeeds");
+        assert!(
+            history.chosen_message().is_error(),
+            "the sentinel reply marks the choice as an error"
+        );
+        assert_eq!(
+            records.stored_text.as_deref(),
+            Some(ERROR_MESSAGE),
+            "the generic error message is stored as the choice"
+        );
+        assert_eq!(
+            records.persisted.map(|(_, complete)| complete),
+            Some(false),
+            "the sentinel reply persists as non-complete"
+        );
+    }
 
     /// The limit counts characters, not bytes, and never splits a multi-byte one.
     #[test]
