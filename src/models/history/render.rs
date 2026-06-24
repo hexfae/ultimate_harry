@@ -185,17 +185,7 @@ impl History {
         } else {
             content
         };
-        let (first, rest) = match text.split_once('\n') {
-            Some((first, rest)) => (first.to_owned(), Some(rest.to_owned())),
-            None => (text.clone(), None),
-        };
-
-        let mut card = vec![character_title_section(character, first)];
-        if let Some(tail) = rest {
-            card.extend(tail.split('\n').filter(|line| !line.is_empty()).map(|part| {
-                CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part.to_owned()))
-            }));
-        }
+        let mut card = title_and_body_lines(character, &text);
         card.push(CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
             footer,
         )));
@@ -374,26 +364,10 @@ impl History {
         // discord rejects a whitespace-only text display, so an empty choice
         // renders a placeholder: the skip-greeting hint or the stalled "…"
         let text = self.body_text(content);
-        let (first, second) = match text.split_once('\n') {
-            Some((first, second)) => (first, Some(second)),
-            None => (text, None),
-        };
-
-        let title = vec![character_title_section(character, first)].into();
 
         let container = vec![CreateComponent::Container(CreateContainer::new(
             [
-                title,
-                second
-                    .map_or_else(Vec::new, |rest| {
-                        rest.split('\n')
-                            .filter(|line| !line.is_empty())
-                            .map(|part| {
-                                CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part))
-                            })
-                            .collect()
-                    })
-                    .into(),
+                title_and_body_lines(character, text).into(),
                 components,
                 footer,
             ]
@@ -404,6 +378,27 @@ impl History {
             .flags(MessageFlags::IS_COMPONENTS_V2)
             .components(container)
     }
+}
+
+/// The character title section followed by one text display per remaining
+/// non-empty line of `body`: its first line becomes the title's leading text and
+/// each subsequent non-empty line its own text display. The components own their
+/// text, so the result outlives the borrowed `body`.
+fn title_and_body_lines<'a>(
+    character: &'a Character,
+    body: &str,
+) -> Vec<CreateContainerComponent<'a>> {
+    let (first, rest) = match body.split_once('\n') {
+        Some((first, rest)) => (first, Some(rest)),
+        None => (body, None),
+    };
+    let mut card = vec![character_title_section(character, first.to_owned())];
+    if let Some(tail) = rest {
+        card.extend(tail.split('\n').filter(|line| !line.is_empty()).map(|part| {
+            CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part.to_owned()))
+        }));
+    }
+    card
 }
 
 /// Builds the title section of a history message: the character's name as a
