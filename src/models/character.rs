@@ -179,6 +179,8 @@ pub struct CharacterOption {
     label: String,
     /// The character's ID, used as the select option's value.
     id: String,
+    /// A short blurb shown under the label in the hand-off menu.
+    description: String,
 }
 
 impl CharacterOption {
@@ -192,6 +194,12 @@ impl CharacterOption {
     #[must_use]
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Returns the option's menu description.
+    #[must_use]
+    pub fn description(&self) -> &str {
+        &self.description
     }
 }
 
@@ -298,12 +306,23 @@ impl Character {
         &self.id
     }
 
-    /// Returns a lightweight hand-off menu option (label + ID) for this character.
+    /// Returns a lightweight hand-off menu option (label + ID + blurb) for this
+    /// character. The blurb prefers the short description, then falls back through
+    /// the personality, prompt, system prompt, scenario, and finally the greeting,
+    /// trimmed to Discord's 100-character select-option limit.
     #[must_use]
     pub fn to_menu_option(&self) -> CharacterOption {
+        let blurb = self
+            .description()
+            .or_else(|| self.personality())
+            .or_else(|| self.prompt())
+            .or_else(|| self.system_prompt())
+            .or_else(|| self.scenario())
+            .unwrap_or_else(|| self.greeting());
         CharacterOption {
             label: self.to_string(),
             id: self.id.clone(),
+            description: blurb.chars().take(100).collect(),
         }
     }
 

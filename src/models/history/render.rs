@@ -464,20 +464,24 @@ fn create_buttons<'a>(
     ];
     if !options.is_empty() {
         components.push(CreateContainerComponent::ActionRow(
-            CreateActionRow::SelectMenu(CreateSelectMenu::new(
-                char_id,
-                CreateSelectMenuKind::String {
-                    options: options
-                        .iter()
-                        .map(|option| {
-                            CreateSelectMenuOption::new(
-                                option.label().to_owned(),
-                                option.id().to_owned(),
-                            )
-                        })
-                        .collect(),
-                },
-            )),
+            CreateActionRow::SelectMenu(
+                CreateSelectMenu::new(
+                    char_id,
+                    CreateSelectMenuKind::String {
+                        options: options
+                            .iter()
+                            .map(|option| {
+                                CreateSelectMenuOption::new(
+                                    option.label().to_owned(),
+                                    option.id().to_owned(),
+                                )
+                                .description(option.description().to_owned())
+                            })
+                            .collect(),
+                    },
+                )
+                .placeholder("Svara som…"),
+            ),
         ));
     }
     if !voices.is_empty() {
