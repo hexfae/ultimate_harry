@@ -174,3 +174,72 @@ async fn encode_audio(context: &mut [Message]) {
         message.add_encoded_audio(&encoded);
     }
 }
+
+/// Tests for the pure URL-collection and description-merging helpers.
+#[cfg(test)]
+mod tests {
+    use super::{apply_descriptions, unique_urls};
+    use crate::models::history::History;
+    use crate::models::message::{DescribedAttachment, Message, Role};
+    use nonempty::NonEmpty;
+    use serenity::all::MessageId;
+
+    /// URLs collapse to their distinct set across messages, in first-seen order.
+    #[test]
+    fn unique_urls_dedups_and_keeps_first_seen_order() {
+        let first = Message::new_system("one");
+        let second = Message::new_system("two");
+        let first_id = first.id().to_owned();
+        let context = vec![first, second];
+
+        let urls = unique_urls(&context, |message| {
+            if message.id() == first_id {
+                vec!["a".to_owned(), "b".to_owned(), "a".to_owned()]
+            } else {
+                vec!["b".to_owned(), "c".to_owned()]
+            }
+        });
+        assert_eq!(
+            urls,
+            vec!["a".to_owned(), "b".to_owned(), "c".to_owned()],
+            "duplicate URLs collapse while first-seen order is kept"
+        );
+    }
+
+    /// An empty description list leaves the context untouched, while a matching
+    /// description marks the owning image as described.
+    #[test]
+    fn apply_descriptions_is_a_noop_when_empty_and_describes_otherwise() {
+        let url = "https://cdn/pic.png".to_owned();
+        let message = Message::builder()
+            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .attachments(vec![url.clone()])
+            .build();
+        let mut context = vec![message];
+        let mut history = History::builder()
+            .id(MessageId::new(1))
+            .character("character-id")
+            .choices(NonEmpty::new(Message::new_system("reply")))
+            .current(0_usize)
+            .previous(Vec::new())
+            .build();
+
+        apply_descriptions(&mut history, &mut context, &[]);
+        assert_eq!(
+            context.first().map(Message::undescribed_image_urls),
+            Some(vec![url.clone()]),
+            "an empty description list leaves the image undescribed"
+        );
+
+        let described = vec![DescribedAttachment {
+            url,
+            description: "a picture".to_owned(),
+        }];
+        apply_descriptions(&mut history, &mut context, &described);
+        assert_eq!(
+            context.first().map(Message::undescribed_image_urls),
+            Some(Vec::new()),
+            "a matching description removes the image from the undescribed set"
+        );
+    }
+}
