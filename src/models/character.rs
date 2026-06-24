@@ -4,18 +4,15 @@
 //! that users can chat with.
 
 use bon::Builder;
-use core::fmt::{Display, Formatter, Result as FmtResult, Write as _};
-use tracing::warn;
+use core::fmt::{Display, Formatter, Result as FmtResult};
 use jiff::Zoned;
 use poise::serenity_prelude::all::{Color, UserId};
 use serde::{Deserialize, Serialize};
-use crate::constants::MAX_RESULTS;
 use alloc::collections::{BTreeMap, BTreeSet};
 use ulid::Ulid;
 use url::Url;
 
 use crate::{
-    database::Database,
     llm::CharacterModelSettings,
     models::modals::{
         CreateCharacterModal, EditCharacterModal, SecondCreateCharacterModal,
@@ -23,10 +20,8 @@ use crate::{
     },
 };
 
-/// Compact date format for the "senast använd" leaderboard column.
-///
-/// See [`jiff::fmt::strtime`] for formatting details.
-const LATEST_CONVERSATION_FORMAT: &str = "%Y-%m-%d %H:%M";
+mod ranking;
+mod stats;
 
 /// A character.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
@@ -350,61 +345,6 @@ impl Character {
         self.previous_version.as_deref()
     }
 
-    /// Filters out deleted and superseded characters, then returns up to [`MAX_RESULTS`] ranked by
-    /// name (and nickname) similarity to the input, breaking ties by number of conversations had.
-    ///
-    /// This replaces the old `MOST_SIMILAR_TO` `SurrealQL` query and sets each returned
-    /// character's `similarity` for display.
-    #[must_use]
-    pub fn rank_by_similarity(characters: Vec<Self>, input: &str) -> Vec<Self> {
-        Self::rank_filtered(characters, input, Self::is_visible)
-    }
-
-    /// Like [`rank_by_similarity`](Self::rank_by_similarity), but ranks only the
-    /// soft-deleted characters, used by the restore command to find a character
-    /// to bring back from deletion.
-    #[must_use]
-    pub fn rank_deleted_by_similarity(characters: Vec<Self>, input: &str) -> Vec<Self> {
-        Self::rank_filtered(characters, input, Self::is_deleted)
-    }
-
-    /// Keeps the characters for which `keep` returns true, then returns up to
-    /// [`MAX_RESULTS`] ranked by name (and nickname) similarity to the input,
-    /// breaking ties by number of conversations had, setting each returned
-    /// character's `similarity` for display.
-    fn rank_filtered(
-        characters: Vec<Self>,
-        input: &str,
-        keep: impl Fn(&Self) -> bool,
-    ) -> Vec<Self> {
-        let mut ranked: Vec<Self> = characters
-            .into_iter()
-            .filter(|character| keep(character))
-            .map(|mut character| {
-                let name_similarity =
-                    strsim::normalized_damerau_levenshtein(&character.name, input);
-                let similarity = character.nickname.as_deref().map_or(
-                    name_similarity,
-                    |nickname| {
-                        name_similarity
-                            .max(strsim::normalized_damerau_levenshtein(nickname, input))
-                    },
-                );
-                character.similarity = Some(similarity);
-                character
-            })
-            .collect();
-        ranked.sort_by(|left, right| {
-            let left_similarity = left.similarity.unwrap_or_default();
-            let right_similarity = right.similarity.unwrap_or_default();
-            right_similarity
-                .total_cmp(&left_similarity)
-                .then_with(|| right.conversations_had.cmp(&left.conversations_had))
-        });
-        ranked.truncate(MAX_RESULTS);
-        ranked
-    }
-
     /// Returns the total number of conversations the character has had.
     #[must_use]
     pub const fn conversations_had(&self) -> u32 {
@@ -421,47 +361,6 @@ impl Character {
     #[must_use]
     pub const fn tokens_generated(&self) -> u32 {
         self.tokens_generated
-    }
-
-    /// Records that this character was spawned into a new conversation by the given user.
-    ///
-    /// Bumps the total and per-user conversation counts and refreshes the
-    /// latest-conversation timestamp.
-    pub fn record_spawn(&mut self, user: UserId) {
-        self.conversations_had = self.conversations_had.saturating_add(1);
-        let count = self.conversations_had_with_user.entry(user).or_default();
-        *count = count.saturating_add(1);
-        self.latest_conversation = Some(Zoned::now());
-    }
-
-    /// Records the words and tokens this character generated in a single reply.
-    pub const fn record_generation(&mut self, words: u32, tokens: u32) {
-        self.words_generated = self.words_generated.saturating_add(words);
-        self.tokens_generated = self.tokens_generated.saturating_add(tokens);
-    }
-
-    /// Returns a formatted string of conversation counts, grouped by user.
-    #[must_use]
-    pub async fn formatted_conversations_had(&self, db: &Database) -> String {
-        let mut string = format!("Totalt: {}", self.conversations_had);
-        // a BTreeMap already iterates in sorted key order, so no separate sort is needed
-        for (id, count) in &self.conversations_had_with_user {
-            let name = db.substitute_name(id).await;
-            if let Err(why) = write!(string, "\nMed {name}: {count}") {
-                warn!("error while writing to string: {why}");
-            }
-        }
-        string
-    }
-
-    /// Returns the character's last-used time, compactly formatted, or `aldrig`
-    /// when the character has never been spawned into a conversation.
-    #[must_use]
-    pub fn formatted_latest_conversation(&self) -> String {
-        self.latest_conversation.as_ref().map_or_else(
-            || "aldrig".to_owned(),
-            |time| time.strftime(LATEST_CONVERSATION_FORMAT).to_string(),
-        )
     }
 
     /// Returns the character's model settings override, if any.
@@ -652,7 +551,7 @@ fn validate_url(maybe_url: Option<String>) -> Option<String> {
 /// Tests for character similarity ranking.
 #[cfg(test)]
 mod tests {
-    use super::{Character, MAX_RESULTS};
+    use super::Character;
     use serenity::all::UserId;
 
     /// Builds a minimal visible character with the given ID and name.
@@ -663,81 +562,6 @@ mod tests {
             .greeting("hello")
             .creator(UserId::new(1))
             .build()
-    }
-
-    /// Returns the index of the character with the given ID in the ranked list.
-    fn position_of(ranked: &[Character], id: &str) -> Option<usize> {
-        ranked.iter().position(|character| character.id() == id)
-    }
-
-    /// Ranking filters deleted and superseded characters, orders by similarity (honoring the
-    /// nickname), and breaks ties by number of conversations had.
-    #[test]
-    fn ranks_visible_characters_by_similarity_and_conversations() {
-        let exact = basic_character("id-exact", "Banana");
-        let close = basic_character("id-close", "Bananas");
-        let nickname = Character::builder()
-            .id("id-nickname".to_owned())
-            .name("Xyzzy")
-            .greeting("hello")
-            .creator(UserId::new(1))
-            .nickname("Banan".to_owned())
-            .build();
-        let far = basic_character("id-far", "Zzzzzz");
-
-        let mut deleted = basic_character("id-deleted", "Banana");
-        deleted.mark_deleted(UserId::new(2));
-        let mut superseded = basic_character("id-superseded", "Banana");
-        superseded.set_next_version("id-exact".to_owned());
-
-        let tie_high = Character::builder()
-            .id("id-tie-high".to_owned())
-            .name("Tie")
-            .greeting("hello")
-            .creator(UserId::new(1))
-            .conversations_had(9_u32)
-            .build();
-        let tie_low = Character::builder()
-            .id("id-tie-low".to_owned())
-            .name("Tie")
-            .greeting("hello")
-            .creator(UserId::new(1))
-            .conversations_had(1_u32)
-            .build();
-
-        let ranked = Character::rank_by_similarity(
-            vec![
-                exact, close, nickname, far, deleted, superseded, tie_high, tie_low,
-            ],
-            "Banana",
-        );
-
-        assert_eq!(
-            ranked.len(),
-            6,
-            "deleted and superseded characters are filtered out"
-        );
-        assert!(
-            position_of(&ranked, "id-deleted").is_none(),
-            "a deleted character never appears in the ranking"
-        );
-        assert!(
-            position_of(&ranked, "id-superseded").is_none(),
-            "a superseded character never appears in the ranking"
-        );
-        assert_eq!(
-            ranked.first().map(Character::name),
-            Some("Banana"),
-            "the exact name match ranks first"
-        );
-        assert!(
-            position_of(&ranked, "id-nickname") < position_of(&ranked, "id-far"),
-            "a close nickname outranks a dissimilar name"
-        );
-        assert!(
-            position_of(&ranked, "id-tie-high") < position_of(&ranked, "id-tie-low"),
-            "equal similarity breaks ties toward more conversations"
-        );
     }
 
     /// Restoring a deleted character clears its deleted state, making it visible again.
@@ -860,50 +684,6 @@ mod tests {
             head.voice(),
             Some("old-voice"),
             "a rollback restores the older version's linked voice"
-        );
-    }
-
-    /// Deleted-character ranking filters to only deleted characters and orders
-    /// them by name similarity to the input.
-    #[test]
-    fn rank_deleted_by_similarity_returns_only_deleted_characters() {
-        let visible = basic_character("id-visible", "Banana");
-        let mut deleted_match = basic_character("id-deleted", "Banana");
-        deleted_match.mark_deleted(UserId::new(2));
-        let mut deleted_other = basic_character("id-deleted-other", "Zzzzzz");
-        deleted_other.mark_deleted(UserId::new(2));
-
-        let ranked = Character::rank_deleted_by_similarity(
-            vec![visible, deleted_match, deleted_other],
-            "Banana",
-        );
-
-        assert!(
-            position_of(&ranked, "id-visible").is_none(),
-            "a visible character never appears among deleted results"
-        );
-        assert_eq!(
-            ranked.first().map(Character::id),
-            Some("id-deleted"),
-            "the closest-matching deleted character ranks first"
-        );
-        assert_eq!(ranked.len(), 2, "only deleted characters are returned");
-    }
-
-    /// `rank_by_similarity` caps its output at the shared `MAX_RESULTS`, matching the database
-    /// listing queries and Discord's 25-option select-menu limit.
-    #[test]
-    fn ranking_is_capped_at_max_results() {
-        let characters = (0..MAX_RESULTS.saturating_add(5))
-            .map(|index| basic_character(&format!("id-{index}"), "Banana"))
-            .collect();
-
-        let ranked = Character::rank_by_similarity(characters, "Banana");
-
-        assert_eq!(
-            ranked.len(),
-            MAX_RESULTS,
-            "the ranking never returns more than MAX_RESULTS characters"
         );
     }
 }
