@@ -6,6 +6,7 @@ use crate::{
     database::Database,
     models::{character::Character, history::History},
 };
+use poise::serenity_prelude::Message;
 use serenity::all::MessageId;
 use tracing::warn;
 
@@ -26,4 +27,16 @@ pub async fn history_and_character_of(
         return Ok(None);
     };
     Ok(Some((history, character)))
+}
+
+/// Returns the history and character associated with the message that the given message replied to,
+/// if it's a character reply.
+pub async fn history_and_character_of_replied_to(
+    message: &Message,
+    db: &Database,
+) -> AppResult<Option<(History, Character)>> {
+    let Some(replied_to) = message.referenced_message.as_deref() else {
+        return Ok(None);
+    };
+    history_and_character_of(replied_to.id, db).await
 }

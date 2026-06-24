@@ -9,7 +9,7 @@ use crate::{
     database::Database,
     error::{AppError, EditMessageSnafu, SendMessageSnafu},
     error_display::error_message_edit,
-    events::lookup::history_and_character_of,
+    events::lookup::history_and_character_of_replied_to,
     events::streaming::{MessageSink, stream_and_finalize},
     models::{
         character::{Character, CharacterOption},
@@ -142,16 +142,4 @@ async fn react(ctx: &Context, message: &Message, emoji: ReactionType) {
     if let Err(why) = message.react(&ctx.http, emoji).await {
         warn!(message_id = %message.id, "failed to react: {why}");
     }
-}
-
-/// Returns the history and character associated with the message that the given message replied to,
-/// if it's a character reply.
-pub async fn history_and_character_of_replied_to(
-    message: &Message,
-    db: &Database,
-) -> AppResult<Option<(History, Character)>> {
-    let Some(replied_to) = message.referenced_message.as_deref() else {
-        return Ok(None);
-    };
-    history_and_character_of(replied_to.id, db).await
 }
