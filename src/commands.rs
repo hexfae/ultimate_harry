@@ -8,6 +8,7 @@ pub mod name;
 pub mod pin_channel;
 pub mod stats;
 pub mod tts;
+pub mod voice;
 
 pub use character::character;
 pub use chat::chat;
@@ -17,6 +18,7 @@ pub use name::name;
 pub use pin_channel::pin_channel;
 pub use stats::stats;
 pub use tts::tts;
+pub use voice::voice;
 
 use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse};
 use snafu::ResultExt as _;
@@ -47,6 +49,7 @@ pub fn commands() -> Vec<poise::Command<AppState, AppError>> {
         name(),
         stats(),
         tts(),
+        voice(),
     ]
 }
 

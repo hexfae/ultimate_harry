@@ -3,6 +3,7 @@
 use crate::models::message::{
     AttachmentMode, EncodedAudio, Message as ChatMessage, audio_format_from_url,
 };
+use crate::tts::{DialogueTurn, VoiceEntry};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use core::pin::Pin;
 use miette::Diagnostic;
@@ -35,6 +36,13 @@ const TRANSCRIBE_PROMPT: &str = "Transcribe the spoken audio verbatim, keeping t
 
 /// The instruction given to the tag model when enriching a reply with audio tags.
 const TAG_PROMPT: &str = "You are given a single line of dialogue from a roleplay. Insert ElevenLabs v3 audio tags (square-bracketed, e.g. [laughs], [sighs], [whispers], [angry], [sad]) at fitting points so it sounds expressive when read aloud. Keep all of the original text and its language exactly as given: do not translate, rephrase, or change any words; only add tags. The tags themselves must always be in English, even when the dialogue is in another language. Reply with only the tagged text, no explanation.";
+
+/// The instruction given to the model when splitting a reply into per-voice turns.
+const SEGMENT_PROMPT: &str = "You are given a roleplay reply and a list of available voices. Split the reply into an ordered sequence of speaker turns and assign each turn one of the available voices by its id, choosing the voice whose description best matches that speaker. Cover the entire reply in order, keeping every word and its original language exactly as given: do not translate, rephrase, drop, or reorder any text. Use only voice ids from the provided list. Reply with ONLY a JSON array of objects with the keys \"voice_id\" and \"text\", and nothing else (no prose, no code fences).";
+
+/// The extra instruction folded into [`SEGMENT_PROMPT`] when the synthesis model
+/// is audio-tag aware, so each turn's text is also enriched with v3 tags.
+const SEGMENT_TAG_CLAUSE: &str = " Additionally, insert ElevenLabs v3 audio tags (square-bracketed and always in English, e.g. [laughs], [sighs], [whispers]) at fitting points within each turn's text so it sounds expressive when read aloud.";
 
 /// The LLM manager for generating responses from AI models.
 ///
@@ -363,6 +371,103 @@ impl LlmManager {
             .context(AddTagsSnafu)?;
         extract_description(&parsed).context(EmptyTagsSnafu)
     }
+
+    /// Splits `text` into ordered per-voice turns using `model`, assigning each
+    /// turn one of the supplied `choices` by description, for multi-voice
+    /// text-to-dialogue synthesis. When `add_tags` is set, each turn's text is
+    /// also enriched with v3 audio tags in the same call.
+    ///
+    /// The returned `voice_id`s are whatever the model produced; the caller
+    /// validates them against the allowed set before synthesizing.
+    pub async fn assign_voices(
+        &self,
+        text: &str,
+        model: &str,
+        choices: &[VoiceChoice],
+        add_tags: bool,
+    ) -> Result<Vec<DialogueTurn>, LlmError> {
+        let mut system = SEGMENT_PROMPT.to_owned();
+        if add_tags {
+            system.push_str(SEGMENT_TAG_CLAUSE);
+        }
+        let voices = choices
+            .iter()
+            .map(VoiceChoice::prompt_line)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let user = format!("Available voices:\n{voices}\n\nReply:\n{text}");
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        });
+        let response = reqwest::Client::new()
+            .post(CHAT_URL)
+            .bearer_auth(&self.settings.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context(AssignVoicesSnafu)?;
+        let parsed = response
+            .json::<ChatResponse>()
+            .await
+            .context(AssignVoicesSnafu)?;
+        let content = extract_description(&parsed).context(EmptyVoicesSnafu)?;
+        parse_dialogue_turns(&content).context(EmptyVoicesSnafu)
+    }
+}
+
+/// One voice offered to the auto voice-assignment enricher: the id it should
+/// emit, plus the name and description it matches a speaker against.
+#[derive(Debug, Clone)]
+pub struct VoiceChoice {
+    /// The `ElevenLabs` voice ID the model should emit for a matching turn.
+    pub voice_id: String,
+    /// The voice's display name, shown to the model for context.
+    pub name: String,
+    /// The description the model matches a speaker against.
+    pub description: String,
+}
+
+impl VoiceChoice {
+    /// Builds a [`VoiceChoice`] from a palette [`VoiceEntry`].
+    #[must_use]
+    pub fn from_entry(entry: &VoiceEntry) -> Self {
+        Self {
+            voice_id: entry.voice_id.clone(),
+            name: entry.name.clone(),
+            description: entry.description.clone(),
+        }
+    }
+
+    /// The single line describing this voice in the enricher's prompt.
+    fn prompt_line(&self) -> String {
+        format!(
+            "- {} (id: {}): {}",
+            self.name, self.voice_id, self.description
+        )
+    }
+}
+
+/// Parses the enricher's reply into dialogue turns, tolerating a Markdown code
+/// fence around the JSON array. Returns `None` when no non-empty turn parses.
+fn parse_dialogue_turns(content: &str) -> Option<Vec<DialogueTurn>> {
+    let trimmed = content.trim();
+    let unfenced = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .map_or(trimmed, |rest| rest.trim_start())
+        .strip_suffix("```")
+        .unwrap_or(trimmed)
+        .trim();
+    let parsed = serde_json::from_str::<Vec<DialogueTurn>>(unfenced).ok()?;
+    let usable: Vec<DialogueTurn> = parsed
+        .into_iter()
+        .filter(|turn| !turn.text.trim().is_empty() && !turn.voice_id.trim().is_empty())
+        .collect();
+    if usable.is_empty() { None } else { Some(usable) }
 }
 
 /// Process-wide cache of (model id, modality) to whether the model accepts that input modality, so
@@ -552,6 +657,20 @@ pub enum LlmError {
     #[snafu(display("Tagg-modellen gav ingen text"))]
     #[diagnostic(help("Prova en annan tagg-modell."), code(llm::empty_tags))]
     EmptyTags,
+    /// Failed to assign voices for a multi-voice reading.
+    #[snafu(display("Kunde inte fördela rösterna: {source}"))]
+    #[diagnostic(
+        help("Kontrollera att tagg-modellen och API-nyckeln är giltiga."),
+        code(llm::assign_voices)
+    )]
+    AssignVoices {
+        /// The source of the error.
+        source: reqwest::Error,
+    },
+    /// The model returned no usable voice assignment.
+    #[snafu(display("Röstfördelningen gick inte att tolka"))]
+    #[diagnostic(help("Prova igen eller en annan tagg-modell."), code(llm::empty_voices))]
+    EmptyVoices,
 }
 
 impl LlmError {
@@ -570,6 +689,8 @@ impl LlmError {
                 | Self::EmptyTranscription { .. }
                 | Self::AddTags { .. }
                 | Self::EmptyTags { .. }
+                | Self::AssignVoices { .. }
+                | Self::EmptyVoices { .. }
         )
     }
 }
@@ -577,7 +698,44 @@ impl LlmError {
 /// Tests for the `OpenRouter` response parsing helpers.
 #[cfg(test)]
 mod tests {
-    use super::{ChatResponse, ModelsResponse, extract_description, model_supports_modality};
+    use super::{
+        ChatResponse, ModelsResponse, extract_description, model_supports_modality,
+        parse_dialogue_turns,
+    };
+
+    /// A bare JSON array of turns parses, keeping order, voice, and text.
+    #[test]
+    fn parse_dialogue_turns_reads_a_bare_array() {
+        let turns = parse_dialogue_turns(
+            r#"[{"voice_id":"a","text":"hej"},{"voice_id":"b","text":"svar"}]"#,
+        );
+        assert!(turns.is_some(), "a well-formed array parses");
+        let Some(turns) = turns else { return };
+        assert_eq!(turns.len(), 2, "both turns are kept");
+        assert_eq!(
+            turns.first().map(|turn| turn.voice_id.as_str()),
+            Some("a"),
+            "the first turn keeps its voice"
+        );
+    }
+
+    /// A code-fenced array still parses, and empty/garbage yields nothing.
+    #[test]
+    fn parse_dialogue_turns_unfences_and_rejects_garbage() {
+        let fenced = "```json\n[{\"voice_id\":\"a\",\"text\":\"hej\"}]\n```";
+        assert!(
+            parse_dialogue_turns(fenced).is_some(),
+            "a fenced array is unwrapped and parsed"
+        );
+        assert!(
+            parse_dialogue_turns("not json at all").is_none(),
+            "non-JSON yields no turns"
+        );
+        assert!(
+            parse_dialogue_turns(r#"[{"voice_id":"","text":"  "}]"#).is_none(),
+            "turns with blank voice or text are dropped, leaving nothing"
+        );
+    }
 
     /// A model supports a modality only when it lists it among its input modalities.
     #[test]

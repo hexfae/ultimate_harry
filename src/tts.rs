@@ -9,6 +9,9 @@ use snafu::{ResultExt as _, Snafu};
 /// The `ElevenLabs` text-to-speech endpoint, to which the voice ID is appended.
 const TTS_URL_BASE: &str = "https://api.elevenlabs.io/v1/text-to-speech/";
 
+/// The `ElevenLabs` text-to-dialogue endpoint, which speaks multiple voices in one request.
+const DIALOGUE_URL: &str = "https://api.elevenlabs.io/v1/text-to-dialogue";
+
 /// The default `ElevenLabs` model: Eleven v3, the expressive model that interprets audio tags.
 const DEFAULT_TTS_MODEL: &str = "eleven_v3";
 
@@ -27,6 +30,33 @@ const DEFAULT_TAG_MODEL: &str = "google/gemini-3.1-flash-lite";
 )]
 fn default_tag_model() -> Option<String> {
     Some(DEFAULT_TAG_MODEL.to_owned())
+}
+
+/// One turn of a multi-voice dialogue: a span of text spoken in a given voice.
+///
+/// Produced by the auto voice-assignment enricher (`LlmManager::assign_voices`)
+/// and fed to [`TtsManager::synthesize_dialogue`] as one entry of the
+/// `ElevenLabs` text-to-dialogue `inputs` array.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DialogueTurn {
+    /// The `ElevenLabs` voice ID this turn is spoken in.
+    pub voice_id: String,
+    /// The text spoken in this turn.
+    pub text: String,
+}
+
+/// One configurable voice in the speak-aloud palette, offered in the reply's
+/// voice dropdown and described to the auto-assignment enricher.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VoiceEntry {
+    /// The display name shown in the dropdown and used to match it for removal.
+    pub name: String,
+    /// The `ElevenLabs` voice ID spoken with.
+    pub voice_id: String,
+    /// The emoji shown beside the name in the dropdown (unicode or `<:name:id>`).
+    pub emoji: String,
+    /// The short description the auto enricher matches a speaker against.
+    pub description: String,
 }
 
 /// The text-to-speech manager for synthesizing spoken replies via `ElevenLabs`.
@@ -55,6 +85,12 @@ pub struct TtsSettings {
     /// uses the `OpenRouter` API key from the model settings, not the `ElevenLabs` key.
     #[serde(default = "default_tag_model")]
     pub tag_model: Option<String>,
+    /// The configurable palette of voices offered in the reply's voice dropdown.
+    ///
+    /// Empty by default, in which case the dropdown is not shown and only the
+    /// per-character / generic default voice (the speak button) is available.
+    #[serde(default)]
+    pub voices: Vec<VoiceEntry>,
 }
 
 impl Default for TtsSettings {
@@ -64,6 +100,7 @@ impl Default for TtsSettings {
             default_voice: None,
             model: default_tts_model(),
             tag_model: default_tag_model(),
+            voices: Vec::new(),
         }
     }
 }
@@ -80,9 +117,36 @@ impl TtsSettings {
         let default_voice = self.default_voice.as_deref().unwrap_or("ingen");
         let tag_model = self.tag_model_if_enabled().unwrap_or("av");
         format!(
-            "röst-modell: {}\nstandardröst: {default_voice}\ntagg-modell: {tag_model}\napi-nyckel: {api_key}",
-            self.model
+            "röst-modell: {}\nstandardröst: {default_voice}\ntagg-modell: {tag_model}\nröster: {} st\napi-nyckel: {api_key}",
+            self.model,
+            self.voices.len(),
         )
+    }
+
+    /// The configurable voice palette offered in the reply's voice dropdown.
+    #[must_use]
+    pub fn voices(&self) -> &[VoiceEntry] {
+        &self.voices
+    }
+
+    /// Adds a voice to the palette, replacing any existing entry with the same
+    /// name (case-insensitive) so re-adding a name updates it rather than
+    /// duplicating it.
+    pub fn add_voice(&mut self, voice: VoiceEntry) {
+        let name = voice.name.to_lowercase();
+        self.voices
+            .retain(|existing| existing.name.to_lowercase() != name);
+        self.voices.push(voice);
+    }
+
+    /// Removes the palette voice with the given name (case-insensitive),
+    /// returning whether one was removed.
+    pub fn remove_voice(&mut self, name: &str) -> bool {
+        let lowered = name.to_lowercase();
+        let before = self.voices.len();
+        self.voices
+            .retain(|existing| existing.name.to_lowercase() != lowered);
+        self.voices.len() != before
     }
 
     /// Whether the configured synthesis model interprets audio tags (the Eleven v3 family).
@@ -197,6 +261,35 @@ impl TtsManager {
         }
         Ok(bytes)
     }
+
+    /// Synthesizes a multi-voice dialogue into MP3 audio bytes via the
+    /// `ElevenLabs` text-to-dialogue endpoint, speaking each [`DialogueTurn`] in
+    /// its own voice. Fails early with [`TtsError::MissingApiKey`] when no API
+    /// key is configured, like [`synthesize`](Self::synthesize).
+    pub async fn synthesize_dialogue(&self, turns: &[DialogueTurn]) -> Result<Vec<u8>, TtsError> {
+        if self.settings.api_key.is_empty() {
+            return MissingApiKeySnafu.fail();
+        }
+        let response = reqwest::Client::new()
+            .post(DIALOGUE_URL)
+            .header("xi-api-key", &self.settings.api_key)
+            .json(&dialogue_request_body(turns, &self.settings.model))
+            .send()
+            .await
+            .context(RequestSnafu)?;
+        let status = response.status();
+        if !status.is_success() {
+            return HttpSnafu {
+                status: status.as_u16(),
+            }
+            .fail();
+        }
+        let bytes = response.bytes().await.context(RequestSnafu)?.to_vec();
+        if bytes.is_empty() {
+            return EmptyAudioSnafu.fail();
+        }
+        Ok(bytes)
+    }
 }
 
 /// Whether `text` has anything worth speaking, so the button can skip synthesizing
@@ -249,6 +342,24 @@ fn tts_request_body(text: &str, model: &str) -> serde_json::Value {
     serde_json::json!({
         "text": text,
         "model_id": model,
+    })
+}
+
+/// Builds the JSON request body for an `ElevenLabs` text-to-dialogue request:
+/// the model plus an ordered `inputs` array of `{text, voice_id}` turns.
+fn dialogue_request_body(turns: &[DialogueTurn], model: &str) -> serde_json::Value {
+    let inputs: Vec<serde_json::Value> = turns
+        .iter()
+        .map(|turn| {
+            serde_json::json!({
+                "text": turn.text,
+                "voice_id": turn.voice_id,
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "model_id": model,
+        "inputs": inputs,
     })
 }
 
@@ -312,11 +423,21 @@ impl TtsError {
 #[cfg(test)]
 mod tests {
     use super::{
-        TtsError, TtsOverrides, TtsSettings, audio_filename, is_speakable, tts_request_body,
-        tts_url,
+        DialogueTurn, TtsError, TtsOverrides, TtsSettings, VoiceEntry, audio_filename,
+        dialogue_request_body, is_speakable, tts_request_body, tts_url,
     };
     use crate::models::character::Character;
     use serenity::all::UserId;
+
+    /// Builds a palette voice entry with the given name and voice ID.
+    fn voice_entry(name: &str, voice_id: &str) -> VoiceEntry {
+        VoiceEntry {
+            name: name.to_owned(),
+            voice_id: voice_id.to_owned(),
+            emoji: "🎙️".to_owned(),
+            description: "a test voice".to_owned(),
+        }
+    }
 
     /// Builds a character with the given optional linked voice.
     fn character(voice: Option<&str>) -> Character {
@@ -488,6 +609,70 @@ mod tests {
             body.get("model_id").and_then(serde_json::Value::as_str),
             Some("eleven_multilingual_v2"),
             "the model is sent as model_id"
+        );
+    }
+
+    /// The dialogue body carries the model and an ordered inputs array of
+    /// `{text, voice_id}` turns.
+    #[test]
+    fn dialogue_body_lists_turns_with_voices() {
+        let turns = vec![
+            DialogueTurn {
+                voice_id: "voice-a".to_owned(),
+                text: "hej".to_owned(),
+            },
+            DialogueTurn {
+                voice_id: "voice-b".to_owned(),
+                text: "svar".to_owned(),
+            },
+        ];
+        let body = dialogue_request_body(&turns, "eleven_v3");
+        assert_eq!(
+            body.get("model_id").and_then(serde_json::Value::as_str),
+            Some("eleven_v3"),
+            "the model is sent as model_id"
+        );
+        let inputs = body.get("inputs").and_then(serde_json::Value::as_array);
+        assert_eq!(inputs.map(Vec::len), Some(2), "both turns are listed");
+        let Some(inputs) = inputs else { return };
+        assert_eq!(
+            inputs.first().and_then(|input| input.get("voice_id"))
+                .and_then(serde_json::Value::as_str),
+            Some("voice-a"),
+            "the first turn keeps its voice"
+        );
+        assert_eq!(
+            inputs.first().and_then(|input| input.get("text"))
+                .and_then(serde_json::Value::as_str),
+            Some("hej"),
+            "the first turn keeps its text"
+        );
+    }
+
+    /// Re-adding a name updates the entry in place; removal reports whether it hit.
+    #[test]
+    fn palette_add_replaces_and_remove_reports() {
+        let mut configured = TtsSettings::default();
+        configured.add_voice(voice_entry("Berättare", "old-id"));
+        configured.add_voice(voice_entry("berättare", "new-id"));
+        assert_eq!(
+            configured.voices().len(),
+            1,
+            "re-adding the same name (case-insensitive) replaces rather than duplicates"
+        );
+        assert_eq!(
+            configured.voices().first().map(|voice| voice.voice_id.as_str()),
+            Some("new-id"),
+            "the replacement keeps the latest voice ID"
+        );
+        assert!(
+            configured.remove_voice("BERÄTTARE"),
+            "removing an existing name reports a hit"
+        );
+        assert!(configured.voices().is_empty(), "the palette is now empty");
+        assert!(
+            !configured.remove_voice("Berättare"),
+            "removing a missing name reports no hit"
         );
     }
 

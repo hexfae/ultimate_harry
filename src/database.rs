@@ -16,7 +16,7 @@ use tracing::{error, warn};
 
 use crate::constants::MAX_RESULTS;
 use crate::llm::{CharacterModelSettings, ModelSettings};
-use crate::tts::TtsSettings;
+use crate::tts::{TtsSettings, VoiceEntry};
 use crate::models::{
     character::{Character, CharacterOption},
     config::UserPrefs,
@@ -247,6 +247,13 @@ impl Database {
             .iter()
             .map(Character::to_menu_option)
             .collect())
+    }
+
+    /// Returns the configured voice palette for the reply's voice dropdown.
+    ///
+    /// Empty when no voices are configured, in which case the dropdown is hidden.
+    pub async fn voice_options(&self) -> Vec<VoiceEntry> {
+        self.tts_settings().await.voices
     }
 
     /// Returns up to 25 visible characters, sorted randomly.

@@ -13,7 +13,7 @@ use serenity::all::{
     CreateMessage, CreateSection, CreateSectionAccessory, CreateSectionComponent, CreateSelectMenu,
     CreateSelectMenuKind, CreateSelectMenuOption, CreateTextDisplay, CreateThumbnail,
     CreateUnfurledMediaItem, EditInteractionResponse, EditMessage, Message as DiscordMessage,
-    MessageFlags, MessageId,
+    MessageFlags, MessageId, ReactionType,
 };
 
 use crate::{
@@ -25,7 +25,7 @@ use crate::{
     database::Database,
     events::interaction::InteractionKind,
     models::character::{Character, CharacterOption},
-    tts::is_speakable,
+    tts::{VoiceEntry, is_speakable},
 };
 
 use super::History;
@@ -134,6 +134,7 @@ impl History {
             false,
             stoppable,
             options,
+            &[],
         );
 
         let container = vec![CreateComponent::Container(CreateContainer::new(
@@ -325,6 +326,7 @@ impl History {
             .into()
         };
 
+        let voices = db.voice_options().await;
         let components = create_buttons(
             id.into().into(),
             self.has_finished,
@@ -333,6 +335,7 @@ impl History {
             is_speakable(content),
             !self.has_finished,
             options,
+            &voices,
         );
 
         // a failed generation renders as a distinct red error container rather than
@@ -414,6 +417,10 @@ where
     clippy::fn_params_excessive_bools,
     reason = "each bool is the independent enabled state of one of the message's buttons"
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is an independent piece of the rendered button row's state"
+)]
 fn create_buttons<'a>(
     id: u64,
     finished: bool,
@@ -422,6 +429,7 @@ fn create_buttons<'a>(
     speakable: bool,
     stoppable: bool,
     options: &[CharacterOption],
+    voices: &[VoiceEntry],
 ) -> Cow<'a, [CreateContainerComponent<'a>]> {
     let prev_msg_id = InteractionKind::Previous.custom_id(id);
     let next_msg_id = InteractionKind::Next.custom_id(id);
@@ -432,6 +440,7 @@ fn create_buttons<'a>(
     let tts_id = InteractionKind::Tts.custom_id(id);
     let stop_id = InteractionKind::Stop.custom_id(id);
     let char_id = InteractionKind::Character.custom_id(id);
+    let voice_id = InteractionKind::Voice.custom_id(id);
 
     let mut components = vec![
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
@@ -471,7 +480,45 @@ fn create_buttons<'a>(
             )),
         ));
     }
+    if !voices.is_empty() {
+        components.push(CreateContainerComponent::ActionRow(
+            CreateActionRow::SelectMenu(
+                CreateSelectMenu::new(
+                    voice_id,
+                    CreateSelectMenuKind::String {
+                        options: voice_options(voices).into(),
+                    },
+                )
+                .placeholder("Läs upp som…")
+                .disabled(!finished || !speakable),
+            ),
+        ));
+    }
     components.into()
+}
+
+/// Builds the voice dropdown's options: a leading "automatic" entry followed by
+/// one entry per palette voice, each carrying its emoji and description.
+fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
+    let mut options = vec![
+        {
+            let auto = CreateSelectMenuOption::new("Automatiskt", "auto")
+                .description("Välj röst(er) automatiskt utifrån innehållet");
+            match ReactionType::try_from("🎭".to_owned()) {
+                Ok(emoji) => auto.emoji(emoji),
+                Err(_why) => auto,
+            }
+        },
+    ];
+    options.extend(voices.iter().map(|voice| {
+        let mut option = CreateSelectMenuOption::new(voice.name.clone(), voice.voice_id.clone())
+            .description(voice.description.clone());
+        if let Ok(emoji) = ReactionType::try_from(voice.emoji.clone()) {
+            option = option.emoji(emoji);
+        }
+        option
+    }));
+    options
 }
 
 /// Tests for the response footer formatting.

@@ -7,6 +7,7 @@ mod pin;
 mod stop;
 mod swipe;
 mod tts;
+mod voice;
 
 use crate::{
     AppResult,
@@ -31,6 +32,7 @@ use pin::pin;
 use stop::stop;
 use swipe::swipe;
 use tts::tts;
+use voice::voice;
 
 /// An interaction that happened on Ultimate Harry.
 #[derive(Debug)]
@@ -66,6 +68,8 @@ pub enum InteractionKind {
     Stop,
     /// Send a new reply to this reply as the given character.
     Character,
+    /// Speak this reply aloud with a chosen palette voice, or auto-assigned voices.
+    Voice,
     /// Confirm performing the desired operation.
     Confirm,
     /// Cancel performing the desired operation.
@@ -184,6 +188,7 @@ async fn dispatch(
         }
         InteractionKind::Pin => pin(ctx, interaction, db, history, character).await?,
         InteractionKind::Tts => tts(ctx, interaction, db, history, character).await?,
+        InteractionKind::Voice => voice(ctx, interaction, db, history, character).await?,
         InteractionKind::Character => {
             character_fn(ctx, interaction, db, history, cancellations).await?;
         }
@@ -202,7 +207,7 @@ async fn dispatch(
 
 impl InteractionKind {
     /// Every interaction kind, the basis for tag round-tripping and the round-trip test.
-    const ALL: [Self; 14] = [
+    const ALL: [Self; 15] = [
         Self::Previous,
         Self::Next,
         Self::Edit,
@@ -212,6 +217,7 @@ impl InteractionKind {
         Self::Tts,
         Self::Stop,
         Self::Character,
+        Self::Voice,
         Self::Confirm,
         Self::Cancel,
         Self::OlderVersion,
@@ -232,6 +238,7 @@ impl InteractionKind {
             Self::Tts => "tala",
             Self::Stop => "stop",
             Self::Character => "char",
+            Self::Voice => "voic",
             Self::Confirm => "conf",
             Self::Cancel => "canc",
             Self::OlderVersion => "ovrs",
