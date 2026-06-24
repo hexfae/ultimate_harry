@@ -124,13 +124,68 @@ pub trait ReplySink {
     /// Render the waiting placeholder after `elapsed` of silence.
     fn placeholder(&mut self, elapsed: Duration) -> impl Future<Output = AppResult> + Send;
 
+    /// The conversation being rendered, for the shared finalize bookkeeping.
+    fn history(&mut self) -> &mut History;
+
+    /// The character producing the reply, for the shared progress/finalize steps.
+    fn character(&self) -> &Character;
+
+    /// Store `choice` as this reply's current choice: a new swipe branch on a
+    /// freshly sent message, an in-place update for an interaction swipe.
+    fn store_choice(&mut self, choice: (Character, String, Duration));
+
+    /// Hook run in [`finalize`](ReplySink::finalize) after the final choice is
+    /// stored but before persisting. A sent-message sink keys the history by the
+    /// posted message ID here; an interaction sink does nothing.
+    fn before_persist(&mut self) {}
+
+    /// Persist the finished history together with the character's generation stats.
+    fn persist(
+        &mut self,
+        counts: (u32, u32),
+        complete: bool,
+    ) -> impl Future<Output = AppResult> + Send;
+
+    /// Re-render the current reply and edit it into the Discord target.
+    fn render_and_edit(&mut self) -> impl Future<Output = AppResult> + Send;
+
     /// Store `total` as the current reply and render it after `elapsed`.
-    fn progress(&mut self, total: String, elapsed: Duration)
-    -> impl Future<Output = AppResult> + Send;
+    fn progress(
+        &mut self,
+        total: String,
+        elapsed: Duration,
+    ) -> impl Future<Output = AppResult> + Send
+    where
+        Self: Send,
+    {
+        async move {
+            self.store_choice((self.character().clone(), total, elapsed));
+            self.render_and_edit().await
+        }
+    }
 
     /// Store `reply` as the finished reply, persist it (along with the
     /// character's generation stats), and render it once more.
-    fn finalize(self, reply: Reply, elapsed: Duration) -> impl Future<Output = AppResult> + Send;
+    fn finalize(
+        mut self,
+        reply: Reply,
+        elapsed: Duration,
+    ) -> impl Future<Output = AppResult> + Send
+    where
+        Self: Sized + Send,
+    {
+        async move {
+            let counts = reply.counts();
+            let complete = reply.complete;
+            self.store_choice((self.character().clone(), reply.text, elapsed));
+            self.before_persist();
+            if !complete {
+                self.history().set_current_choice_error();
+            }
+            self.persist(counts, complete).await?;
+            self.render_and_edit().await
+        }
+    }
 }
 
 /// Renders a streamed reply onto a sent [`Message`] (new replies and hand-offs).
@@ -176,30 +231,27 @@ impl ReplySink for MessageSink<'_> {
         Ok(())
     }
 
-    async fn progress(&mut self, total: String, elapsed: Duration) -> AppResult {
+    fn history(&mut self) -> &mut History {
         self.history
-            .set_choices((self.character.clone(), total, elapsed));
-        let edit = self
-            .history
-            .to_edit_response(self.character, &*self.message, self.db, self.options)
-            .await;
-        self.message
-            .edit(self.ctx, edit)
-            .await
-            .context(EditMessageSnafu)?;
-        Ok(())
     }
 
-    async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
-        let counts = reply.counts();
-        let complete = reply.complete;
-        self.history
-            .set_choices((self.character.clone(), reply.text, elapsed));
+    fn character(&self) -> &Character {
+        self.character
+    }
+
+    fn store_choice(&mut self, choice: (Character, String, Duration)) {
+        self.history.set_choices(choice);
+    }
+
+    fn before_persist(&mut self) {
         self.history.set_id(&*self.message);
-        if !complete {
-            self.history.set_current_choice_error();
-        }
-        persist_reply(self.db, self.history, self.character, counts, complete).await?;
+    }
+
+    async fn persist(&mut self, counts: (u32, u32), complete: bool) -> AppResult {
+        persist_reply(self.db, self.history, self.character, counts, complete).await
+    }
+
+    async fn render_and_edit(&mut self) -> AppResult {
         let edit = self
             .history
             .to_edit_response(self.character, &*self.message, self.db, self.options)
@@ -257,29 +309,23 @@ impl ReplySink for InteractionSink<'_> {
         Ok(())
     }
 
-    async fn progress(&mut self, total: String, elapsed: Duration) -> AppResult {
+    fn history(&mut self) -> &mut History {
         self.history
-            .update_current_choice((self.character.clone(), total, elapsed));
-        let edit = self
-            .history
-            .to_edit_interaction(self.character, self.id, self.db, self.options)
-            .await;
-        self.interaction
-            .edit_response(&self.ctx.http, edit)
-            .await
-            .context(EditResponseSnafu)?;
-        Ok(())
     }
 
-    async fn finalize(self, reply: Reply, elapsed: Duration) -> AppResult {
-        let counts = reply.counts();
-        let complete = reply.complete;
-        self.history
-            .update_current_choice((self.character.clone(), reply.text, elapsed));
-        if !complete {
-            self.history.set_current_choice_error();
-        }
-        persist_reply(self.db, self.history, self.character, counts, complete).await?;
+    fn character(&self) -> &Character {
+        self.character
+    }
+
+    fn store_choice(&mut self, choice: (Character, String, Duration)) {
+        self.history.update_current_choice(choice);
+    }
+
+    async fn persist(&mut self, counts: (u32, u32), complete: bool) -> AppResult {
+        persist_reply(self.db, self.history, self.character, counts, complete).await
+    }
+
+    async fn render_and_edit(&mut self) -> AppResult {
         let edit = self
             .history
             .to_edit_interaction(self.character, self.id, self.db, self.options)
@@ -320,7 +366,7 @@ pub async fn prepare_request(
 /// The reply's stop token is registered in `cancellations` for the duration of
 /// the stream (and removed when the returned guard drops), so the Stop button
 /// can end the stream from another task.
-pub async fn stream_and_finalize<S: ReplySink>(
+pub async fn stream_and_finalize<S: ReplySink + Send>(
     prompt: Option<String>,
     cancellations: &Cancellations,
     mut sink: S,
@@ -342,7 +388,7 @@ pub async fn stream_and_finalize<S: ReplySink>(
 
 /// Finalizes `sink` with the generic error sentinel, so a pre-stream failure
 /// renders as the red error choice exactly like an in-stream one.
-async fn finalize_failed<S: ReplySink>(sink: S) -> AppResult {
+async fn finalize_failed<S: ReplySink + Send>(sink: S) -> AppResult {
     let reply = Reply {
         text: ERROR_MESSAGE.to_owned(),
         output_tokens: 0,
@@ -364,7 +410,7 @@ async fn finalize_failed<S: ReplySink>(sink: S) -> AppResult {
     clippy::cognitive_complexity,
     reason = "the select loop, retry/timeout/limit handling and their logging are one cohesive flow that the module deliberately keeps together"
 )]
-pub async fn stream_into<S: ReplySink>(
+pub async fn stream_into<S: ReplySink + Send>(
     requester: &LlmManager,
     context: &[ChatMessage],
     prompt: Option<String>,
