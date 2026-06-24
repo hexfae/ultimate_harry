@@ -455,13 +455,11 @@ impl VoiceChoice {
 /// fence around the JSON array. Returns `None` when no non-empty turn parses.
 fn parse_dialogue_turns(content: &str) -> Option<Vec<DialogueTurn>> {
     let trimmed = content.trim();
-    let unfenced = trimmed
+    let body = trimmed
         .strip_prefix("```json")
         .or_else(|| trimmed.strip_prefix("```"))
-        .map_or(trimmed, |rest| rest.trim_start())
-        .strip_suffix("```")
-        .unwrap_or(trimmed)
-        .trim();
+        .map_or(trimmed, |rest| rest.trim_start());
+    let unfenced = body.strip_suffix("```").unwrap_or(body).trim();
     let parsed = serde_json::from_str::<Vec<DialogueTurn>>(unfenced).ok()?;
     let usable: Vec<DialogueTurn> = parsed
         .into_iter()
@@ -726,6 +724,11 @@ mod tests {
         assert!(
             parse_dialogue_turns(fenced).is_some(),
             "a fenced array is unwrapped and parsed"
+        );
+        let no_closing_fence = "```json\n[{\"voice_id\":\"a\",\"text\":\"hej\"}]";
+        assert!(
+            parse_dialogue_turns(no_closing_fence).is_some(),
+            "an opening fence without a closing one is still unwrapped and parsed"
         );
         assert!(
             parse_dialogue_turns("not json at all").is_none(),
