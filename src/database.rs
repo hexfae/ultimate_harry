@@ -1029,13 +1029,15 @@ mod tests {
 
         let latest = db.character("new-id").await.ok().flatten();
         assert!(
-            latest.is_some_and(|record| record.conversations_had() == 0),
-            "generation stats land on the latest version, not the spawn count"
+            latest.is_some_and(|record| record.words_generated() == 3
+                && record.tokens_generated() == 9),
+            "generation stats land on the latest version"
         );
         let original = db.character("old-id").await.ok().flatten();
         assert!(
-            original.is_some(),
-            "the original version is left intact"
+            original.is_some_and(|record| record.words_generated() == 0
+                && record.tokens_generated() == 0),
+            "the original version receives no stats"
         );
     }
 

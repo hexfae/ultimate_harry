@@ -1,0 +1,22 @@
+--- src/models/character/stats.rs
++++ replace Character::record_generation with ()
+@@ -29,18 +29,17 @@
+         self.conversations_had = self.conversations_had.saturating_add(1);
+         let count = self.conversations_had_with_user.entry(user).or_default();
+         *count = count.saturating_add(1);
+         self.latest_conversation = Some(Zoned::now());
+     }
+ 
+     /// Records the words and tokens this character generated in a single reply.
+     pub const fn record_generation(&mut self, words: u32, tokens: u32) {
+-        self.words_generated = self.words_generated.saturating_add(words);
+-        self.tokens_generated = self.tokens_generated.saturating_add(tokens);
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Returns a formatted string of conversation counts, grouped by user.
+     #[must_use]
+     pub async fn formatted_conversations_had(&self, db: &Database) -> String {
+         let mut string = format!("Totalt: {}", self.conversations_had);
+         // a BTreeMap already iterates in sorted key order, so no separate sort is needed
+         for (id, count) in &self.conversations_had_with_user {

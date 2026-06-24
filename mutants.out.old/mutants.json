@@ -1,0 +1,194 @@
+[
+  {
+    "diff": "--- src/models/character/stats.rs\n+++ replace Character::record_spawn with ()\n@@ -21,20 +21,17 @@\n     reason = \"the usage-stat recording and formatting is split into this child module to separate stats from the Character model\"\n )]\n impl Character {\n     /// Records that this character was spawned into a new conversation by the given user.\n     ///\n     /// Bumps the total and per-user conversation counts and refreshes the\n     /// latest-conversation timestamp.\n     pub fn record_spawn(&mut self, user: UserId) {\n-        self.conversations_had = self.conversations_had.saturating_add(1);\n-        let count = self.conversations_had_with_user.entry(user).or_default();\n-        *count = count.saturating_add(1);\n-        self.latest_conversation = Some(Zoned::now());\n+        () /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Records the words and tokens this character generated in a single reply.\n     pub const fn record_generation(&mut self, words: u32, tokens: u32) {\n         self.words_generated = self.words_generated.saturating_add(words);\n         self.tokens_generated = self.tokens_generated.saturating_add(tokens);\n     }\n \n",
+    "file": "src/models/character/stats.rs",
+    "function": {
+      "function_name": "Character::record_spawn",
+      "return_type": "",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 33
+        },
+        "start": {
+          "column": 5,
+          "line": 24
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/models/character/stats.rs:29:9: replace Character::record_spawn with ()",
+    "package": "ultimate_harry",
+    "replacement": "()",
+    "span": {
+      "end": {
+        "column": 55,
+        "line": 32
+      },
+      "start": {
+        "column": 9,
+        "line": 29
+      }
+    }
+  },
+  {
+    "diff": "--- src/models/character/stats.rs\n+++ replace Character::record_generation with ()\n@@ -29,18 +29,17 @@\n         self.conversations_had = self.conversations_had.saturating_add(1);\n         let count = self.conversations_had_with_user.entry(user).or_default();\n         *count = count.saturating_add(1);\n         self.latest_conversation = Some(Zoned::now());\n     }\n \n     /// Records the words and tokens this character generated in a single reply.\n     pub const fn record_generation(&mut self, words: u32, tokens: u32) {\n-        self.words_generated = self.words_generated.saturating_add(words);\n-        self.tokens_generated = self.tokens_generated.saturating_add(tokens);\n+        () /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Returns a formatted string of conversation counts, grouped by user.\n     #[must_use]\n     pub async fn formatted_conversations_had(&self, db: &Database) -> String {\n         let mut string = format!(\"Totalt: {}\", self.conversations_had);\n         // a BTreeMap already iterates in sorted key order, so no separate sort is needed\n         for (id, count) in &self.conversations_had_with_user {\n",
+    "file": "src/models/character/stats.rs",
+    "function": {
+      "function_name": "Character::record_generation",
+      "return_type": "",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 39
+        },
+        "start": {
+          "column": 5,
+          "line": 35
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/models/character/stats.rs:37:9: replace Character::record_generation with ()",
+    "package": "ultimate_harry",
+    "replacement": "()",
+    "span": {
+      "end": {
+        "column": 78,
+        "line": 38
+      },
+      "start": {
+        "column": 9,
+        "line": 37
+      }
+    }
+  },
+  {
+    "diff": "--- src/models/character/stats.rs\n+++ replace Character::formatted_conversations_had -> String with String::new()\n@@ -36,25 +36,17 @@\n     pub const fn record_generation(&mut self, words: u32, tokens: u32) {\n         self.words_generated = self.words_generated.saturating_add(words);\n         self.tokens_generated = self.tokens_generated.saturating_add(tokens);\n     }\n \n     /// Returns a formatted string of conversation counts, grouped by user.\n     #[must_use]\n     pub async fn formatted_conversations_had(&self, db: &Database) -> String {\n-        let mut string = format!(\"Totalt: {}\", self.conversations_had);\n-        // a BTreeMap already iterates in sorted key order, so no separate sort is needed\n-        for (id, count) in &self.conversations_had_with_user {\n-            let name = db.substitute_name(id).await;\n-            if let Err(why) = write!(string, \"\\nMed {name}: {count}\") {\n-                warn!(\"error while writing to string: {why}\");\n-            }\n-        }\n-        string\n+        String::new() /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Returns the character's last-used time, compactly formatted, or `aldrig`\n     /// when the character has never been spawned into a conversation.\n     #[must_use]\n     pub fn formatted_latest_conversation(&self) -> String {\n         self.latest_conversation.as_ref().map_or_else(\n             || \"aldrig\".to_owned(),\n",
+    "file": "src/models/character/stats.rs",
+    "function": {
+      "function_name": "Character::formatted_conversations_had",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 53
+        },
+        "start": {
+          "column": 5,
+          "line": 41
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/models/character/stats.rs:44:9: replace Character::formatted_conversations_had -> String with String::new()",
+    "package": "ultimate_harry",
+    "replacement": "String::new()",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 52
+      },
+      "start": {
+        "column": 9,
+        "line": 44
+      }
+    }
+  },
+  {
+    "diff": "--- src/models/character/stats.rs\n+++ replace Character::formatted_conversations_had -> String with \"xyzzy\".into()\n@@ -36,25 +36,17 @@\n     pub const fn record_generation(&mut self, words: u32, tokens: u32) {\n         self.words_generated = self.words_generated.saturating_add(words);\n         self.tokens_generated = self.tokens_generated.saturating_add(tokens);\n     }\n \n     /// Returns a formatted string of conversation counts, grouped by user.\n     #[must_use]\n     pub async fn formatted_conversations_had(&self, db: &Database) -> String {\n-        let mut string = format!(\"Totalt: {}\", self.conversations_had);\n-        // a BTreeMap already iterates in sorted key order, so no separate sort is needed\n-        for (id, count) in &self.conversations_had_with_user {\n-            let name = db.substitute_name(id).await;\n-            if let Err(why) = write!(string, \"\\nMed {name}: {count}\") {\n-                warn!(\"error while writing to string: {why}\");\n-            }\n-        }\n-        string\n+        \"xyzzy\".into() /* ~ changed by cargo-mutants ~ */\n     }\n \n     /// Returns the character's last-used time, compactly formatted, or `aldrig`\n     /// when the character has never been spawned into a conversation.\n     #[must_use]\n     pub fn formatted_latest_conversation(&self) -> String {\n         self.latest_conversation.as_ref().map_or_else(\n             || \"aldrig\".to_owned(),\n",
+    "file": "src/models/character/stats.rs",
+    "function": {
+      "function_name": "Character::formatted_conversations_had",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 53
+        },
+        "start": {
+          "column": 5,
+          "line": 41
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/models/character/stats.rs:44:9: replace Character::formatted_conversations_had -> String with \"xyzzy\".into()",
+    "package": "ultimate_harry",
+    "replacement": "\"xyzzy\".into()",
+    "span": {
+      "end": {
+        "column": 15,
+        "line": 52
+      },
+      "start": {
+        "column": 9,
+        "line": 44
+      }
+    }
+  },
+  {
+    "diff": "--- src/models/character/stats.rs\n+++ replace Character::formatted_latest_conversation -> String with String::new()\n@@ -51,14 +51,11 @@\n         }\n         string\n     }\n \n     /// Returns the character's last-used time, compactly formatted, or `aldrig`\n     /// when the character has never been spawned into a conversation.\n     #[must_use]\n     pub fn formatted_latest_conversation(&self) -> String {\n-        self.latest_conversation.as_ref().map_or_else(\n-            || \"aldrig\".to_owned(),\n-            |time| time.strftime(LATEST_CONVERSATION_FORMAT).to_string(),\n-        )\n+        String::new() /* ~ changed by cargo-mutants ~ */\n     }\n }\n",
+    "file": "src/models/character/stats.rs",
+    "function": {
+      "function_name": "Character::formatted_latest_conversation",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 63
+        },
+        "start": {
+          "column": 5,
+          "line": 55
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/models/character/stats.rs:59:9: replace Character::formatted_latest_conversation -> String with String::new()",
+    "package": "ultimate_harry",
+    "replacement": "String::new()",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 62
+      },
+      "start": {
+        "column": 9,
+        "line": 59
+      }
+    }
+  },
+  {
+    "diff": "--- src/models/character/stats.rs\n+++ replace Character::formatted_latest_conversation -> String with \"xyzzy\".into()\n@@ -51,14 +51,11 @@\n         }\n         string\n     }\n \n     /// Returns the character's last-used time, compactly formatted, or `aldrig`\n     /// when the character has never been spawned into a conversation.\n     #[must_use]\n     pub fn formatted_latest_conversation(&self) -> String {\n-        self.latest_conversation.as_ref().map_or_else(\n-            || \"aldrig\".to_owned(),\n-            |time| time.strftime(LATEST_CONVERSATION_FORMAT).to_string(),\n-        )\n+        \"xyzzy\".into() /* ~ changed by cargo-mutants ~ */\n     }\n }\n",
+    "file": "src/models/character/stats.rs",
+    "function": {
+      "function_name": "Character::formatted_latest_conversation",
+      "return_type": "-> String",
+      "span": {
+        "end": {
+          "column": 6,
+          "line": 63
+        },
+        "start": {
+          "column": 5,
+          "line": 55
+        }
+      }
+    },
+    "genre": "FnValue",
+    "name": "src/models/character/stats.rs:59:9: replace Character::formatted_latest_conversation -> String with \"xyzzy\".into()",
+    "package": "ultimate_harry",
+    "replacement": "\"xyzzy\".into()",
+    "span": {
+      "end": {
+        "column": 10,
+        "line": 62
+      },
+      "start": {
+        "column": 9,
+        "line": 59
+      }
+    }
+  }
+]

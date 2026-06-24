@@ -1,0 +1,18 @@
+--- src/models/character/stats.rs
++++ replace Character::formatted_latest_conversation -> String with String::new()
+@@ -51,14 +51,11 @@
+         }
+         string
+     }
+ 
+     /// Returns the character's last-used time, compactly formatted, or `aldrig`
+     /// when the character has never been spawned into a conversation.
+     #[must_use]
+     pub fn formatted_latest_conversation(&self) -> String {
+-        self.latest_conversation.as_ref().map_or_else(
+-            || "aldrig".to_owned(),
+-            |time| time.strftime(LATEST_CONVERSATION_FORMAT).to_string(),
+-        )
++        String::new() /* ~ changed by cargo-mutants ~ */
+     }
+ }

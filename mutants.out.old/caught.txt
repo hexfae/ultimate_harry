@@ -1,0 +1,2 @@
+src/models/character/stats.rs:59:9: replace Character::formatted_latest_conversation -> String with String::new()
+src/models/character/stats.rs:59:9: replace Character::formatted_latest_conversation -> String with "xyzzy".into()

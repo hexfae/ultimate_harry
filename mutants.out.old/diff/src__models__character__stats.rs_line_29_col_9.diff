@@ -1,0 +1,24 @@
+--- src/models/character/stats.rs
++++ replace Character::record_spawn with ()
+@@ -21,20 +21,17 @@
+     reason = "the usage-stat recording and formatting is split into this child module to separate stats from the Character model"
+ )]
+ impl Character {
+     /// Records that this character was spawned into a new conversation by the given user.
+     ///
+     /// Bumps the total and per-user conversation counts and refreshes the
+     /// latest-conversation timestamp.
+     pub fn record_spawn(&mut self, user: UserId) {
+-        self.conversations_had = self.conversations_had.saturating_add(1);
+-        let count = self.conversations_had_with_user.entry(user).or_default();
+-        *count = count.saturating_add(1);
+-        self.latest_conversation = Some(Zoned::now());
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Records the words and tokens this character generated in a single reply.
+     pub const fn record_generation(&mut self, words: u32, tokens: u32) {
+         self.words_generated = self.words_generated.saturating_add(words);
+         self.tokens_generated = self.tokens_generated.saturating_add(tokens);
+     }
+ 
