@@ -622,6 +622,19 @@ mod tests {
             choice_two_id.as_str(),
             "the chosen index points at the second choice"
         );
+        assert_eq!(
+            hydrated.chosen_message().chosen_revision().head().content(),
+            "choice two",
+            "the chosen choice's content survives the round-trip, not just its ID"
+        );
+        assert_eq!(
+            hydrated
+                .previous_messages()
+                .first()
+                .map(|message| message.chosen_revision().head().content()),
+            Some("hello"),
+            "the context message's content survives the round-trip"
+        );
     }
 
     /// Marking the current choice as an error sets it on the chosen message and survives the
