@@ -706,11 +706,11 @@ mod tests {
     /// A bare JSON array of turns parses, keeping order, voice, and text.
     #[test]
     fn parse_dialogue_turns_reads_a_bare_array() {
-        let turns = parse_dialogue_turns(
+        let parsed = parse_dialogue_turns(
             r#"[{"voice_id":"a","text":"hej"},{"voice_id":"b","text":"svar"}]"#,
         );
-        assert!(turns.is_some(), "a well-formed array parses");
-        let Some(turns) = turns else { return };
+        assert!(parsed.is_some(), "a well-formed array parses");
+        let Some(turns) = parsed else { return };
         assert_eq!(turns.len(), 2, "both turns are kept");
         assert_eq!(
             turns.first().map(|turn| turn.voice_id.as_str()),

@@ -774,9 +774,9 @@ mod tests {
             Some("eleven_v3"),
             "the model is sent as model_id"
         );
-        let inputs = body.get("inputs").and_then(serde_json::Value::as_array);
-        assert_eq!(inputs.map(Vec::len), Some(2), "both turns are listed");
-        let Some(inputs) = inputs else { return };
+        let inputs_value = body.get("inputs").and_then(serde_json::Value::as_array);
+        assert_eq!(inputs_value.map(Vec::len), Some(2), "both turns are listed");
+        let Some(inputs) = inputs_value else { return };
         assert_eq!(
             inputs.first().and_then(|input| input.get("voice_id"))
                 .and_then(serde_json::Value::as_str),
