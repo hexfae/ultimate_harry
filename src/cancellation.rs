@@ -48,6 +48,16 @@ impl Cancellations {
         }
     }
 
+    /// Cancels every in-flight stream. Used at shutdown so each reply breaks at
+    /// its next select and persists what it has, rather than being aborted
+    /// mid-write when the runtime is dropped.
+    pub fn cancel_all(&self) {
+        let tokens: Vec<CancellationToken> = self.lock().values().cloned().collect();
+        for token in tokens {
+            token.cancel();
+        }
+    }
+
     /// Removes the entry for `id`; called by [`StreamGuard`] on drop.
     fn remove(&self, id: MessageId) {
         self.lock().remove(&id);
