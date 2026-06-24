@@ -1,24 +1,17 @@
 //! The button that speaks a character's reply aloud via `ElevenLabs` text-to-speech.
 
+use super::speak;
 use crate::{
     AppResult,
     database::Database,
     error::SendResponseSnafu,
-    llm::LlmManager,
     models::{character::Character, history::History},
-    tts::{TtsError, TtsManager, audio_filename},
-    util::report_error,
+    tts::{TtsError, TtsManager},
 };
-use jiff::{Timestamp, Zoned};
 use serenity::all::{
-    ComponentInteraction, Context, CreateAttachment, CreateInteractionResponse,
-    CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
+    ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 use snafu::ResultExt as _;
-use tracing::warn;
-
-/// The timezone the audio filename's request timestamp is rendered in.
-const FILENAME_TIMEZONE: &str = "Europe/Stockholm";
 
 /// Speak the chosen reply aloud, posting it as an MP3 followup attachment.
 ///
@@ -38,9 +31,7 @@ pub async fn tts(
     history: History,
     character: Character,
 ) -> AppResult {
-    let requested_at = Timestamp::now()
-        .in_tz(FILENAME_TIMEZONE)
-        .unwrap_or_else(|_| Zoned::now());
+    let requested_at = speak::requested_now();
     let settings = db.tts_settings().await;
     let manager = TtsManager::new(settings.clone());
     let voice = manager.voice_for(&character).ok_or(TtsError::NoVoice)?;
@@ -60,30 +51,7 @@ pub async fn tts(
         .await
         .context(SendResponseSnafu)?;
 
-    let speak_text = match settings.tag_model_for(&model) {
-        Some(tag_model) => {
-            let llm = LlmManager::new(db.model_settings().await);
-            match llm.add_audio_tags(&text, tag_model).await {
-                Ok(tagged) => tagged,
-                Err(why) => {
-                    warn!("audio-tag enhancement failed, speaking the plain reply");
-                    report_error(why);
-                    text
-                }
-            }
-        }
-        None => text,
-    };
-
+    let speak_text = speak::enrich(db, &settings, &model, text).await;
     let audio = manager.synthesize(&speak_text, &voice, &model).await?;
-    let attachment = CreateAttachment::bytes(audio, audio_filename(character.name(), &requested_at));
-
-    interaction
-        .create_followup(
-            &ctx.http,
-            CreateInteractionResponseFollowup::new().add_file(attachment),
-        )
-        .await
-        .context(SendResponseSnafu)?;
-    Ok(())
+    speak::post_followup(ctx, interaction, audio, &character, &requested_at).await
 }

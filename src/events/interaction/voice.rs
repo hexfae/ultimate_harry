@@ -1,25 +1,22 @@
 //! The dropdown that speaks a reply aloud, either in a chosen palette voice or
 //! with voices auto-assigned per speaker via `ElevenLabs` text-to-dialogue.
 
+use super::speak;
 use crate::{
     AppResult,
     database::Database,
     error::SendResponseSnafu,
     llm::{LlmManager, VoiceChoice},
     models::{character::Character, history::History},
-    tts::{DialogueTurn, TtsError, TtsManager, TtsSettings, audio_filename},
+    tts::{DialogueTurn, TtsError, TtsManager, TtsSettings},
     util::report_error,
 };
-use jiff::{Timestamp, Zoned};
 use serenity::all::{
-    ComponentInteraction, ComponentInteractionDataKind, Context, CreateAttachment,
-    CreateInteractionResponse, CreateInteractionResponseFollowup, CreateInteractionResponseMessage,
+    ComponentInteraction, ComponentInteractionDataKind, Context, CreateInteractionResponse,
+    CreateInteractionResponseMessage,
 };
 use snafu::ResultExt as _;
 use tracing::warn;
-
-/// The timezone the audio filename's request timestamp is rendered in.
-const FILENAME_TIMEZONE: &str = "Europe/Stockholm";
 
 /// The select value that requests auto voice assignment rather than a fixed voice.
 const AUTO_VALUE: &str = "auto";
@@ -46,9 +43,7 @@ pub async fn voice(
         return Ok(());
     };
 
-    let requested_at = Timestamp::now()
-        .in_tz(FILENAME_TIMEZONE)
-        .unwrap_or_else(|_| Zoned::now());
+    let requested_at = speak::requested_now();
     let settings = db.tts_settings().await;
     let manager = TtsManager::new(settings.clone());
     let fallback = manager
@@ -74,19 +69,11 @@ pub async fn voice(
         synthesize_auto(db, &settings, &manager, &character, &fallback, text).await?
     } else {
         let model = settings.solo_model(selection).to_owned();
-        let speak_text = enrich(db, &settings, &model, text).await;
+        let speak_text = speak::enrich(db, &settings, &model, text).await;
         manager.synthesize(&speak_text, selection, &model).await?
     };
 
-    let attachment = CreateAttachment::bytes(audio, audio_filename(character.name(), &requested_at));
-    interaction
-        .create_followup(
-            &ctx.http,
-            CreateInteractionResponseFollowup::new().add_file(attachment),
-        )
-        .await
-        .context(SendResponseSnafu)?;
-    Ok(())
+    speak::post_followup(ctx, interaction, audio, &character, &requested_at).await
 }
 
 /// Synthesizes the reply with auto-assigned voices, falling back to a single
@@ -100,7 +87,7 @@ async fn synthesize_auto(
     text: String,
 ) -> Result<Vec<u8>, TtsError> {
     let Some(turns) = assign_turns(db, settings, character, fallback, &text).await else {
-        let speak_text = enrich(db, settings, &settings.model, text).await;
+        let speak_text = speak::enrich(db, settings, &settings.model, text).await;
         return manager.synthesize(&speak_text, fallback, &settings.model).await;
     };
     let distinct = {
@@ -161,24 +148,6 @@ async fn assign_turns(
             warn!("voice assignment failed, speaking a single voice");
             report_error(why);
             None
-        }
-    }
-}
-
-/// Enriches `text` with v3 audio tags when a tag model is enabled for the effective
-/// synthesis `model`, falling back to the plain text on failure. Keyed off `model`
-/// so a voice pinned to a non-v3 model skips the tags. Mirrors the speak button.
-async fn enrich(db: &Database, settings: &TtsSettings, model: &str, text: String) -> String {
-    let Some(tag_model) = settings.tag_model_for(model) else {
-        return text;
-    };
-    let llm = LlmManager::new(db.model_settings().await);
-    match llm.add_audio_tags(&text, tag_model).await {
-        Ok(tagged) => tagged,
-        Err(why) => {
-            warn!("audio-tag enhancement failed, speaking the plain reply");
-            report_error(why);
-            text
         }
     }
 }

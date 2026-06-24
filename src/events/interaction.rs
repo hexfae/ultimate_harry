@@ -4,6 +4,7 @@ mod character;
 mod edit;
 mod next;
 mod pin;
+mod speak;
 mod stop;
 mod swipe;
 mod tts;
