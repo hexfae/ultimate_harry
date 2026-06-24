@@ -150,12 +150,24 @@ mod tests {
             Some("Banana"),
             "the exact name match ranks first"
         );
+        let nickname_at = position_of(&ranked, "id-nickname");
+        let far_at = position_of(&ranked, "id-far");
         assert!(
-            position_of(&ranked, "id-nickname") < position_of(&ranked, "id-far"),
-            "a close nickname outranks a dissimilar name"
+            nickname_at.is_some() && far_at.is_some(),
+            "both the nickname and the dissimilar character are ranked"
         );
         assert!(
-            position_of(&ranked, "id-tie-high") < position_of(&ranked, "id-tie-low"),
+            nickname_at < far_at,
+            "a close nickname outranks a dissimilar name"
+        );
+        let tie_high_at = position_of(&ranked, "id-tie-high");
+        let tie_low_at = position_of(&ranked, "id-tie-low");
+        assert!(
+            tie_high_at.is_some() && tie_low_at.is_some(),
+            "both tied characters are ranked"
+        );
+        assert!(
+            tie_high_at < tie_low_at,
             "equal similarity breaks ties toward more conversations"
         );
     }
