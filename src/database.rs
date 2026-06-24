@@ -1205,4 +1205,164 @@ mod tests {
             "rolling back a missing head returns None"
         );
     }
+
+    /// A history round-trips through `upsert_history`/`history`, preserving its
+    /// choices and context messages (content, not just IDs).
+    #[tokio::test]
+    async fn history_round_trips_through_the_chat_file() {
+        use crate::models::history::History;
+        use crate::models::message::Message;
+        use nonempty::NonEmpty;
+        use serenity::all::MessageId;
+
+        let opened = Database::temporary().await;
+        assert!(
+            opened.is_ok(),
+            "opening a temporary database should succeed"
+        );
+        let Ok(db) = opened else { return };
+
+        let mut choices = NonEmpty::new(Message::new_system("first choice"));
+        choices.push(Message::new_system("second choice"));
+        let history = History::builder()
+            .id(MessageId::new(42))
+            .character("character-id")
+            .choices(choices)
+            .current(1_usize)
+            .previous(vec![Message::new_user("Alice", "hello")])
+            .build();
+        assert!(
+            db.upsert_history(history).await.is_ok(),
+            "storing a history should succeed"
+        );
+
+        let loaded = db.history(MessageId::new(42)).await.ok().flatten();
+        assert!(loaded.is_some(), "the stored history reads back");
+        let Some(reloaded) = loaded else { return };
+        assert_eq!(
+            reloaded.character(),
+            "character-id",
+            "the character link survives the round-trip"
+        );
+        assert_eq!(
+            reloaded.current_choice(),
+            1,
+            "the chosen index survives the round-trip"
+        );
+        assert_eq!(
+            reloaded.chosen_message().chosen_revision().head().content(),
+            "second choice",
+            "the chosen choice's content survives the round-trip"
+        );
+        assert_eq!(
+            reloaded
+                .previous_messages()
+                .first()
+                .map(|message| message.chosen_revision().head().content()),
+            Some("hello"),
+            "the context message's content survives the round-trip"
+        );
+    }
+
+    /// A reading for a missing chat ID yields `None` rather than erroring.
+    #[tokio::test]
+    async fn history_returns_none_when_missing() {
+        use serenity::all::MessageId;
+        let opened = Database::temporary().await;
+        assert!(
+            opened.is_ok(),
+            "opening a temporary database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let loaded = db.history(MessageId::new(999)).await;
+        assert!(
+            matches!(loaded, Ok(None)),
+            "a missing history reads back as None"
+        );
+    }
+
+    /// Per-character overrides replace only the fields they supply, leaving the
+    /// other global settings untouched.
+    #[tokio::test]
+    async fn resolved_model_settings_applies_only_supplied_overrides() {
+        use crate::llm::ModelSettings;
+
+        let opened = Database::temporary().await;
+        assert!(
+            opened.is_ok(),
+            "opening a temporary database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let global = ModelSettings {
+            model: "global-model".to_owned(),
+            temperature: 0.5_f32,
+            ..ModelSettings::default()
+        };
+        assert!(
+            db.upsert_model_settings(global).await.is_ok(),
+            "storing the global settings should succeed"
+        );
+
+        let mut model_only = character("model-only", "Harry");
+        model_only.set_model_settings(CharacterModelSettings {
+            model: Some("char-model".to_owned()),
+            temperature: None,
+        });
+        let model_resolved = db.resolved_model_settings(&model_only).await;
+        assert_eq!(
+            model_resolved.model, "char-model",
+            "a model override replaces the global model"
+        );
+        assert_eq!(
+            model_resolved.temperature.to_bits(),
+            0.5_f32.to_bits(),
+            "the global temperature is kept when only the model is overridden"
+        );
+
+        let mut temperature_only = character("temperature-only", "Harry");
+        temperature_only.set_model_settings(CharacterModelSettings {
+            model: None,
+            temperature: Some(0.9_f32),
+        });
+        let temperature_resolved = db.resolved_model_settings(&temperature_only).await;
+        assert_eq!(
+            temperature_resolved.model, "global-model",
+            "the global model is kept when only the temperature is overridden"
+        );
+        assert_eq!(
+            temperature_resolved.temperature.to_bits(),
+            0.9_f32.to_bits(),
+            "a temperature override replaces the global temperature"
+        );
+
+        let plain_resolved = db.resolved_model_settings(&character("plain", "Harry")).await;
+        assert_eq!(
+            plain_resolved.model, "global-model",
+            "a character with no override leaves the global model unchanged"
+        );
+    }
+
+    /// A corrupt config file falls back to the default rather than erroring, so a
+    /// bad write cannot wedge the bot.
+    #[tokio::test]
+    async fn model_settings_falls_back_to_default_on_corruption() {
+        use crate::llm::ModelSettings;
+        use tokio::fs;
+
+        let opened = Database::temporary().await;
+        assert!(
+            opened.is_ok(),
+            "opening a temporary database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let written = fs::write(&db.model_settings_path(), b"{ not valid json").await;
+        assert!(written.is_ok(), "writing the corrupt file should succeed");
+
+        let settings = db.model_settings().await;
+        assert_eq!(
+            settings.model,
+            ModelSettings::default().model,
+            "a corrupt model-settings file falls back to the default"
+        );
+    }
 }
