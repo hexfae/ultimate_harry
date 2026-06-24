@@ -17,7 +17,7 @@ use rig::{
 };
 use serde::{Deserialize, Serialize};
 use serenity::futures::Stream;
-use snafu::{OptionExt as _, ResultExt as _, Snafu};
+use snafu::{IntoError, OptionExt as _, ResultExt as _, Snafu};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
@@ -281,6 +281,30 @@ impl LlmManager {
         Ok(supported)
     }
 
+    /// POSTs `body` to the `OpenRouter` chat-completions endpoint and parses the
+    /// reply, attaching `request_error` as the snafu context for both the request
+    /// and the JSON decode (they share a failure class per caller).
+    async fn chat_completion<E>(
+        &self,
+        body: serde_json::Value,
+        request_error: E,
+    ) -> Result<ChatResponse, LlmError>
+    where
+        E: IntoError<LlmError, Source = reqwest::Error> + Copy,
+    {
+        let response = reqwest::Client::new()
+            .post(CHAT_URL)
+            .bearer_auth(&self.settings.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context(request_error)?;
+        response
+            .json::<ChatResponse>()
+            .await
+            .context(request_error)
+    }
+
     /// Describes the image at `url` using the configured vision model, returning its caption.
     pub async fn describe_image(&self, url: &str) -> Result<String, LlmError> {
         let vision_model = self
@@ -298,17 +322,7 @@ impl LlmManager {
                 ],
             }],
         });
-        let response = reqwest::Client::new()
-            .post(CHAT_URL)
-            .bearer_auth(&self.settings.api_key)
-            .json(&body)
-            .send()
-            .await
-            .context(DescribeImageSnafu)?;
-        let parsed = response
-            .json::<ChatResponse>()
-            .await
-            .context(DescribeImageSnafu)?;
+        let parsed = self.chat_completion(body, DescribeImageSnafu).await?;
         extract_description(&parsed).context(EmptyDescriptionSnafu)
     }
 
@@ -333,17 +347,7 @@ impl LlmManager {
                 ],
             }],
         });
-        let response = reqwest::Client::new()
-            .post(CHAT_URL)
-            .bearer_auth(&self.settings.api_key)
-            .json(&body)
-            .send()
-            .await
-            .context(TranscribeAudioSnafu)?;
-        let parsed = response
-            .json::<ChatResponse>()
-            .await
-            .context(TranscribeAudioSnafu)?;
+        let parsed = self.chat_completion(body, TranscribeAudioSnafu).await?;
         extract_description(&parsed).context(EmptyTranscriptionSnafu)
     }
 
@@ -358,17 +362,7 @@ impl LlmManager {
                 {"role": "user", "content": text},
             ],
         });
-        let response = reqwest::Client::new()
-            .post(CHAT_URL)
-            .bearer_auth(&self.settings.api_key)
-            .json(&body)
-            .send()
-            .await
-            .context(AddTagsSnafu)?;
-        let parsed = response
-            .json::<ChatResponse>()
-            .await
-            .context(AddTagsSnafu)?;
+        let parsed = self.chat_completion(body, AddTagsSnafu).await?;
         extract_description(&parsed).context(EmptyTagsSnafu)
     }
 
@@ -403,17 +397,7 @@ impl LlmManager {
                 {"role": "user", "content": user},
             ],
         });
-        let response = reqwest::Client::new()
-            .post(CHAT_URL)
-            .bearer_auth(&self.settings.api_key)
-            .json(&body)
-            .send()
-            .await
-            .context(AssignVoicesSnafu)?;
-        let parsed = response
-            .json::<ChatResponse>()
-            .await
-            .context(AssignVoicesSnafu)?;
+        let parsed = self.chat_completion(body, AssignVoicesSnafu).await?;
         let content = extract_description(&parsed).context(EmptyVoicesSnafu)?;
         parse_dialogue_turns(&content).context(EmptyVoicesSnafu)
     }
