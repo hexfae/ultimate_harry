@@ -361,7 +361,7 @@ mod tests {
         AttachmentMode, AttachmentRender, DescribedAttachment, EncodedAudio, MediaMode,
         audio_format_from_url,
     };
-    use rig::message::{AudioMediaType, Message as RigMessage};
+    use rig::message::{AudioMediaType, Message as RigMessage, UserContent};
 
     /// Each part's role maps to the matching rig message variant.
     #[test]
@@ -732,6 +732,16 @@ mod tests {
             2,
             "native audio sends the text plus the audio as two content parts"
         );
+        assert!(
+            content.iter().any(|part| matches!(part, UserContent::Text(_))),
+            "one part carries the text"
+        );
+        assert!(
+            content
+                .iter()
+                .any(|part| matches!(part, UserContent::Audio(_))),
+            "the other part carries the audio natively"
+        );
     }
 
     /// Describe mode folds the description into one text content, so a text-only model receives a
@@ -758,6 +768,10 @@ mod tests {
             1,
             "describe mode keeps the user message as a single text content"
         );
+        assert!(
+            matches!(content.iter().next(), Some(UserContent::Text(_))),
+            "the single content is text, with the description folded in"
+        );
     }
 
     /// Image mode keeps the image as its own content part alongside the text.
@@ -776,6 +790,12 @@ mod tests {
             content.iter().count(),
             2,
             "image mode sends the text plus the image as two content parts"
+        );
+        assert!(
+            content
+                .iter()
+                .any(|part| matches!(part, UserContent::Image(_))),
+            "one part carries the image"
         );
     }
 
@@ -808,6 +828,12 @@ mod tests {
             content.iter().count(),
             2,
             "the trailing user message holds the empty text plus the image"
+        );
+        assert!(
+            content
+                .iter()
+                .any(|part| matches!(part, UserContent::Image(_))),
+            "the trailing user message carries the image"
         );
     }
 }
