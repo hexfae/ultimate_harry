@@ -29,6 +29,7 @@ use crate::{
     AppResult, Context,
     app_state::AppState,
     constants::TRANSIENT_LINGER,
+    database::DatabaseError,
     error::{AppError, DeleteMessageSnafu, SendMessageSnafu},
     models::character::Character,
     phrases::no_character,
@@ -78,17 +79,27 @@ fn choices_from<'a>(characters: Vec<Character>) -> CreateAutocompleteResponse<'a
     CreateAutocompleteResponse::new().set_choices(character_names)
 }
 
-/// Returns an auto completion response from characters found in the database, sorted by similarity to the input.
-pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {
-    let characters = match ctx.data().db.characters_by_similarity(partial).await {
+/// Builds an autocomplete response from a similarity-ranked character query,
+/// swallowing a ranking failure into an empty list (logged) so the picker stays
+/// responsive. `what` names the queried set for the warning.
+fn autocomplete_from<'a>(
+    ranked: Result<Vec<Character>, DatabaseError>,
+    what: &str,
+) -> CreateAutocompleteResponse<'a> {
+    let characters = match ranked {
         Ok(characters) => characters,
         Err(why) => {
-            warn!("failed to rank characters for autocomplete, returning none");
+            warn!("failed to rank {what} for autocomplete, returning none");
             report_error(why);
             Vec::new()
         }
     };
     choices_from(characters)
+}
+
+/// Returns an auto completion response from characters found in the database, sorted by similarity to the input.
+pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {
+    autocomplete_from(ctx.data().db.characters_by_similarity(partial).await, "characters")
 }
 
 /// Returns an auto completion response from soft-deleted characters, sorted by
@@ -98,13 +109,8 @@ pub async fn autocomplete_deleted<'a>(
     ctx: Context<'_>,
     partial: &str,
 ) -> CreateAutocompleteResponse<'a> {
-    let characters = match ctx.data().db.deleted_characters_by_similarity(partial).await {
-        Ok(characters) => characters,
-        Err(why) => {
-            warn!("failed to rank deleted characters for autocomplete, returning none");
-            report_error(why);
-            Vec::new()
-        }
-    };
-    choices_from(characters)
+    autocomplete_from(
+        ctx.data().db.deleted_characters_by_similarity(partial).await,
+        "deleted characters",
+    )
 }
