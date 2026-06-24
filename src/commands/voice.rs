@@ -32,6 +32,9 @@ pub async fn create(
     #[rename = "beskrivning"]
     #[description = "Kort beskrivning som styr automatiskt röstval"]
     description: String,
+    #[rename = "modell"]
+    #[description = "ElevenLabs-modell vid enskild uppläsning (t.ex. eleven_multilingual_v2)"]
+    model: Option<String>,
 ) -> AppResult {
     let db = &ctx.data().db;
     let mut settings = db.tts_settings().await;
@@ -40,6 +43,7 @@ pub async fn create(
         voice_id,
         emoji,
         description,
+        model: model.filter(|value| !value.is_empty()),
     });
     db.upsert_tts_settings(settings).await?;
     ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
@@ -79,8 +83,13 @@ pub async fn view(ctx: Context<'_>) -> AppResult {
             .voices()
             .iter()
             .map(|voice| {
+                let model = voice
+                    .model
+                    .as_deref()
+                    .map(|model| format!(" [{model}]"))
+                    .unwrap_or_default();
                 format!(
-                    "{} {} - {} ({})",
+                    "{} {} - {} ({}){model}",
                     voice.emoji, voice.name, voice.description, voice.voice_id
                 )
             })

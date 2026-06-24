@@ -73,8 +73,9 @@ pub async fn voice(
     let audio = if selection == AUTO_VALUE {
         synthesize_auto(db, &settings, &manager, &character, &fallback, text).await?
     } else {
-        let speak_text = enrich(db, &settings, text).await;
-        manager.synthesize(&speak_text, selection).await?
+        let model = settings.solo_model(selection).to_owned();
+        let speak_text = enrich(db, &settings, &model, text).await;
+        manager.synthesize(&speak_text, selection, &model).await?
     };
 
     let attachment = CreateAttachment::bytes(audio, audio_filename(character.name(), &requested_at));
@@ -99,8 +100,8 @@ async fn synthesize_auto(
     text: String,
 ) -> Result<Vec<u8>, TtsError> {
     let Some(turns) = assign_turns(db, settings, character, fallback, &text).await else {
-        let speak_text = enrich(db, settings, text).await;
-        return manager.synthesize(&speak_text, fallback).await;
+        let speak_text = enrich(db, settings, &settings.model, text).await;
+        return manager.synthesize(&speak_text, fallback, &settings.model).await;
     };
     let distinct = {
         let mut ids: Vec<&str> = turns.iter().map(|turn| turn.voice_id.as_str()).collect();
@@ -117,7 +118,7 @@ async fn synthesize_auto(
         let voice = turns
             .first()
             .map_or(fallback, |turn| turn.voice_id.as_str());
-        return manager.synthesize(&joined, voice).await;
+        return manager.synthesize(&joined, voice, &settings.model).await;
     }
     manager.synthesize_dialogue(&turns).await
 }
@@ -164,10 +165,11 @@ async fn assign_turns(
     }
 }
 
-/// Enriches `text` with v3 audio tags when a tag model is enabled, falling back
-/// to the plain text on failure. Mirrors the plain speak button's enrichment.
-async fn enrich(db: &Database, settings: &TtsSettings, text: String) -> String {
-    let Some(tag_model) = settings.tag_model_if_enabled() else {
+/// Enriches `text` with v3 audio tags when a tag model is enabled for the effective
+/// synthesis `model`, falling back to the plain text on failure. Keyed off `model`
+/// so a voice pinned to a non-v3 model skips the tags. Mirrors the speak button.
+async fn enrich(db: &Database, settings: &TtsSettings, model: &str, text: String) -> String {
+    let Some(tag_model) = settings.tag_model_for(model) else {
         return text;
     };
     let llm = LlmManager::new(db.model_settings().await);

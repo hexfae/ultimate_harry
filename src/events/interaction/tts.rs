@@ -44,6 +44,7 @@ pub async fn tts(
     let settings = db.tts_settings().await;
     let manager = TtsManager::new(settings.clone());
     let voice = manager.voice_for(&character).ok_or(TtsError::NoVoice)?;
+    let model = settings.solo_model(&voice).to_owned();
     let text = history
         .chosen_message()
         .chosen_revision()
@@ -59,7 +60,7 @@ pub async fn tts(
         .await
         .context(SendResponseSnafu)?;
 
-    let speak_text = match settings.tag_model_if_enabled() {
+    let speak_text = match settings.tag_model_for(&model) {
         Some(tag_model) => {
             let llm = LlmManager::new(db.model_settings().await);
             match llm.add_audio_tags(&text, tag_model).await {
@@ -74,7 +75,7 @@ pub async fn tts(
         None => text,
     };
 
-    let audio = manager.synthesize(&speak_text, &voice).await?;
+    let audio = manager.synthesize(&speak_text, &voice, &model).await?;
     let attachment = CreateAttachment::bytes(audio, audio_filename(character.name(), &requested_at));
 
     interaction

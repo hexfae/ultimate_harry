@@ -57,6 +57,12 @@ pub struct VoiceEntry {
     pub emoji: String,
     /// The short description the auto enricher matches a speaker against.
     pub description: String,
+    /// The `ElevenLabs` model spoken with for solo playback of this voice (the
+    /// speak button or a directly chosen dropdown voice), overriding the
+    /// configured default model. `None` (or empty) uses the configured model.
+    /// Auto/dialogue ignores this and always uses the configured model (Eleven v3).
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 /// The text-to-speech manager for synthesizing spoken replies via `ElevenLabs`.
@@ -149,20 +155,39 @@ impl TtsSettings {
         self.voices.len() != before
     }
 
-    /// Whether the configured synthesis model interprets audio tags (the Eleven v3 family).
-    fn supports_audio_tags(&self) -> bool {
-        self.model.contains("v3")
+    /// The synthesis model for solo playback of `voice_id` (the speak button or a
+    /// directly chosen dropdown voice): the palette voice with that ID's own model
+    /// override if it set a non-empty one, otherwise the configured default model.
+    /// Auto/dialogue ignores this and always speaks with the configured model.
+    #[must_use]
+    pub fn solo_model(&self, voice_id: &str) -> &str {
+        self.voices
+            .iter()
+            .find(|voice| voice.voice_id == voice_id)
+            .and_then(|voice| voice.model.as_deref())
+            .filter(|model| !model.is_empty())
+            .unwrap_or(&self.model)
     }
 
-    /// The audio-tag enhancement model to use, or `None` when enhancement does not
-    /// apply: a non-empty tag model must be configured *and* the synthesis model
-    /// must be audio-tag aware (Eleven v3), since tags are meaningless on other models.
+    /// The audio-tag enhancement model to use when speaking with `model`, or `None`
+    /// when enhancement does not apply: a non-empty tag model must be configured
+    /// *and* `model` must be audio-tag aware (Eleven v3), since tags are meaningless
+    /// on other models. Keyed off the effective synthesis model so a voice pinned to
+    /// a non-v3 model skips the tags rather than speaking them literally.
     #[must_use]
-    pub fn tag_model_if_enabled(&self) -> Option<&str> {
-        if !self.supports_audio_tags() {
+    pub fn tag_model_for(&self, model: &str) -> Option<&str> {
+        if !model_supports_audio_tags(model) {
             return None;
         }
-        self.tag_model.as_deref().filter(|model| !model.is_empty())
+        self.tag_model.as_deref().filter(|tag| !tag.is_empty())
+    }
+
+    /// The audio-tag enhancement model to use for the configured default model (see
+    /// [`tag_model_for`](Self::tag_model_for)). Used by the auto/dialogue path, which
+    /// always speaks with the configured model.
+    #[must_use]
+    pub fn tag_model_if_enabled(&self) -> Option<&str> {
+        self.tag_model_for(&self.model)
     }
 
     /// Overrides any field for which a new value is supplied, leaving the rest untouched.
@@ -233,18 +258,25 @@ impl TtsManager {
         self.settings.voice_for(character)
     }
 
-    /// Synthesizes `text` into MP3 audio bytes using the `ElevenLabs` `voice_id`.
+    /// Synthesizes `text` into MP3 audio bytes using the `ElevenLabs` `voice_id`,
+    /// spoken with `model` (resolved by the caller via [`TtsSettings::solo_model`]
+    /// for solo playback, or the configured model for the auto fallback).
     ///
     /// Fails early with [`TtsError::MissingApiKey`] when no API key is configured,
     /// rather than making a request that `ElevenLabs` would reject.
-    pub async fn synthesize(&self, text: &str, voice_id: &str) -> Result<Vec<u8>, TtsError> {
+    pub async fn synthesize(
+        &self,
+        text: &str,
+        voice_id: &str,
+        model: &str,
+    ) -> Result<Vec<u8>, TtsError> {
         if self.settings.api_key.is_empty() {
             return MissingApiKeySnafu.fail();
         }
         let response = reqwest::Client::new()
             .post(tts_url(voice_id))
             .header("xi-api-key", &self.settings.api_key)
-            .json(&tts_request_body(text, &self.settings.model))
+            .json(&tts_request_body(text, model))
             .send()
             .await
             .context(RequestSnafu)?;
@@ -290,6 +322,11 @@ impl TtsManager {
         }
         Ok(bytes)
     }
+}
+
+/// Whether `model` interprets audio tags (the Eleven v3 family).
+fn model_supports_audio_tags(model: &str) -> bool {
+    model.contains("v3")
 }
 
 /// Whether `text` has anything worth speaking, so the button can skip synthesizing
@@ -429,13 +466,22 @@ mod tests {
     use crate::models::character::Character;
     use serenity::all::UserId;
 
-    /// Builds a palette voice entry with the given name and voice ID.
+    /// Builds a palette voice entry with the given name and voice ID and no model override.
     fn voice_entry(name: &str, voice_id: &str) -> VoiceEntry {
         VoiceEntry {
             name: name.to_owned(),
             voice_id: voice_id.to_owned(),
             emoji: "🎙️".to_owned(),
             description: "a test voice".to_owned(),
+            model: None,
+        }
+    }
+
+    /// Builds a palette voice entry carrying the given optional solo model override.
+    fn voice_entry_with_model(name: &str, voice_id: &str, model: Option<&str>) -> VoiceEntry {
+        VoiceEntry {
+            model: model.map(str::to_owned),
+            ..voice_entry(name, voice_id)
         }
     }
 
@@ -492,6 +538,102 @@ mod tests {
                 .tag_model_if_enabled()
                 .is_none(),
             "an empty tag model disables enhancement"
+        );
+    }
+
+    /// A palette voice with its own model override speaks solo in that model; one
+    /// without falls back to the configured default model.
+    #[test]
+    fn solo_model_prefers_the_voice_override() {
+        let mut configured = tagging("eleven_v3", None);
+        configured.add_voice(voice_entry_with_model(
+            "Adam",
+            "adam-id",
+            Some("eleven_multilingual_v2"),
+        ));
+        configured.add_voice(voice_entry_with_model("Eva", "eva-id", None));
+        assert_eq!(
+            configured.solo_model("adam-id"),
+            "eleven_multilingual_v2",
+            "a voice with an override speaks solo in its own model"
+        );
+        assert_eq!(
+            configured.solo_model("eva-id"),
+            "eleven_v3",
+            "a voice without an override falls back to the configured model"
+        );
+    }
+
+    /// An unknown voice ID or an empty override falls back to the configured model.
+    #[test]
+    fn solo_model_falls_back_for_unknown_or_empty_overrides() {
+        let mut configured = tagging("eleven_v3", None);
+        configured.add_voice(voice_entry_with_model("Adam", "adam-id", Some("")));
+        assert_eq!(
+            configured.solo_model("missing-id"),
+            "eleven_v3",
+            "an unknown voice ID falls back to the configured model"
+        );
+        assert_eq!(
+            configured.solo_model("adam-id"),
+            "eleven_v3",
+            "an empty override is ignored and falls back to the configured model"
+        );
+    }
+
+    /// Tag enhancement is decided against the effective model: a v2 model skips the
+    /// v3 audio tags even when a tag model is configured.
+    #[test]
+    fn tag_model_for_keys_off_the_effective_model() {
+        let settings = tagging("eleven_v3", Some("vendor/cheap"));
+        assert_eq!(
+            settings.tag_model_for("eleven_v3"),
+            Some("vendor/cheap"),
+            "a v3 effective model with a tag model enhances"
+        );
+        assert!(
+            settings.tag_model_for("eleven_multilingual_v2").is_none(),
+            "a v2 effective model skips tags even with a tag model configured"
+        );
+        assert!(
+            tagging("eleven_v3", None)
+                .tag_model_for("eleven_v3")
+                .is_none(),
+            "no tag model means no enhancement"
+        );
+        assert!(
+            tagging("eleven_v3", Some(""))
+                .tag_model_for("eleven_v3")
+                .is_none(),
+            "an empty tag model disables enhancement"
+        );
+    }
+
+    /// A v2-pinned palette voice resolves to its model and skips tags, while a
+    /// non-pinned voice keeps the configured v3 model and its tags.
+    #[test]
+    fn pinned_voice_uses_v2_and_skips_tags() {
+        let mut configured = tagging("eleven_v3", Some("vendor/cheap"));
+        configured.add_voice(voice_entry_with_model(
+            "Adam",
+            "adam-id",
+            Some("eleven_multilingual_v2"),
+        ));
+        configured.add_voice(voice_entry_with_model("Eva", "eva-id", None));
+
+        let adam_model = configured.solo_model("adam-id");
+        assert_eq!(adam_model, "eleven_multilingual_v2", "Adam is pinned to v2");
+        assert!(
+            configured.tag_model_for(adam_model).is_none(),
+            "Adam's v2 playback skips the v3 audio tags"
+        );
+
+        let eva_model = configured.solo_model("eva-id");
+        assert_eq!(eva_model, "eleven_v3", "Eva keeps the configured v3 model");
+        assert_eq!(
+            configured.tag_model_for(eva_model),
+            Some("vendor/cheap"),
+            "Eva's v3 playback still enhances with tags"
         );
     }
 
