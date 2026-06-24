@@ -100,19 +100,26 @@ fn apply_descriptions(
     history.apply_descriptions(descriptions);
 }
 
-/// Asks the vision model to describe each unique undescribed image URL found across `context`.
-async fn describe_images(
-    requester: &LlmManager,
-    context: &[Message],
-) -> Vec<DescribedAttachment> {
+/// Collects the distinct URLs that `select` produces across every message in
+/// `context`, keeping first-seen order.
+fn unique_urls(context: &[Message], select: impl Fn(&Message) -> Vec<String>) -> Vec<String> {
     let mut urls: Vec<String> = Vec::new();
     for message in context {
-        for url in message.undescribed_image_urls() {
+        for url in select(message) {
             if !urls.contains(&url) {
                 urls.push(url);
             }
         }
     }
+    urls
+}
+
+/// Asks the vision model to describe each unique undescribed image URL found across `context`.
+async fn describe_images(
+    requester: &LlmManager,
+    context: &[Message],
+) -> Vec<DescribedAttachment> {
+    let urls = unique_urls(context, Message::undescribed_image_urls);
     let mut described = Vec::new();
     for url in urls {
         match requester.describe_image(&url).await {
@@ -131,14 +138,7 @@ async fn transcribe_audio(
     requester: &LlmManager,
     context: &[Message],
 ) -> Vec<DescribedAttachment> {
-    let mut urls: Vec<String> = Vec::new();
-    for message in context {
-        for url in message.undescribed_audio_urls() {
-            if !urls.contains(&url) {
-                urls.push(url);
-            }
-        }
-    }
+    let urls = unique_urls(context, Message::undescribed_audio_urls);
     let mut described = Vec::new();
     for url in urls {
         match requester.transcribe_audio(&url).await {
@@ -159,14 +159,7 @@ async fn transcribe_audio(
 /// audio-capable model can receive the clips natively. The encodings are transient (never persisted)
 /// and a failed download leaves that clip unencoded, falling back to a placeholder at render time.
 async fn encode_audio(context: &mut [Message]) {
-    let mut urls: Vec<String> = Vec::new();
-    for message in context.iter() {
-        for url in message.audio_attachment_urls() {
-            if !urls.contains(&url) {
-                urls.push(url);
-            }
-        }
-    }
+    let urls = unique_urls(context, Message::audio_attachment_urls);
     let mut encoded = Vec::new();
     for url in urls {
         match fetch_audio_base64(&url).await {
