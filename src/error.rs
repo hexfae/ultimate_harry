@@ -165,13 +165,12 @@ impl AppError {
             | Self::SendResponse { .. }
             | Self::EditResponse { .. }
             | Self::EditMessage { .. }
+            | Self::DeleteMessage { .. }
+            | Self::DeleteResponse { .. }
             | Self::RetrieveMessage { .. }
             | Self::ShowModal { .. }
             | Self::Streaming { .. } => true,
-            Self::UnknownInteraction { .. }
-            | Self::DeleteMessage { .. }
-            | Self::DeleteResponse { .. }
-            | Self::RegisterCommand { .. } => false,
+            Self::UnknownInteraction { .. } | Self::RegisterCommand { .. } => false,
         }
     }
 }
