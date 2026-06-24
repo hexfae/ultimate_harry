@@ -326,6 +326,30 @@ mod tests {
         }
     }
 
+    /// Every kind survives a full encode/decode through the production
+    /// `custom_id` builder, so a button's tag always parses back to its kind.
+    #[test]
+    fn custom_id_round_trips_for_every_kind() {
+        for kind in InteractionKind::ALL {
+            let encoded = kind.custom_id(123_456_u64);
+            let parsed = Interaction::parse(&encoded);
+            assert!(
+                parsed.is_ok(),
+                "the encoded custom_id {encoded:?} should parse"
+            );
+            let Ok(interaction) = parsed else { continue };
+            assert_eq!(
+                interaction.id,
+                MessageId::new(123_456),
+                "the leading digits of {encoded:?} decode to the message ID"
+            );
+            assert_eq!(
+                interaction.kind, kind,
+                "the encoded custom_id {encoded:?} did not round-trip to its kind"
+            );
+        }
+    }
+
     /// A well-formed `custom_id` splits into the leading message ID and the trailing kind tag.
     #[test]
     fn custom_id_splits_into_message_id_and_kind() {
