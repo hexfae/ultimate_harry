@@ -5,9 +5,11 @@ use crate::{
     commands::{autocomplete, notify_no_character},
     error::{EditMessageSnafu, RetrieveMessageSnafu, SendMessageSnafu},
     models::{character::Character, history::History},
+    util::report_error,
 };
 use poise::serenity_prelude::MessageId;
 use snafu::ResultExt as _;
+use tracing::warn;
 
 /// Startar en chatt med en gubbe.
 #[poise::command(slash_command, rename = "prata")]
@@ -54,8 +56,12 @@ pub async fn chat(
     .context(EditMessageSnafu)?;
     db.upsert_history(history).await?;
 
-    db.record_character_spawn(character.id(), ctx.author().id)
-        .await?;
+    // best-effort: the chat is already created, so a stats-write blip must not
+    // fail the command and show the user an error
+    if let Err(why) = db.record_character_spawn(character.id(), ctx.author().id).await {
+        warn!("failed to record spawn stats, keeping the chat");
+        report_error(why);
+    }
 
     Ok(())
 }

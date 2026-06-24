@@ -7,10 +7,12 @@ use crate::{
     error::{SendMessageSnafu, SendResponseSnafu},
     events::streaming::{MessageSink, stream_and_finalize},
     models::{history::History, message::Message},
+    util::report_error,
 };
 use poise::serenity_prelude::{ComponentInteraction, Context, CreateInteractionResponse};
 use serenity::all::ComponentInteractionDataKind;
 use snafu::ResultExt as _;
+use tracing::warn;
 
 /// Respond to the history of this message as the given character.
 pub async fn character(
@@ -69,8 +71,15 @@ pub async fn character(
     };
     stream_and_finalize(Some(prompt), cancellations, sink).await?;
 
-    db.record_character_spawn(new_character.id(), interaction.user.id)
-        .await?;
+    // best-effort: the hand-off reply is already saved, so a stats-write blip
+    // must not fail it and replace it with an error notice
+    if let Err(why) = db
+        .record_character_spawn(new_character.id(), interaction.user.id)
+        .await
+    {
+        warn!("failed to record spawn stats, keeping the reply");
+        report_error(why);
+    }
 
     Ok(())
 }

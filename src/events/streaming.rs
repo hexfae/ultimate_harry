@@ -92,8 +92,15 @@ async fn persist_reply(
     db.upsert_history(history.clone()).await?;
     if complete {
         let (words, tokens) = counts;
-        db.record_character_generation(character.id(), words, tokens)
-            .await?;
+        // best-effort: the reply is already saved, so a stats-write blip must
+        // not fail the reply and replace it with an error notice
+        if let Err(why) = db
+            .record_character_generation(character.id(), words, tokens)
+            .await
+        {
+            warn!("failed to record generation stats, keeping the reply");
+            report_error(why);
+        }
     }
     Ok(())
 }
