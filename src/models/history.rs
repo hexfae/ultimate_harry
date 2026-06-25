@@ -24,7 +24,8 @@
 //! differs from [`StoredHistory`] only in carrying the transient `has_finished` flag (used while
 //! streaming) and a [`NonEmpty`] choices list. [`History::into_stored`] (on save) and
 //! [`History::hydrate`] (on load) bridge the two forms; the LLM context is assembled by
-//! [`History::build_context`], which prepends the rebuilt scaffolding to the `previous` messages.
+//! [`History::build_context`], which wraps the `previous` messages with the rebuilt scaffolding in
+//! front and the character's system prompt appended after.
 
 use bon::Builder;
 use nonempty::NonEmpty;
@@ -112,9 +113,11 @@ pub struct StoredHistory {
 
 /// Builds the system-prompt scaffolding messages for a character.
 ///
-/// These frame the roleplay (system message, personality, prompt, scenario, example messages,
-/// system prompt) and are rebuilt from the character at request time rather than stored. The
-/// generated message IDs are throwaway, since scaffolding is never persisted.
+/// These frame the roleplay (system message, personality, prompt, scenario, example messages) and
+/// are rebuilt from the character at request time rather than stored. The character's own system
+/// prompt is deliberately not part of this front matter; [`History::build_context`] appends it
+/// after the conversation instead, so it lands as the most recent instruction. The generated
+/// message IDs are throwaway, since scaffolding is never persisted.
 pub fn scaffolding(character: &Character) -> Vec<Message> {
     let mut messages = vec![Message::new_system(SYSTEM_MESSAGE)];
 
@@ -144,10 +147,6 @@ pub fn scaffolding(character: &Character) -> Vec<Message> {
             messages.push(Message::new_assistant(assistant_message, character));
             messages.push(Message::new_system(EXAMPLE_MESSAGE_SEPARATOR));
         }
-    }
-
-    if let Some(system_prompt) = character.system_prompt() {
-        messages.push(Message::new_system(system_prompt));
     }
 
     messages.push(Message::new_system(BEGIN_MESSAGE));
@@ -364,12 +363,18 @@ impl History {
         }
     }
 
-    /// Builds the full LLM context: the character's rebuilt scaffolding followed by the previous
-    /// messages, in order.
+    /// Builds the full LLM context: the character's rebuilt scaffolding, then the previous messages,
+    /// then the character's system prompt (if any) as the last context message.
+    ///
+    /// Placing the system prompt after the conversation keeps it as the most recent instruction the
+    /// model sees, rather than burying it at the front before every turn.
     #[must_use]
     pub fn build_context(&self, character: &Character) -> Vec<Message> {
         let mut context = scaffolding(character);
         context.extend(self.previous.iter().cloned());
+        if let Some(system_prompt) = character.system_prompt() {
+            context.push(Message::new_system(system_prompt));
+        }
         context
     }
 
@@ -979,6 +984,38 @@ mod tests {
         );
     }
 
+    /// `build_context` appends the character's system prompt after the conversation, so it is the
+    /// last (most recent) context message rather than buried in the front scaffolding.
+    #[test]
+    fn build_context_appends_system_prompt_after_the_conversation() {
+        let character = Character::builder()
+            .id("character-id".to_owned())
+            .name("Harry")
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .system_prompt("the jailbreak".to_owned())
+            .build();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(Message::new_system("greeting")))
+            .previous(vec![Message::new_user("Alice", "hello")])
+            .build();
+
+        let context = history.build_context(&character);
+        assert!(
+            !scaffolding(&character)
+                .iter()
+                .any(|message| first_part_content(message) == "the jailbreak"),
+            "the system prompt is no longer part of the front scaffolding"
+        );
+        assert_eq!(
+            context.last().map(first_part_content),
+            Some("the jailbreak"),
+            "the system prompt is the last context message, after the conversation"
+        );
+    }
+
     /// A character with no optional fields scaffolds to just the framing system message and the
     /// begin-message marker.
     #[test]
@@ -1024,9 +1061,9 @@ mod tests {
         let messages = scaffolding(&character);
         assert_eq!(
             messages.len(),
-            11,
-            "the framing, personality pair, prompt, scenario, example pair, system prompt and \
-             begin-message marker total eleven messages"
+            10,
+            "the framing, personality pair, prompt, scenario, example pair and begin-message \
+             marker total ten messages (the system prompt is appended in build_context, not here)"
         );
         assert_eq!(
             messages.first().map(first_part_content),
