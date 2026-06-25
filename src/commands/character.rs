@@ -1,5 +1,6 @@
 //! The bot's Discord slash commands for manipulating characters.
 
+pub mod clone;
 pub mod create;
 pub mod delete;
 pub mod edit;
@@ -12,6 +13,7 @@ pub mod view;
 pub mod voice;
 
 use crate::AppResult;
+use clone::clone;
 use create::create;
 use delete::delete;
 use edit::edit;
@@ -23,7 +25,7 @@ use voice::voice;
 /// Hanterar gubbar.
 #[poise::command(
     slash_command,
-    subcommands("create", "edit", "view", "delete", "model", "restore", "voice"),
+    subcommands("create", "clone", "edit", "view", "delete", "model", "restore", "voice"),
     subcommand_required,
     rename = "gubbe"
 )]

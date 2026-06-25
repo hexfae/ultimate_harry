@@ -477,6 +477,36 @@ impl Character {
         self.voice.clone_from(&old.voice);
     }
 
+    /// Produces a fresh, independent copy of the character owned by `creator`.
+    ///
+    /// Mints a new ULID, resets the version lineage and every accumulated stat
+    /// (editors, conversation counts, generated words/tokens, timestamps), and
+    /// stamps `creator` as the new owner. Every content field is copied, including
+    /// the model-settings and voice overrides. With `new_name` of `None`, the copy's
+    /// name defaults to the original suffixed with " (kopia)".
+    #[must_use]
+    pub fn duplicate<U: Into<UserId>>(&self, creator: U, new_name: Option<String>) -> Self {
+        let name = new_name.unwrap_or_else(|| format!("{} (kopia)", self.name));
+        Self::builder()
+            .id(Ulid::new().to_string())
+            .name(name)
+            .greeting(self.greeting.clone())
+            .creator(creator)
+            .maybe_nickname(self.nickname.clone())
+            .maybe_description(self.description.clone())
+            .maybe_personality(self.personality.clone())
+            .maybe_prompt(self.prompt.clone())
+            .maybe_system_prompt(self.system_prompt.clone())
+            .maybe_scenario(self.scenario.clone())
+            .maybe_avatar(self.avatar.clone())
+            .maybe_emoji(self.emoji.clone())
+            .maybe_color(self.color)
+            .example_messages(self.example_messages.clone())
+            .maybe_model_settings(self.model_settings.clone())
+            .maybe_voice(self.voice.clone())
+            .build()
+    }
+
     /// Sets the ID of the next version of this character, hiding it from view.
     pub fn set_next_version(&mut self, next_version: String) {
         self.next_version = Some(next_version);
@@ -608,8 +638,13 @@ fn validate_url(maybe_url: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::Character;
-    use crate::models::modals::{EditCharacterModal, SecondEditCharacterModal};
-    use serenity::all::UserId;
+    use crate::{
+        llm::CharacterModelSettings,
+        models::modals::{EditCharacterModal, SecondEditCharacterModal},
+    };
+    use alloc::collections::{BTreeMap, BTreeSet};
+    use jiff::Zoned;
+    use serenity::all::{Color, UserId};
 
     /// Builds a pair of edit modals that leave every field untouched.
     fn empty_edit_modals() -> (EditCharacterModal, SecondEditCharacterModal) {
@@ -970,5 +1005,165 @@ mod tests {
             Some("old-voice"),
             "a rollback restores the older version's linked voice"
         );
+    }
+
+    /// Builds a character with every field populated, including accumulated stats,
+    /// version lineage, editors, and the model/voice overrides.
+    fn fully_used_character() -> Character {
+        Character::builder()
+            .id("orig".to_owned())
+            .name("Harry")
+            .greeting("hej")
+            .creator(UserId::new(1))
+            .version(2_u32)
+            .previous_version("orig-v1".to_owned())
+            .nickname("H".to_owned())
+            .description("kort".to_owned())
+            .personality("snäll".to_owned())
+            .prompt("prompt".to_owned())
+            .system_prompt("system".to_owned())
+            .scenario("scen".to_owned())
+            .avatar("https://example.com/a.png".to_owned())
+            .emoji("🤩".to_owned())
+            .color(Color::new(0x0000_FF00))
+            .all_editors(BTreeSet::from([UserId::new(9)]))
+            .latest_editor(UserId::new(9))
+            .latest_conversation(Zoned::now())
+            .conversations_had_with_user(BTreeMap::from([(UserId::new(9), 4_u32)]))
+            .conversations_had(5_u32)
+            .words_generated(100_u32)
+            .tokens_generated(200_u32)
+            .example_messages(vec![(Some("hi".to_owned()), "there".to_owned())])
+            .model_settings(CharacterModelSettings {
+                model: Some("gpt".to_owned()),
+                temperature: Some(0.7),
+            })
+            .voice("voice-abc".to_owned())
+            .build()
+    }
+
+    /// Cloning mints a fresh identity for a new owner and resets the version
+    /// lineage and every accumulated stat.
+    #[test]
+    fn duplicate_resets_identity_lineage_and_stats() {
+        let original = fully_used_character();
+        let clone = original.duplicate(UserId::new(2), Some("Harald".to_owned()));
+
+        assert_ne!(clone.id(), "orig", "a clone gets a fresh id");
+        assert_eq!(clone.name(), "Harald", "the clone takes the given name");
+        assert_eq!(
+            clone.creator(),
+            UserId::new(2),
+            "the cloning user becomes the new creator"
+        );
+
+        assert_eq!(clone.version(), 0, "the clone starts at version 0");
+        assert_eq!(
+            clone.previous_version(),
+            None,
+            "the clone has no previous version"
+        );
+        assert_eq!(clone.next_version(), None, "the clone has no next version");
+        assert!(clone.is_visible(), "the clone is visible");
+        assert!(!clone.is_deleted(), "the clone is not deleted");
+
+        assert!(
+            clone.all_editors().is_empty(),
+            "the clone carries over no editors"
+        );
+        assert_eq!(clone.latest_editor(), None, "the clone has no latest editor");
+        assert!(clone.edited_at().is_none(), "the clone has no edit time");
+        assert_eq!(
+            clone.conversations_had(),
+            0,
+            "the clone's conversation count is reset"
+        );
+        assert!(
+            clone.conversations_per_user().is_empty(),
+            "the clone's per-user counts are reset"
+        );
+        assert_eq!(
+            clone.words_generated(),
+            0,
+            "the clone's word count is reset"
+        );
+        assert_eq!(
+            clone.tokens_generated(),
+            0,
+            "the clone's token count is reset"
+        );
+    }
+
+    /// Cloning copies every content field, including the model and voice overrides.
+    #[test]
+    fn duplicate_copies_content_and_overrides() {
+        let original = fully_used_character();
+        let clone = original.duplicate(UserId::new(2), Some("Harald".to_owned()));
+
+        assert_eq!(clone.greeting(), "hej", "the greeting is copied");
+        assert_eq!(clone.nickname(), Some("H"), "the nickname is copied");
+        assert_eq!(clone.description(), Some("kort"), "the description is copied");
+        assert_eq!(
+            clone.personality(),
+            Some("snäll"),
+            "the personality is copied"
+        );
+        assert_eq!(clone.prompt(), Some("prompt"), "the prompt is copied");
+        assert_eq!(
+            clone.system_prompt(),
+            Some("system"),
+            "the system prompt is copied"
+        );
+        assert_eq!(clone.scenario(), Some("scen"), "the scenario is copied");
+        assert_eq!(
+            clone.avatar(),
+            Some("https://example.com/a.png"),
+            "the avatar is copied"
+        );
+        assert_eq!(clone.emoji(), Some("🤩"), "the emoji is copied");
+        assert_eq!(
+            clone.color(),
+            Some(Color::new(0x0000_FF00)),
+            "the color is copied"
+        );
+        let expected_examples = vec![(Some("hi".to_owned()), "there".to_owned())];
+        assert_eq!(
+            clone.example_messages(),
+            expected_examples.as_slice(),
+            "the example messages are copied"
+        );
+        assert_eq!(
+            clone.model_settings().and_then(|settings| settings.model.as_deref()),
+            Some("gpt"),
+            "the model override is copied"
+        );
+        assert!(
+            clone
+                .model_settings()
+                .and_then(|settings| settings.temperature)
+                .is_some(),
+            "the temperature override is copied"
+        );
+        assert_eq!(clone.voice(), Some("voice-abc"), "the voice is copied");
+    }
+
+    /// An omitted name defaults to the original's name suffixed with " (kopia)".
+    #[test]
+    fn duplicate_defaults_name_to_kopia_suffix() {
+        let original = basic_character("orig", "Harry");
+        let clone = original.duplicate(UserId::new(2), None);
+        assert_eq!(
+            clone.name(),
+            "Harry (kopia)",
+            "an omitted name defaults to the original suffixed with (kopia)"
+        );
+    }
+
+    /// An explicit name is used verbatim instead of the default suffix.
+    #[test]
+    fn duplicate_uses_the_provided_name() {
+        let original = basic_character("orig", "Harry");
+        let clone = original.duplicate(UserId::new(2), Some("Harald".to_owned()));
+        assert_eq!(clone.name(), "Harald", "an explicit name is used as-is");
     }
 }
