@@ -6,10 +6,7 @@ use crate::{
     components::single_button_row,
     constants::{EDIT, TRANSIENT_LINGER},
     error::{DeleteResponseSnafu, EditResponseSnafu, ShowModalSnafu},
-    models::{
-        character::Character,
-        modals::{EditCharacterModal, SecondEditCharacterModal},
-    },
+    models::character::Character,
     phrases::{click_below, click_me, edited},
 };
 use poise::{
@@ -42,12 +39,11 @@ async fn edit_confirmed(
     interaction: ComponentInteraction,
     mut character: Character,
 ) -> AppResult {
-    let Some(modal) = show_first_modal::<EditCharacterModal>(ctx, interaction.clone()).await?
-    else {
+    let (first_default, second_default) = character.edit_modal_defaults();
+    let Some(modal) = show_first_modal(ctx, interaction.clone(), first_default).await? else {
         return Ok(());
     };
-    let Some(second_modal) =
-        show_second_modal::<SecondEditCharacterModal>(ctx, interaction.clone()).await?
+    let Some(second_modal) = show_second_modal(ctx, interaction.clone(), second_default).await?
     else {
         return Ok(());
     };
@@ -81,22 +77,30 @@ async fn edit_confirmed(
     Ok(())
 }
 
-/// Immediately shows the first modal to the user.
+/// Immediately shows the first modal, pre-filled with the given defaults, to the user.
 async fn show_first_modal<M: Modal>(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
+    defaults: M,
 ) -> AppResult<Option<M>> {
-    execute_modal_on_component_interaction::<M>(ctx.serenity_context(), interaction, None, None)
-        .await
-        .context(ShowModalSnafu)
+    execute_modal_on_component_interaction::<M>(
+        ctx.serenity_context(),
+        interaction,
+        Some(defaults),
+        None,
+    )
+    .await
+    .context(ShowModalSnafu)
 }
 
 /// Sends a button that attempts to tempt the user into pressing it, then shows
-/// them a modal. The tempting button rides on the ephemeral paginate message, so
-/// only the command author can see and press it; no author filter is needed.
+/// them a modal pre-filled with the given defaults. The tempting button rides on
+/// the ephemeral paginate message, so only the command author can see and press
+/// it; no author filter is needed.
 async fn show_second_modal<M: Modal>(
     ctx: Context<'_>,
     interaction: ComponentInteraction,
+    defaults: M,
 ) -> AppResult<Option<M>> {
     send_first_tempting_button(ctx, interaction).await?;
     let id = ctx.id().to_string();
@@ -110,7 +114,7 @@ async fn show_second_modal<M: Modal>(
         execute_modal_on_component_interaction::<M>(
             ctx.serenity_context(),
             second_interaction,
-            None,
+            Some(defaults),
             None,
         )
         .await

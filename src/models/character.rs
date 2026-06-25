@@ -253,6 +253,12 @@ impl Character {
         self.color
     }
 
+    /// Returns the character's emoji.
+    #[must_use]
+    pub fn emoji(&self) -> Option<&str> {
+        self.emoji.as_deref()
+    }
+
     /// Returns the character's nickname.
     #[must_use]
     pub fn nickname(&self) -> Option<&str> {
@@ -460,6 +466,30 @@ impl Character {
         })
     }
 
+    /// Builds the two character-edit modals pre-filled with the current field values,
+    /// so the edit forms open populated with the existing character instead of blank.
+    ///
+    /// The required name and greeting always carry a value; an absent optional field
+    /// stays empty so the user is never shown a value the character does not have.
+    #[must_use]
+    pub fn edit_modal_defaults(&self) -> (EditCharacterModal, SecondEditCharacterModal) {
+        let first = EditCharacterModal {
+            name: Some(self.name.clone()),
+            greeting: Some(self.greeting.clone()),
+            nickname: self.nickname.clone(),
+            description: self.description.clone(),
+            personality: self.personality.clone(),
+        };
+        let second = SecondEditCharacterModal {
+            avatar: self.avatar.clone(),
+            emoji: self.emoji.clone(),
+            system_prompt: self.system_prompt.clone(),
+            prompt: self.prompt.clone(),
+            scenario: self.scenario.clone(),
+        };
+        (first, second)
+    }
+
     /// Edits the character using data from the edit modals.
     ///
     /// Updates the character's fields with the new values from the modals,
@@ -562,6 +592,156 @@ mod tests {
             .greeting("hello")
             .creator(UserId::new(1))
             .build()
+    }
+
+    /// Builds a character with every editable content field populated.
+    fn populated_character() -> Character {
+        Character::builder()
+            .id("id".to_owned())
+            .name("Harry")
+            .greeting("hej")
+            .creator(UserId::new(1))
+            .nickname("H".to_owned())
+            .description("kort".to_owned())
+            .personality("snäll".to_owned())
+            .avatar("https://example.com/a.png".to_owned())
+            .emoji("🤩".to_owned())
+            .system_prompt("system".to_owned())
+            .prompt("prompt".to_owned())
+            .scenario("scen".to_owned())
+            .build()
+    }
+
+    /// The edit modals are pre-filled with every current field value, so the forms
+    /// open populated with the existing character instead of blank.
+    #[test]
+    fn edit_modal_defaults_prefill_every_field() {
+        let (first, second) = populated_character().edit_modal_defaults();
+        assert_eq!(first.name.as_deref(), Some("Harry"), "the name is pre-filled");
+        assert_eq!(
+            first.greeting.as_deref(),
+            Some("hej"),
+            "the greeting is pre-filled"
+        );
+        assert_eq!(
+            first.nickname.as_deref(),
+            Some("H"),
+            "the nickname is pre-filled"
+        );
+        assert_eq!(
+            first.description.as_deref(),
+            Some("kort"),
+            "the description is pre-filled"
+        );
+        assert_eq!(
+            first.personality.as_deref(),
+            Some("snäll"),
+            "the personality is pre-filled"
+        );
+        assert_eq!(
+            second.avatar.as_deref(),
+            Some("https://example.com/a.png"),
+            "the avatar is pre-filled"
+        );
+        assert_eq!(
+            second.emoji.as_deref(),
+            Some("🤩"),
+            "the emoji is pre-filled"
+        );
+        assert_eq!(
+            second.system_prompt.as_deref(),
+            Some("system"),
+            "the system prompt is pre-filled"
+        );
+        assert_eq!(
+            second.prompt.as_deref(),
+            Some("prompt"),
+            "the prompt is pre-filled"
+        );
+        assert_eq!(
+            second.scenario.as_deref(),
+            Some("scen"),
+            "the scenario is pre-filled"
+        );
+    }
+
+    /// Required fields are always pre-filled, while an absent optional field stays empty
+    /// so the user is not shown a value that does not exist.
+    #[test]
+    fn edit_modal_defaults_leave_absent_optionals_empty() {
+        let (first, second) = basic_character("id", "Harry").edit_modal_defaults();
+        assert_eq!(
+            first.name.as_deref(),
+            Some("Harry"),
+            "the required name is always pre-filled"
+        );
+        assert_eq!(
+            first.greeting.as_deref(),
+            Some("hello"),
+            "the required greeting is always pre-filled"
+        );
+        assert_eq!(
+            first.nickname, None,
+            "an absent optional field stays empty"
+        );
+        assert_eq!(
+            second.prompt, None,
+            "an absent optional field stays empty"
+        );
+    }
+
+    /// Submitting the pre-filled modals unchanged leaves every content field identical.
+    #[test]
+    fn editing_with_prefilled_defaults_round_trips() {
+        let mut character = populated_character();
+        let (first, second) = character.edit_modal_defaults();
+        character.edit_from_modals(UserId::new(2), first, second);
+        assert_eq!(character.name(), "Harry", "the name round-trips unchanged");
+        assert_eq!(
+            character.greeting(),
+            "hej",
+            "the greeting round-trips unchanged"
+        );
+        assert_eq!(
+            character.nickname(),
+            Some("H"),
+            "the nickname round-trips unchanged"
+        );
+        assert_eq!(
+            character.description(),
+            Some("kort"),
+            "the description round-trips unchanged"
+        );
+        assert_eq!(
+            character.personality(),
+            Some("snäll"),
+            "the personality round-trips unchanged"
+        );
+        assert_eq!(
+            character.avatar(),
+            Some("https://example.com/a.png"),
+            "the avatar round-trips unchanged"
+        );
+        assert_eq!(
+            character.emoji(),
+            Some("🤩"),
+            "the emoji round-trips unchanged"
+        );
+        assert_eq!(
+            character.system_prompt(),
+            Some("system"),
+            "the system prompt round-trips unchanged"
+        );
+        assert_eq!(
+            character.prompt(),
+            Some("prompt"),
+            "the prompt round-trips unchanged"
+        );
+        assert_eq!(
+            character.scenario(),
+            Some("scen"),
+            "the scenario round-trips unchanged"
+        );
     }
 
     /// Restoring a deleted character clears its deleted state, making it visible again.
