@@ -89,6 +89,23 @@ fn resolve_field(field: &mut Option<String>, guild_emojis: &[Emoji]) {
     }
 }
 
+/// Returns whether `token` is a single custom-emoji markup token
+/// (`<:name:id>` or `<a:name:id>`).
+fn is_custom_emoji_token(token: &str) -> bool {
+    (token.starts_with("<:") || token.starts_with("<a:")) && token.ends_with('>')
+}
+
+/// Removes custom-emoji markup (`<:name:id>` / `<a:name:id>`) from `text`,
+/// leaving unicode emoji and ordinary text intact. Used for autocomplete labels,
+/// where Discord renders only unicode emoji and shows custom-emoji markup as raw
+/// text. Custom emoji never contain whitespace, so a token-wise filter is enough.
+pub fn strip_custom_emoji(text: &str) -> String {
+    text.split_whitespace()
+        .filter(|token| !is_custom_emoji_token(token))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Fetches the guild's custom emoji for shortcode resolution, falling back to an
 /// empty list (so unicode shortcodes still resolve) when there is no guild or
 /// the fetch fails.
@@ -143,7 +160,7 @@ pub fn resolve_edit_modals(
 
 #[cfg(test)]
 mod tests {
-    use super::resolve;
+    use super::{resolve, strip_custom_emoji};
 
     /// A known unicode shortcode is replaced with the literal emoji.
     #[test]
@@ -175,5 +192,14 @@ mod tests {
         };
         let rendered = emoji.as_str();
         assert_eq!(resolve(":smile::smile:", &[]), format!("{rendered}{rendered}"));
+    }
+
+    /// Custom emoji markup is dropped while unicode emoji and text survive.
+    #[test]
+    fn strips_custom_emoji_for_labels() {
+        assert_eq!(strip_custom_emoji("<:cholol:123>"), "");
+        assert_eq!(strip_custom_emoji("<a:wave:9> Bob"), "Bob");
+        assert_eq!(strip_custom_emoji("🤩 Bob"), "🤩 Bob");
+        assert_eq!(strip_custom_emoji("plain"), "plain");
     }
 }

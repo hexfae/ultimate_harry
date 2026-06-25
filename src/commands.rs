@@ -35,6 +35,7 @@ use crate::{
     error::{AppError, DeleteMessageSnafu, SendMessageSnafu},
     models::character::Character,
     phrases::no_character,
+    shortcodes::strip_custom_emoji,
     traits::SayEphemeral as _,
     util::report_error,
 };
@@ -70,13 +71,29 @@ pub async fn notify_no_character(ctx: Context<'_>) -> AppResult {
     Ok(())
 }
 
+/// Builds the plain-text autocomplete label for a character: its name preceded
+/// by any unicode emoji, with custom server emoji dropped. Discord renders only
+/// unicode emoji in autocomplete choices and would show `<:name:id>` markup as
+/// raw text, so we strip it here.
+fn autocomplete_label(character: &Character) -> String {
+    let Some(emoji) = character.emoji() else {
+        return character.name().to_owned();
+    };
+    let visible = strip_custom_emoji(emoji);
+    let trimmed = visible.trim();
+    if trimmed.is_empty() {
+        character.name().to_owned()
+    } else {
+        format!("{trimmed} {}", character.name())
+    }
+}
+
 /// Builds an autocomplete response listing the given characters by name.
-// TODO: having written e.g. ":microphone:" displays that text, not the emoji
 fn choices_from<'a>(characters: Vec<Character>) -> CreateAutocompleteResponse<'a> {
     let character_names = characters
         .into_iter()
         .map(|character| {
-            AutocompleteChoice::new(character.to_string(), character.name().to_owned())
+            AutocompleteChoice::new(autocomplete_label(&character), character.name().to_owned())
         })
         .collect::<Vec<AutocompleteChoice<'_>>>();
     CreateAutocompleteResponse::new().set_choices(character_names)
