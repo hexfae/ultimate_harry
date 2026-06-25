@@ -72,7 +72,7 @@ impl Character {
     }
 }
 
-/// Tests for the character generation-stat formatting.
+/// Tests for the character generation and conversation stat recording and formatting.
 #[cfg(test)]
 mod tests {
     use super::Character;
@@ -107,6 +107,74 @@ mod tests {
             character(1234, 5678).formatted_generation(),
             "1234 ord, 5678 tokens",
             "both the word and token totals are shown"
+        );
+    }
+
+    /// Spawning bumps the global count and each user's own conversation tally.
+    #[test]
+    fn record_spawn_increments_total_and_per_user_counts() {
+        let mut character = character(0, 0);
+        let alice = UserId::new(1);
+        let bob = UserId::new(2);
+        character.record_spawn(alice);
+        character.record_spawn(alice);
+        character.record_spawn(bob);
+        assert_eq!(
+            character.conversations_had(),
+            3,
+            "every spawn bumps the global conversation count"
+        );
+        assert_eq!(
+            character.conversations_per_user().get(&alice).copied(),
+            Some(2),
+            "a repeat spawn increments the user's tally rather than resetting it"
+        );
+        assert_eq!(
+            character.conversations_per_user().get(&bob).copied(),
+            Some(1),
+            "each user keeps a separate tally"
+        );
+        assert_ne!(
+            character.formatted_latest_conversation(),
+            "aldrig",
+            "a spawn stamps the latest-conversation time"
+        );
+    }
+
+    /// Generation totals accumulate across calls rather than overwriting.
+    #[test]
+    fn record_generation_accumulates_across_calls() {
+        let mut character = character(0, 0);
+        character.record_generation(2, 5);
+        character.record_generation(3, 7);
+        assert_eq!(character.words_generated(), 5, "word totals add up");
+        assert_eq!(character.tokens_generated(), 12, "token totals add up");
+    }
+
+    /// Generation totals saturate at the ceiling instead of overflowing.
+    #[test]
+    fn record_generation_saturates_at_the_ceiling() {
+        let mut character = character(10, 10);
+        character.record_generation(u32::MAX, u32::MAX);
+        assert_eq!(
+            character.words_generated(),
+            u32::MAX,
+            "words saturate rather than wrapping"
+        );
+        assert_eq!(
+            character.tokens_generated(),
+            u32::MAX,
+            "tokens saturate rather than wrapping"
+        );
+    }
+
+    /// A never-spawned character reports its last-used time as `aldrig`.
+    #[test]
+    fn formatted_latest_conversation_reads_aldrig_when_never_spawned() {
+        assert_eq!(
+            character(0, 0).formatted_latest_conversation(),
+            "aldrig",
+            "a character that has never been spawned has no last-used time"
         );
     }
 }
