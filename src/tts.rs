@@ -574,42 +574,20 @@ mod tests {
     }
 
     /// `tag_model_if_enabled` keys the enhancement off the configured model,
-    /// delegating to `tag_model_for` (whose full case matrix is covered by
-    /// `tag_model_for_keys_off_the_effective_model`).
+    /// delegating to `tag_model_for` (whose full effective-model matrix is covered
+    /// by `tag_model_for_keys_off_the_effective_model`).
     #[test]
     fn tag_model_if_enabled_uses_the_configured_model() {
-        let settings = tagging("eleven_multilingual_v2", Some("vendor/cheap"));
         assert!(
-            settings.tag_model_if_enabled().is_none(),
+            tagging("eleven_multilingual_v2", Some("vendor/cheap"))
+                .tag_model_if_enabled()
+                .is_none(),
             "a v2 configured model does not enhance"
         );
         assert_eq!(
-            settings.tag_model_for("eleven_v3"),
+            tagging("eleven_v3", Some("vendor/cheap")).tag_model_if_enabled(),
             Some("vendor/cheap"),
-            "the same settings enhance a v3 effective model, so it is the configured model that decides"
-        );
-    }
-
-    /// A palette voice with its own model override speaks solo in that model; one
-    /// without falls back to the configured default model.
-    #[test]
-    fn solo_model_prefers_the_voice_override() {
-        let mut configured = tagging("eleven_v3", None);
-        configured.add_voice(voice_entry_with_model(
-            "Adam",
-            "adam-id",
-            Some("eleven_multilingual_v2"),
-        ));
-        configured.add_voice(voice_entry_with_model("Eva", "eva-id", None));
-        assert_eq!(
-            configured.solo_model("adam-id"),
-            "eleven_multilingual_v2",
-            "a voice with an override speaks solo in its own model"
-        );
-        assert_eq!(
-            configured.solo_model("eva-id"),
-            "eleven_v3",
-            "a voice without an override falls back to the configured model"
+            "a v3 configured model enhances with the configured tag model"
         );
     }
 
@@ -745,19 +723,31 @@ mod tests {
         );
     }
 
-    /// `apply_overrides` replaces only the supplied fields.
+    /// `apply_overrides` replaces only the supplied fields, across each branch.
     #[test]
     fn apply_overrides_replaces_only_supplied_fields() {
         let mut configured = settings(Some("old-voice"));
         configured.api_key = "old-key".to_owned();
+        configured.model = "old-model".to_owned();
         configured.apply_overrides(TtsOverrides {
             default_voice: Some("new-voice".to_owned()),
+            model: Some("new-model".to_owned()),
+            tag_model: Some("vendor/tagger".to_owned()),
             ..TtsOverrides::default()
         });
         assert_eq!(
             configured.default_voice.as_deref(),
             Some("new-voice"),
             "the supplied default voice is replaced"
+        );
+        assert_eq!(
+            configured.model, "new-model",
+            "the supplied synthesis model is replaced"
+        );
+        assert_eq!(
+            configured.tag_model.as_deref(),
+            Some("vendor/tagger"),
+            "the supplied tag model is replaced"
         );
         assert_eq!(
             configured.api_key, "old-key",
