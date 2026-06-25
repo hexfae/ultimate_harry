@@ -791,31 +791,6 @@ mod tests {
         );
     }
 
-    /// Restoring a deleted character clears its deleted state, making it visible again.
-    #[test]
-    fn restore_makes_a_deleted_character_visible_again() {
-        let mut character = basic_character("id", "Harry");
-        character.mark_deleted(UserId::new(2));
-        assert!(
-            character.is_deleted(),
-            "marking a character deleted sets its deleted state"
-        );
-        assert!(
-            !character.is_visible(),
-            "a deleted character is not visible"
-        );
-
-        character.restore();
-        assert!(
-            !character.is_deleted(),
-            "restoring clears the deleted state"
-        );
-        assert!(
-            character.is_visible(),
-            "a restored character is visible again"
-        );
-    }
-
     /// Rolling back to an older version reverts the content fields to that version
     /// but keeps the current version's accumulated stats and links the new version
     /// back to the one it superseded.
@@ -915,7 +890,8 @@ mod tests {
         );
     }
 
-    /// Deletion records the deleter and time, and a restore clears both.
+    /// Deletion records the deleter and time and hides the character; a restore
+    /// clears both and makes it visible again.
     #[test]
     fn deletion_metadata_records_the_deleter_and_clears_on_restore() {
         let mut character = basic_character("id", "Harry");
@@ -938,6 +914,11 @@ mod tests {
             character.deleted_at().is_some(),
             "the deletion time is recorded"
         );
+        assert!(character.is_deleted(), "a marked character reads as deleted");
+        assert!(
+            !character.is_visible(),
+            "a deleted character is not visible"
+        );
 
         character.restore();
         assert!(
@@ -947,6 +928,14 @@ mod tests {
         assert!(
             character.deleted_at().is_none(),
             "restoring clears the deletion time"
+        );
+        assert!(
+            !character.is_deleted(),
+            "a restored character no longer reads as deleted"
+        );
+        assert!(
+            character.is_visible(),
+            "a restored character is visible again"
         );
     }
 
