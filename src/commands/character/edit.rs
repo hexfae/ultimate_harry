@@ -6,6 +6,7 @@ use crate::{
     constants::TRANSIENT_LINGER,
     error::{DeleteMessageSnafu, SendMessageSnafu},
     phrases::edited,
+    shortcodes::{guild_emojis, resolve_edit_modals},
     traits::SayEphemeral as _,
 };
 use snafu::ResultExt as _;
@@ -35,11 +36,14 @@ pub async fn edit(
     // the pre-filled first modal shows the current values, so it doubles as the
     // "is this the right gubbe?" check the confirmation step used to provide.
     let (first_default, second_default) = character.edit_modal_defaults();
-    let Some((first_modal, second_modal)) =
+    let Some((mut first_modal, mut second_modal)) =
         prompt_two_modals(ctx, Some(first_default), Some(second_default)).await?
     else {
         return Ok(());
     };
+
+    let guild_emojis = guild_emojis(ctx).await;
+    resolve_edit_modals(&mut first_modal, &mut second_modal, &guild_emojis);
 
     let old_id = character.id().to_owned();
 

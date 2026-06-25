@@ -10,6 +10,7 @@ use crate::{
         modals::{CreateCharacterModal, SecondCreateCharacterModal},
     },
     phrases::created,
+    shortcodes::{guild_emojis, resolve_create_modals},
     traits::SayEphemeral as _,
 };
 use snafu::ResultExt as _;
@@ -18,12 +19,15 @@ use tokio::time::sleep;
 /// Skapar en ny gubbe.
 #[poise::command(slash_command, rename = "skapa")]
 pub async fn create(ctx: ApplicationContext<'_>) -> AppResult {
-    let Some((first_modal, second_modal)) =
+    let Some((mut first_modal, mut second_modal)) =
         prompt_two_modals::<CreateCharacterModal, SecondCreateCharacterModal>(ctx, None, None)
             .await?
     else {
         return Ok(());
     };
+
+    let guild_emojis = guild_emojis(ctx).await;
+    resolve_create_modals(&mut first_modal, &mut second_modal, &guild_emojis);
 
     let character = Character::from((first_modal, second_modal, ctx.author().id));
 
