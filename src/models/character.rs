@@ -357,6 +357,12 @@ impl Character {
         self.conversations_had
     }
 
+    /// Returns how many conversations each user has had with this character.
+    #[must_use]
+    pub const fn conversations_per_user(&self) -> &BTreeMap<UserId, u32> {
+        &self.conversations_had_with_user
+    }
+
     /// Returns the number of words this character has generated.
     #[must_use]
     pub const fn words_generated(&self) -> u32 {
