@@ -22,7 +22,7 @@ pub use stats::stats;
 pub use tts::tts;
 pub use voice::voice;
 
-use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse};
+use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse, InstallationContext};
 use snafu::ResultExt as _;
 use tokio::time::sleep;
 use tracing::warn;
@@ -56,6 +56,29 @@ pub fn commands() -> Vec<poise::Command<AppState, AppError>> {
         tts(),
         voice(),
     ]
+}
+
+/// A command list split for registration: the globally registered commands and
+/// the guild-scoped commands.
+type CommandSplit = (
+    Vec<poise::Command<AppState, AppError>>,
+    Vec<poise::Command<AppState, AppError>>,
+);
+
+/// Splits [`commands`] into the user-installable commands, which must be
+/// registered globally so they work in servers and DMs where the bot is absent,
+/// and the rest, which are registered per guild.
+pub fn partitioned_commands() -> CommandSplit {
+    commands().into_iter().partition(is_user_installable)
+}
+
+/// Whether a command is user-installable, i.e. its install context includes
+/// [`InstallationContext::User`].
+fn is_user_installable(command: &poise::Command<AppState, AppError>) -> bool {
+    command
+        .install_context
+        .as_ref()
+        .is_some_and(|contexts| contexts.contains(&InstallationContext::User))
 }
 
 /// Sends the shared "no character found" notice ephemerally, then deletes it
@@ -133,4 +156,51 @@ pub async fn autocomplete_deleted<'a>(
         ctx.data().db.deleted_characters_by_similarity(partial).await,
         "deleted characters",
     )
+}
+
+/// Tests for the registration split.
+#[cfg(test)]
+mod tests {
+    use super::{is_user_installable, partitioned_commands};
+    use crate::commands::{model, say};
+
+    /// `/säg` is user-installable so it can be invoked in other servers and DMs.
+    #[test]
+    fn say_is_user_installable() {
+        assert!(
+            is_user_installable(&say()),
+            "/säg must be user-installable to work outside the bot's guild"
+        );
+    }
+
+    /// A guild-only command like `/model` is not user-installable.
+    #[test]
+    fn other_commands_are_not_user_installable() {
+        assert!(
+            !is_user_installable(&model()),
+            "/model is guild-only and must not be user-installable"
+        );
+    }
+
+    /// Only `/säg` registers globally; every other command stays guild-scoped.
+    #[test]
+    fn only_say_registers_globally() {
+        let (global, guild_scoped) = partitioned_commands();
+        assert_eq!(
+            global.len(),
+            1,
+            "exactly one command, /säg, is registered globally"
+        );
+        assert_eq!(
+            global.first().map(|command| command.name.as_ref()),
+            Some("säg"),
+            "the single global command is /säg"
+        );
+        assert!(
+            guild_scoped
+                .iter()
+                .all(|command| command.name.as_ref() != "säg"),
+            "/säg must not also be registered per guild"
+        );
+    }
 }

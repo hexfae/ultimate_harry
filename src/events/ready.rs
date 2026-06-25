@@ -1,10 +1,10 @@
 //! The ready event handler for when the bot connects to Discord.
 
-use crate::{AppResult, commands::commands, error::RegisterCommandSnafu};
+use crate::{AppResult, commands::partitioned_commands, error::RegisterCommandSnafu};
 use core::time::Duration;
 use nanorand::{Rng as _, WyRand};
 use poise::{
-    samples::register_in_guild,
+    samples::{register_globally, register_in_guild},
     serenity_prelude::{ActivityData, ActivityType, Context, small_fixed_array::FixedString},
 };
 use serenity::all::Ready;
@@ -24,9 +24,12 @@ use tracing::info;
 pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> AppResult {
     info!("ready");
     let ctx_clone = ctx.clone();
-    let commands = commands();
+    let (global_commands, guild_commands) = partitioned_commands();
+    register_globally(&ctx_clone.http, &global_commands)
+        .await
+        .context(RegisterCommandSnafu)?;
     for guild in &data_about_bot.guilds {
-        register_in_guild(&ctx_clone.http, &commands, guild.id)
+        register_in_guild(&ctx_clone.http, &guild_commands, guild.id)
             .await
             .context(RegisterCommandSnafu)?;
     }

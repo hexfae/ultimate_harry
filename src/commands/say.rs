@@ -44,7 +44,13 @@ enum Reading {
 }
 
 /// Läser upp ett meddelande med en vald röst (eller flera röster automatiskt).
-#[poise::command(slash_command, rename = "säg")]
+#[poise::command(
+    slash_command,
+    rename = "säg",
+    install_context = "User",
+    interaction_context = "Guild|BotDm|PrivateChannel",
+    check = "require_guild_member"
+)]
 pub async fn say(
     ctx: Context<'_>,
     #[rename = "röst"]
@@ -229,11 +235,74 @@ fn requested_now() -> Zoned {
         .unwrap_or_else(|_| Zoned::now())
 }
 
+/// Whether the user is a member of at least one of the bot's guilds, given the
+/// outcome of looking them up in each guild. A successful lookup grants access;
+/// a failed lookup (the user is absent from that guild, or the lookup errored)
+/// counts as not a member there. A user the bot shares no guild with is denied,
+/// as is the empty case where the bot is in no guilds, so the gate fails closed.
+fn is_member_of_any<MemberError>(
+    lookups: impl IntoIterator<Item = Result<(), MemberError>>,
+) -> bool {
+    lookups.into_iter().any(|lookup| lookup.is_ok())
+}
+
+/// The poise check gating `/säg`. The command is user-installable, so Discord
+/// offers it in servers, DMs, and group chats where the bot is not present; this
+/// allows it only for users who share a guild with the bot, refusing everyone
+/// else with an ephemeral notice (a failed check is otherwise silent).
+async fn require_guild_member(ctx: Context<'_>) -> AppResult<bool> {
+    let user = ctx.author().id;
+    let serenity_ctx = ctx.serenity_context();
+    let mut lookups = Vec::new();
+    for guild in ctx.cache().guilds() {
+        lookups.push(guild.member(serenity_ctx, user).await.map(|_member| ()));
+    }
+    if is_member_of_any(lookups) {
+        return Ok(true);
+    }
+    ctx.say_ephemeral("Du måste vara med i Harrys server för att använda detta kommando.")
+        .await
+        .context(SendMessageSnafu)?;
+    Ok(false)
+}
+
 /// Tests for the voice-resolution and autocomplete helpers.
 #[cfg(test)]
 mod tests {
-    use super::{Reading, auto_fallback, reading_candidates, resolve_reading};
+    use super::{Reading, auto_fallback, is_member_of_any, reading_candidates, resolve_reading};
     use crate::tts::{TtsSettings, VoiceEntry};
+
+    /// A user found in at least one guild is granted access, including when the
+    /// successful lookup is not the first one checked.
+    #[test]
+    fn is_member_of_any_grants_on_any_success() {
+        let single: [Result<(), ()>; 1] = [Ok(())];
+        assert!(
+            is_member_of_any(single),
+            "a single successful lookup grants access"
+        );
+        let later: [Result<(), ()>; 2] = [Err(()), Ok(())];
+        assert!(
+            is_member_of_any(later),
+            "a success after an earlier failure still grants access"
+        );
+    }
+
+    /// A user found in none of the guilds, and the empty case where the bot is in
+    /// no guilds, are both denied so the gate fails closed.
+    #[test]
+    fn is_member_of_any_denies_without_success() {
+        let none: [Result<(), ()>; 2] = [Err(()), Err(())];
+        assert!(
+            !is_member_of_any(none),
+            "all lookups failing denies access"
+        );
+        let empty: [Result<(), ()>; 0] = [];
+        assert!(
+            !is_member_of_any(empty),
+            "no guilds to be a member of denies access"
+        );
+    }
 
     /// Builds a palette voice entry with the given name, ID, and optional solo model.
     fn voice(name: &str, voice_id: &str, model: Option<&str>) -> VoiceEntry {
