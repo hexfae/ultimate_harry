@@ -545,7 +545,8 @@ fn create_buttons<'a>(
                             .collect(),
                     },
                 )
-                .placeholder("Svara som…"),
+                .placeholder("Svara som…")
+                .disabled(!finished),
             ),
         ));
     }
@@ -981,6 +982,42 @@ mod tests {
             button_disabled(&history, &character, "1stop"),
             None,
             "an error reply renders no Stop button in the slot"
+        );
+    }
+
+    /// Reports the disabled state of the select menu keyed on `custom_id` in a
+    /// render that carries one hand-off option, or `None` when it is absent.
+    fn select_disabled(history: &History, character: &Character, custom_id: &str) -> Option<bool> {
+        let options = [character.to_menu_option()];
+        let value =
+            serde_json::to_value(history.render_components(character, 1, None, &[], &options))
+                .unwrap_or_default();
+        find_disabled(&value, custom_id)
+    }
+
+    /// While the reply is still streaming, the "Svara som" hand-off dropdown is
+    /// disabled just like the "Läs upp som" voice dropdown.
+    #[test]
+    fn handoff_dropdown_disabled_while_streaming() {
+        let character = character();
+        let mut history = finished_reply(&character, "hej");
+        history.set_finished(false);
+        assert_eq!(
+            select_disabled(&history, &character, "1char"),
+            Some(true),
+            "the hand-off dropdown is disabled while the reply streams"
+        );
+    }
+
+    /// Once the reply has finished, the "Svara som" hand-off dropdown is enabled.
+    #[test]
+    fn handoff_dropdown_enabled_when_finished() {
+        let character = character();
+        let history = finished_reply(&character, "hej");
+        assert_eq!(
+            select_disabled(&history, &character, "1char"),
+            Some(false),
+            "the hand-off dropdown is enabled on a finished reply"
         );
     }
 
