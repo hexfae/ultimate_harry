@@ -210,7 +210,7 @@ mod tests {
             "the generation field shows the word and token totals"
         );
         assert!(
-            json.contains("Senast"),
+            json.contains("Senast använd"),
             "the embed has a last-used field"
         );
         assert!(
