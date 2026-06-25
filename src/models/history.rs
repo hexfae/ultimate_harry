@@ -469,6 +469,49 @@ mod tests {
         );
     }
 
+    /// `apply_descriptions` only reaches a message that owns the attachment URL, so
+    /// a description never bleeds onto a context message that lacks it.
+    #[test]
+    fn apply_descriptions_only_reaches_owning_messages() {
+        let owner = Message::builder()
+            .id(MessageId::new(5))
+            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .attachments(vec!["https://cdn/x.png".to_owned()])
+            .build();
+        let other = Message::builder()
+            .id(MessageId::new(6))
+            .parts(("Bob".to_owned(), "Bob: yo".to_owned(), Role::User))
+            .attachments(vec!["https://cdn/y.png".to_owned()])
+            .build();
+        let mut history = History::builder()
+            .id(MessageId::new(1))
+            .character("char")
+            .choices(NonEmpty::new(Message::new_system("greeting")))
+            .previous(vec![owner, other])
+            .build();
+
+        history.apply_descriptions(&[DescribedAttachment {
+            url: "https://cdn/x.png".to_owned(),
+            description: "en bild".to_owned(),
+        }]);
+
+        let previous = history.previous_messages();
+        assert_eq!(
+            previous
+                .first()
+                .and_then(|message| message.description_for("https://cdn/x.png")),
+            Some("en bild"),
+            "the owning message takes its own attachment's description"
+        );
+        assert_eq!(
+            previous
+                .get(1)
+                .and_then(|message| message.description_for("https://cdn/x.png")),
+            None,
+            "a message that does not own the url gets no description for it"
+        );
+    }
+
     /// Builds a minimal character with no name-similarity score.
     fn character() -> Character {
         Character::builder()
@@ -588,6 +631,129 @@ mod tests {
         );
     }
 
+    /// `next` advances by one and, past the last choice, leaves a dangling index
+    /// that `chosen_message` safely falls back to the first choice for.
+    #[test]
+    fn next_advances_and_dangles_past_the_last_choice() {
+        let mut choices = NonEmpty::new(Message::new_system("first"));
+        choices.push(Message::new_system("second"));
+        let mut history = History::builder()
+            .id(MessageId::new(1))
+            .character("character-id")
+            .choices(choices)
+            .build();
+        history.next();
+        assert_eq!(
+            history.current_choice(),
+            1,
+            "next advances to the second choice"
+        );
+        assert!(
+            history.is_on_last_choice(),
+            "the second of two choices is the last"
+        );
+        assert_eq!(
+            history.chosen_content(),
+            "second",
+            "the chosen content tracks the advanced index"
+        );
+        history.next();
+        assert_eq!(
+            history.current_choice(),
+            2,
+            "advancing past the last choice leaves the index dangling for swipe-to-generate"
+        );
+        assert_eq!(
+            history.chosen_content(),
+            "first",
+            "a dangling index falls back to the first choice rather than panicking"
+        );
+    }
+
+    /// `update_current_choice` replaces only the current slot, leaving its index
+    /// and the sibling choices untouched.
+    #[test]
+    fn update_current_choice_replaces_only_the_current_slot() {
+        let mut choices = NonEmpty::new(Message::new_system("zero"));
+        choices.push(Message::new_system("one"));
+        choices.push(Message::new_system("two"));
+        let mut history = History::builder()
+            .id(MessageId::new(1))
+            .character("character-id")
+            .choices(choices)
+            .current(1_usize)
+            .build();
+        history.update_current_choice(Message::new_system("replaced"));
+        assert_eq!(history.current_choice(), 1, "the current index is unchanged");
+        assert_eq!(
+            history.chosen_content(),
+            "replaced",
+            "the current slot holds the new choice"
+        );
+        history.previous();
+        assert_eq!(
+            history.chosen_content(),
+            "zero",
+            "the earlier sibling is untouched"
+        );
+        history.previous();
+        assert_eq!(
+            history.chosen_content(),
+            "two",
+            "the later sibling is untouched"
+        );
+    }
+
+    /// `push_choice` appends a distinct choice, selects it, and leaves the earlier
+    /// choices unchanged.
+    #[test]
+    fn push_choice_appends_and_selects_the_new_choice() {
+        let mut choices = NonEmpty::new(Message::new_system("zero"));
+        choices.push(Message::new_system("one"));
+        let mut history = History::builder()
+            .id(MessageId::new(1))
+            .character("character-id")
+            .choices(choices)
+            .build();
+        history.push_choice(Message::new_system("two"));
+        assert_eq!(history.choices_count(), 3, "the new choice is appended");
+        assert_eq!(
+            history.current_choice(),
+            2,
+            "the new choice becomes the current one"
+        );
+        assert_eq!(
+            history.chosen_content(),
+            "two",
+            "the current slot holds the pushed choice"
+        );
+        history.previous();
+        assert_eq!(
+            history.chosen_content(),
+            "one",
+            "the earlier choices keep their content"
+        );
+    }
+
+    /// An edit with an editor records who made it, and undoing back to the
+    /// original revision clears the attribution.
+    #[test]
+    fn edit_content_records_the_editor_and_clears_on_undo() {
+        let mut history = history_with_reply("original");
+        history.edit_content("Harry", "edited", Some(UserId::new(7)));
+        assert_eq!(
+            history.chosen_message().current_editor(),
+            Some(UserId::new(7)),
+            "an edit records the editor"
+        );
+        history.undo();
+        assert_eq!(
+            history.chosen_message().current_editor(),
+            None,
+            "undoing to the original revision clears the editor"
+        );
+    }
+
     /// `is_on_last_choice` is true only when the current index is the final choice.
     #[test]
     fn last_choice_detected_at_the_end() {
@@ -625,11 +791,15 @@ mod tests {
         let choice_one = Message::new_system("choice one");
         let choice_two = Message::new_system("choice two");
         let choice_two_id = choice_two.id().to_owned();
+        // a third choice makes the chosen index (1) distinct from the last index (2),
+        // so this round-trip would catch a hydrate that clamped to the last choice
+        let choice_three = Message::new_system("choice three");
         let previous_one = Message::new_user("Alice", "hello");
         let previous_ids = vec![previous_one.id().to_owned()];
 
         let mut choices = NonEmpty::new(choice_one);
         choices.push(choice_two);
+        choices.push(choice_three);
 
         let history = History::builder()
             .id(MessageId::new(42))
@@ -645,7 +815,7 @@ mod tests {
             stored.character, "character-id",
             "the character ID is preserved"
         );
-        assert_eq!(stored.choices.len(), 2, "both choices are stored inline");
+        assert_eq!(stored.choices.len(), 3, "all three choices are stored inline");
         assert_eq!(
             stored
                 .previous
