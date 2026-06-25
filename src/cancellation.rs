@@ -144,10 +144,36 @@ mod tests {
         );
     }
 
-    /// Cancelling an unknown ID is a no-op rather than a panic.
+    /// Cancelling an unknown ID leaves an unrelated registered stream untouched
+    /// rather than cancelling it (or panicking).
     #[test]
-    fn cancel_unknown_id_is_a_noop() {
+    fn cancel_unknown_id_leaves_other_streams_alone() {
         let registry = Cancellations::new();
+        let guard = registry.begin(MessageId::new(1));
+        let token = guard.token();
         registry.cancel(MessageId::new(999));
+        assert!(
+            !token.is_cancelled(),
+            "cancelling an unknown id does not touch a registered stream"
+        );
+    }
+
+    /// `cancel_all` cancels every registered stream, as at shutdown.
+    #[test]
+    fn cancel_all_cancels_every_registered_stream() {
+        let registry = Cancellations::new();
+        let first = registry.begin(MessageId::new(1));
+        let second = registry.begin(MessageId::new(2));
+        let first_token = first.token();
+        let second_token = second.token();
+        registry.cancel_all();
+        assert!(
+            first_token.is_cancelled(),
+            "the first stream is cancelled at shutdown"
+        );
+        assert!(
+            second_token.is_cancelled(),
+            "the second stream is cancelled at shutdown"
+        );
     }
 }
