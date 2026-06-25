@@ -285,6 +285,26 @@ mod tests {
         );
     }
 
+    /// Both sort comparators fire at once: users tied on total are ordered by id
+    /// while each user's characters stay count-descending with display-broken ties.
+    #[test]
+    fn aggregate_user_stats_orders_users_and_their_characters_together() {
+        let characters = [
+            character_with_users("Apa", "🅰", &[(1, 10)]),
+            character_with_users("Bok", "🅱", &[(1, 5)]),
+            character_with_users("Xerxes", "❌", &[(2, 7)]),
+            character_with_users("Mira", "Ⓜ", &[(2, 4)]),
+            character_with_users("Zeta", "Ⓩ", &[(2, 4)]),
+        ];
+        assert_eq!(
+            aggregate_user_stats(&characters),
+            vec![
+                user_stats(1, 15, &[("🅰 Apa", 10), ("🅱 Bok", 5)]),
+                user_stats(2, 15, &[("❌ Xerxes", 7), ("Ⓜ Mira", 4), ("Ⓩ Zeta", 4)]),
+            ]
+        );
+    }
+
     /// An empty per-user leaderboard renders the empty-state message.
     #[test]
     fn an_empty_user_leaderboard_shows_the_empty_state() {
@@ -421,5 +441,18 @@ mod tests {
         assert_eq!(abbreviate(1_000_000), "1.0M");
         assert_eq!(abbreviate(1_500_000), "1.5M");
         assert_eq!(abbreviate(12_345_678), "12.3M");
+    }
+
+    /// Abbreviation truncates the trailing digits rather than rounding, and the
+    /// just-below-a-million boundary still reports in thousands.
+    #[test]
+    fn abbreviate_truncates_at_the_boundaries() {
+        assert_eq!(abbreviate(1999), "1.9k", "thousands truncate, not round");
+        assert_eq!(
+            abbreviate(999_999),
+            "999.9k",
+            "just below a million stays in thousands"
+        );
+        assert_eq!(abbreviate(1_990_000), "1.9M", "millions truncate, not round");
     }
 }
