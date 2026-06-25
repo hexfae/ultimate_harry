@@ -253,6 +253,11 @@ impl Character {
         self.color
     }
 
+    /// Sets the character's embed color.
+    pub const fn set_color(&mut self, color: Color) {
+        self.color = Some(color);
+    }
+
     /// Returns the character's emoji.
     #[must_use]
     pub fn emoji(&self) -> Option<&str> {

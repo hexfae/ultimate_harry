@@ -5,7 +5,7 @@ use miette::{Diagnostic, SourceSpan};
 use nanorand::Rng as _;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serenity::all::{ChannelId, MessageId, ReactionType, UserId};
+use serenity::all::{ChannelId, Color, MessageId, ReactionType, UserId};
 use snafu::{IntoError, OptionExt as _, ResultExt as _, Snafu};
 use std::ffi::OsStr;
 use std::io::{self, ErrorKind};
@@ -494,6 +494,19 @@ impl Database {
         .await
     }
 
+    /// Sets a character's embed color. Returns the updated character, or `Ok(None)`
+    /// if the character is missing.
+    pub async fn set_character_color(
+        &self,
+        id: &str,
+        color: Color,
+    ) -> Result<Option<Character>, DatabaseError> {
+        self.mutate_character(id, UpdateSnafu, |character| {
+            character.set_color(color);
+        })
+        .await
+    }
+
     /// Records a character spawn (a new conversation) for the given user.
     ///
     /// The stats land on the character's latest version (walking the version
@@ -787,7 +800,7 @@ mod tests {
     use super::{Database, is_safe_id};
     use crate::llm::CharacterModelSettings;
     use crate::models::character::Character;
-    use serenity::all::UserId;
+    use serenity::all::{Color, UserId};
 
     /// A client-supplied character ID with path-traversal components is rejected,
     /// so a crafted select value cannot read a file outside the characters dir.
@@ -977,6 +990,37 @@ mod tests {
         assert!(
             matches!(missing, Ok(None)),
             "setting a voice on a missing character returns None"
+        );
+    }
+
+    /// `set_character_color` records a color on a character and returns it; a missing
+    /// character returns `None`.
+    #[tokio::test]
+    async fn set_character_color_records_a_color() {
+        let opened = Database::temporary().await;
+        assert!(
+            opened.is_ok(),
+            "opening a temporary database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        insert(&db, character("char-id", "Harry")).await;
+
+        let set = db
+            .set_character_color("char-id", Color::new(0x00ff_0000))
+            .await;
+        assert!(
+            set.as_ref().is_ok_and(|found| found
+                .as_ref()
+                .is_some_and(|record| record.color() == Some(Color::new(0x00ff_0000)))),
+            "setting a color records it and returns the character"
+        );
+
+        let missing = db
+            .set_character_color("missing", Color::new(0x00ff_0000))
+            .await;
+        assert!(
+            matches!(missing, Ok(None)),
+            "setting a color on a missing character returns None"
         );
     }
 
