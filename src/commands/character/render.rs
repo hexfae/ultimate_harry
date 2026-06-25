@@ -131,10 +131,46 @@ pub async fn character_embed<F: Into<String>>(
 /// Tests for the stats and metadata surfaced on the character embed.
 #[cfg(test)]
 mod tests {
-    use super::character_embed;
+    use super::{FIELD_VALUE_LIMIT, character_embed, truncate_field};
     use crate::{database::Database, models::character::Character};
     use alloc::collections::BTreeSet;
     use serenity::all::UserId;
+
+    /// A value within the field limit is returned verbatim; an over-limit value is
+    /// cut to the limit on a char boundary and gains an ellipsis.
+    #[test]
+    fn truncate_field_caps_overlong_values_on_a_char_boundary() {
+        let at_limit = "a".repeat(FIELD_VALUE_LIMIT);
+        assert_eq!(
+            truncate_field(at_limit.clone()),
+            at_limit,
+            "a value exactly at the limit is returned unchanged"
+        );
+
+        let over_limit = "a".repeat(FIELD_VALUE_LIMIT.saturating_add(1));
+        let truncated = truncate_field(over_limit);
+        assert_eq!(
+            truncated.chars().count(),
+            FIELD_VALUE_LIMIT,
+            "an over-limit value is cut to the field limit"
+        );
+        assert!(
+            truncated.ends_with('…'),
+            "the truncated value ends with an ellipsis"
+        );
+
+        let multibyte = "å".repeat(FIELD_VALUE_LIMIT.saturating_add(5));
+        let cut = truncate_field(multibyte);
+        assert_eq!(
+            cut.chars().count(),
+            FIELD_VALUE_LIMIT,
+            "a multibyte value is cut on a char boundary to the field limit"
+        );
+        assert!(
+            cut.ends_with('…'),
+            "a multibyte value also gains an ellipsis"
+        );
+    }
 
     /// Builds a minimal character with the given ID and name.
     fn character(id: &str, name: &str) -> Character {
