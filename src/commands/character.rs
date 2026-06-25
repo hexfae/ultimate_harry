@@ -7,6 +7,7 @@ pub mod model;
 pub mod paginate;
 pub mod render;
 pub mod restore;
+pub mod two_modals;
 pub mod view;
 pub mod voice;
 

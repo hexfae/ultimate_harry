@@ -1,20 +1,12 @@
 //! The bot's Discord slash command for editing characters.
 
 use crate::{
-    AppResult, Context,
-    commands::{autocomplete, character::paginate::paginate},
-    components::single_button_row,
-    constants::{EDIT, TRANSIENT_LINGER},
-    error::{DeleteResponseSnafu, EditResponseSnafu, ShowModalSnafu},
-    models::character::Character,
-    phrases::{click_below, click_me, edited},
-};
-use poise::{
-    Modal, execute_modal_on_component_interaction,
-    serenity_prelude::{
-        ComponentInteraction, ComponentInteractionCollector, EditInteractionResponse,
-        small_fixed_array::{FixedArray, FixedString},
-    },
+    AppResult, ApplicationContext, Context,
+    commands::{autocomplete, character::two_modals::prompt_two_modals, notify_no_character},
+    constants::TRANSIENT_LINGER,
+    error::{DeleteMessageSnafu, SendMessageSnafu},
+    phrases::edited,
+    traits::SayEphemeral as _,
 };
 use snafu::ResultExt as _;
 use tokio::time::sleep;
@@ -22,35 +14,36 @@ use tokio::time::sleep;
 /// Ändrar en gubbe.
 #[poise::command(slash_command, rename = "ändra")]
 pub async fn edit(
-    ctx: Context<'_>,
+    ctx: ApplicationContext<'_>,
     #[rest]
     #[rename = "namn"]
     #[description = "Gubbens namn"]
     #[autocomplete = autocomplete]
     name: String,
 ) -> AppResult {
-    paginate(ctx, name, EDIT, edit_confirmed).await
-}
-
-/// Sends 2 buttons back-to-back that show modals, edits the character, sends
-/// a message stating it was edited, and deletes the message 5 seconds later.
-async fn edit_confirmed(
-    ctx: Context<'_>,
-    interaction: ComponentInteraction,
-    mut character: Character,
-) -> AppResult {
-    let (first_default, second_default) = character.edit_modal_defaults();
-    let Some(modal) = show_first_modal(ctx, interaction.clone(), first_default).await? else {
-        return Ok(());
+    let Some(mut character) = ctx
+        .data()
+        .db
+        .characters_by_similarity(name)
+        .await?
+        .into_iter()
+        .next()
+    else {
+        return notify_no_character(Context::Application(ctx)).await;
     };
-    let Some(second_modal) = show_second_modal(ctx, interaction.clone(), second_default).await?
+
+    // the pre-filled first modal shows the current values, so it doubles as the
+    // "is this the right gubbe?" check the confirmation step used to provide.
+    let (first_default, second_default) = character.edit_modal_defaults();
+    let Some((first_modal, second_modal)) =
+        prompt_two_modals(ctx, Some(first_default), Some(second_default)).await?
     else {
         return Ok(());
     };
 
     let old_id = character.id().to_owned();
 
-    character.edit_from_modals(ctx.author(), modal, second_modal);
+    character.edit_from_modals(ctx.author(), first_modal, second_modal);
     let character_name = character.to_string();
 
     ctx.data()
@@ -59,86 +52,14 @@ async fn edit_confirmed(
         .await?;
     ctx.data().db.insert_character(character).await?;
 
-    interaction
-        .edit_response(
-            ctx.http(),
-            EditInteractionResponse::new()
-                .content(edited(character_name))
-                .embeds(vec![])
-                .components(vec![]),
-        )
+    let success_message = ctx
+        .say_ephemeral(edited(character_name))
         .await
-        .context(EditResponseSnafu)?;
+        .context(SendMessageSnafu)?;
     sleep(TRANSIENT_LINGER).await;
-    interaction
-        .delete_response(ctx.http())
+    success_message
+        .delete(Context::Application(ctx))
         .await
-        .context(DeleteResponseSnafu)?;
+        .context(DeleteMessageSnafu)?;
     Ok(())
-}
-
-/// Immediately shows the first modal, pre-filled with the given defaults, to the user.
-async fn show_first_modal<M: Modal>(
-    ctx: Context<'_>,
-    interaction: ComponentInteraction,
-    defaults: M,
-) -> AppResult<Option<M>> {
-    execute_modal_on_component_interaction::<M>(
-        ctx.serenity_context(),
-        interaction,
-        Some(defaults),
-        None,
-    )
-    .await
-    .context(ShowModalSnafu)
-}
-
-/// Sends a button that attempts to tempt the user into pressing it, then shows
-/// them a modal pre-filled with the given defaults. The tempting button rides on
-/// the ephemeral paginate message, so only the command author can see and press
-/// it; no author filter is needed.
-async fn show_second_modal<M: Modal>(
-    ctx: Context<'_>,
-    interaction: ComponentInteraction,
-    defaults: M,
-) -> AppResult<Option<M>> {
-    send_first_tempting_button(ctx, interaction).await?;
-    let id = ctx.id().to_string();
-    let collector = ComponentInteractionCollector::new(ctx.serenity_context())
-        .custom_ids(FixedArray::from_vec_trunc(vec![
-            FixedString::from_string_trunc(id.clone()),
-        ]))
-        .await;
-
-    if let Some(second_interaction) = collector {
-        execute_modal_on_component_interaction::<M>(
-            ctx.serenity_context(),
-            second_interaction,
-            Some(defaults),
-            None,
-        )
-        .await
-        .context(ShowModalSnafu)
-    } else {
-        Ok(None)
-    }
-}
-
-/// Sends a message that attempts to tempt the user into pressing it.
-async fn send_first_tempting_button(
-    ctx: Context<'_>,
-    interaction: ComponentInteraction,
-) -> AppResult {
-    let id = ctx.id().to_string();
-    interaction
-        .edit_response(
-            ctx.http(),
-            EditInteractionResponse::new()
-                .content(click_below())
-                .embeds(vec![])
-                .components(single_button_row(id, click_me())),
-        )
-        .await
-        .context(EditResponseSnafu)
-        .map(|_| ())
 }
