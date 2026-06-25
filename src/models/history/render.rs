@@ -646,6 +646,25 @@ mod tests {
         );
     }
 
+    /// The footer surfaces a ranked character's name-similarity between the page
+    /// counter and the timing.
+    #[test]
+    fn footer_includes_the_similarity_when_ranked() {
+        let mut ranked = Character::rank_by_similarity(vec![character()], "Harry");
+        assert_eq!(ranked.len(), 1, "ranking returns the single visible character");
+        let Some(character) = ranked.pop() else { return };
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(&character, "hello", 2.0)))
+            .build();
+        assert_eq!(
+            history.footer_text(&character, 5, None),
+            "-# 1/1 | 100% namnlikhet | tog 2.0s | 5/3900",
+            "an exact name match shows the similarity between the page counter and the timing"
+        );
+    }
+
     /// A reply with content renders that content as its body.
     #[test]
     fn body_text_uses_the_content_when_present() {
