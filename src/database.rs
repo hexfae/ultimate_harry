@@ -915,13 +915,20 @@ mod tests {
         insert(&db, character("char-id", "Harry")).await;
 
         let updated = db
-            .set_character_model_settings("char-id", CharacterModelSettings::default())
+            .set_character_model_settings(
+                "char-id",
+                CharacterModelSettings {
+                    model: Some("char-model".to_owned()),
+                    temperature: Some(0.5),
+                },
+            )
             .await;
         assert!(
-            updated
-                .as_ref()
-                .is_ok_and(|found| found.as_ref().is_some_and(Character::has_model_settings)),
-            "setting model settings records the override and returns the character"
+            updated.as_ref().is_ok_and(|found| found.as_ref().is_some_and(|record| record
+                .model_settings()
+                .and_then(|settings| settings.model.as_deref())
+                == Some("char-model"))),
+            "setting model settings records the override's contents and returns the character"
         );
 
         let missing = db
@@ -976,7 +983,7 @@ mod tests {
     /// TTS settings round-trip through the config file, defaulting before any are saved.
     #[tokio::test]
     async fn tts_settings_round_trip_through_the_config_file() {
-        use crate::tts::TtsSettings;
+        use crate::tts::{TtsSettings, VoiceEntry};
         let opened = Database::temporary().await;
         assert!(
             opened.is_ok(),
@@ -993,7 +1000,15 @@ mod tests {
             .upsert_tts_settings(TtsSettings {
                 api_key: "secret".to_owned(),
                 default_voice: Some("voice-1".to_owned()),
-                ..TtsSettings::default()
+                model: "eleven_multilingual_v2".to_owned(),
+                tag_model: Some("vendor/tagger".to_owned()),
+                voices: vec![VoiceEntry {
+                    name: "Anna".to_owned(),
+                    voice_id: "voice-anna".to_owned(),
+                    emoji: "🎭".to_owned(),
+                    description: "lugn".to_owned(),
+                    model: None,
+                }],
             })
             .await;
         assert!(saved.is_ok(), "saving the settings should succeed");
@@ -1004,6 +1019,20 @@ mod tests {
             loaded.default_voice.as_deref(),
             Some("voice-1"),
             "the saved default voice is read back"
+        );
+        assert_eq!(
+            loaded.model, "eleven_multilingual_v2",
+            "the saved synthesis model is read back"
+        );
+        assert_eq!(
+            loaded.tag_model.as_deref(),
+            Some("vendor/tagger"),
+            "the saved audio-tag model is read back"
+        );
+        assert_eq!(
+            loaded.voices.iter().map(|voice| voice.voice_id.as_str()).collect::<Vec<_>>(),
+            vec!["voice-anna"],
+            "the saved voice palette is read back"
         );
     }
 
