@@ -35,6 +35,7 @@ use crate::{
     models::{
         character::Character,
         message::{DescribedAttachment, Message},
+        modals::EditMessageModal,
     },
     util::wrapping_previous,
 };
@@ -239,6 +240,15 @@ impl History {
     #[must_use]
     pub fn chosen_content(&self) -> &str {
         self.chosen_message().chosen_revision().head().content()
+    }
+
+    /// Builds the message-edit modal pre-filled with the chosen reply's current content,
+    /// so the edit form opens populated with the existing text instead of blank.
+    #[must_use]
+    pub fn edit_modal_default(&self) -> EditMessageModal {
+        EditMessageModal {
+            content: self.chosen_content().to_owned(),
+        }
     }
 
     /// Returns the Discord message ID of this history.
@@ -494,6 +504,59 @@ mod tests {
             .character("character-id")
             .choices(choices)
             .build()
+    }
+
+    /// Builds a history whose single choice is an assistant reply with the given content.
+    fn history_with_reply(content: &str) -> History {
+        let reply = Message::new_assistant(content, &character());
+        History::builder()
+            .id(MessageId::new(1))
+            .character("character-id")
+            .choices(NonEmpty::new(reply))
+            .build()
+    }
+
+    /// The edit modal is pre-filled with the chosen reply's full content, including every line,
+    /// so a multi-line reply opens whole rather than truncated to its first line.
+    #[test]
+    fn edit_modal_default_prefills_the_full_chosen_reply() {
+        let history = history_with_reply("first line\nsecond line");
+        assert_eq!(
+            history.edit_modal_default().content,
+            "first line\nsecond line",
+            "the edit modal is pre-filled with the chosen reply's full, multi-line content"
+        );
+    }
+
+    /// The pre-filled content tracks the currently shown revision across edits and undo.
+    #[test]
+    fn edit_modal_default_follows_edits_and_undo() {
+        let mut history = history_with_reply("original");
+        history.edit_content("Harry", "edited", None::<UserId>);
+        assert_eq!(
+            history.edit_modal_default().content,
+            "edited",
+            "after an edit the modal pre-fills with the newest revision"
+        );
+        history.undo();
+        assert_eq!(
+            history.edit_modal_default().content,
+            "original",
+            "after an undo the modal pre-fills with the now-current revision"
+        );
+    }
+
+    /// Re-submitting the pre-filled content unchanged leaves the displayed reply identical.
+    #[test]
+    fn editing_with_the_prefilled_default_round_trips() {
+        let mut history = history_with_reply("keep me");
+        let default = history.edit_modal_default().content;
+        history.edit_content("Harry", default, None::<UserId>);
+        assert_eq!(
+            history.chosen_content(),
+            "keep me",
+            "re-submitting the pre-filled content unchanged round-trips to the same reply"
+        );
     }
 
     /// `previous` steps the current index backward and wraps past the first choice.

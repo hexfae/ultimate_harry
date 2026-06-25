@@ -20,7 +20,7 @@ pub async fn edit(
     character: Character,
 ) -> AppResult {
     let Some(modal): Option<EditMessageModal> = ctx
-        .show_modal(interaction.to_owned())
+        .show_modal_with_defaults(interaction.to_owned(), history.edit_modal_default())
         .await
         .context(ShowModalSnafu)?
     else {

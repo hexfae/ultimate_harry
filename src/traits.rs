@@ -70,20 +70,22 @@ impl<U: Send + Sync + 'static, E> RespondToWith for Context<'_, U, E> {
     }
 }
 
-/// Convenience function for showing a modal with no defaults and no timeout.
+/// Convenience function for showing a modal with no timeout.
 pub trait ShowModal<M: Modal> {
-    /// Show a modal on the given interaction, with no defaults and no timeout.
-    async fn show_modal(
+    /// Show a modal pre-filled with the given defaults, with no timeout.
+    async fn show_modal_with_defaults(
         &self,
         interaction: ComponentInteraction,
+        defaults: M,
     ) -> Result<Option<M>, serenity::Error>;
 }
 
 impl<M: Modal> ShowModal<M> for SerenityContext {
-    async fn show_modal(
+    async fn show_modal_with_defaults(
         &self,
         interaction: ComponentInteraction,
+        defaults: M,
     ) -> Result<Option<M>, serenity::Error> {
-        execute_modal_on_component_interaction::<M>(self, interaction, None, None).await
+        execute_modal_on_component_interaction::<M>(self, interaction, Some(defaults), None).await
     }
 }
