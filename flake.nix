@@ -48,6 +48,7 @@
         packages.default = craneLib.buildPackage commonArgs;
         devShells.default = pkgs.mkShell {
           inherit (commonArgs) buildInputs nativeBuildInputs;
+          packages = [pkgs.cargo-mutants];
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath commonArgs.buildInputs;
         };
       };
