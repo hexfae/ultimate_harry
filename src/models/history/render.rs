@@ -314,35 +314,58 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> CreateReply<'a> {
-        let chosen = self.chosen_message();
-        let content = chosen.chosen_revision().head().content();
-        let editor_name = match chosen.current_editor() {
+        let editor_name = match self.chosen_message().current_editor() {
             Some(user_id) => Some(db.substitute_name(user_id).await),
             None => None,
         };
+        let voices = db.voice_options().await;
+        let container = self.render_components(
+            character,
+            id.into().into(),
+            editor_name.as_deref(),
+            &voices,
+            options,
+        );
+        CreateReply::default()
+            .flags(MessageFlags::IS_COMPONENTS_V2)
+            .components(container)
+    }
+
+    /// Renders the chosen reply into the final Components V2 container, given the
+    /// already-resolved editor name and voice palette so this stays synchronous.
+    ///
+    /// A failed generation is drawn as a distinct red error container rather than
+    /// as the character speaking, while keeping the buttons so the user can swipe
+    /// to retry without resending their message.
+    fn render_components<'a>(
+        &'a self,
+        character: &'a Character,
+        id: u64,
+        editor_name: Option<&str>,
+        voices: &[VoiceEntry],
+        options: &[CharacterOption],
+    ) -> Vec<CreateComponent<'a>> {
+        let chosen = self.chosen_message();
+        let content = chosen.chosen_revision().head().content();
         let footer = {
-            let footer = self.footer_text(character, content.chars().count(), editor_name.as_deref());
+            let footer = self.footer_text(character, content.chars().count(), editor_name);
             vec![CreateContainerComponent::TextDisplay(
                 CreateTextDisplay::new(footer),
             )]
             .into()
         };
 
-        let voices = db.voice_options().await;
         let components = create_buttons(
-            id.into().into(),
+            id,
             self.has_finished,
             self.has_multiple_choices(),
             self.chosen_has_edit(),
             is_speakable(content),
             !self.has_finished,
             options,
-            &voices,
+            voices,
         );
 
-        // a failed generation renders as a distinct red error container rather than
-        // as the character speaking, while keeping the buttons so the user can swipe
-        // to retry without resending their message
         if chosen.is_error() {
             let heading = vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
                 ERROR_HEADING,
@@ -352,31 +375,24 @@ impl History {
                 content.to_owned(),
             ))]
             .into();
-            let container = vec![CreateComponent::Container(
+            return vec![CreateComponent::Container(
                 CreateContainer::new([heading, body, components, footer].concat())
                     .accent_colour(ERROR_COLOUR),
             )];
-            return CreateReply::default()
-                .flags(MessageFlags::IS_COMPONENTS_V2)
-                .components(container);
         }
 
         // discord rejects a whitespace-only text display, so an empty choice
         // renders a placeholder: the skip-greeting hint or the stalled "…"
         let text = self.body_text(content);
 
-        let container = vec![CreateComponent::Container(CreateContainer::new(
+        vec![CreateComponent::Container(CreateContainer::new(
             [
                 title_and_body_lines(character, text).into(),
                 components,
                 footer,
             ]
             .concat(),
-        ))];
-
-        CreateReply::default()
-            .flags(MessageFlags::IS_COMPONENTS_V2)
-            .components(container)
+        ))]
     }
 }
 
@@ -532,9 +548,10 @@ fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
     options
 }
 
-/// Tests for the response footer formatting.
+/// Tests for the response rendering: footer, body, and the error container.
 #[cfg(test)]
 mod tests {
+    use crate::constants::{ERROR_COLOUR, ERROR_HEADING};
     use crate::models::{character::Character, history::History, message::Message};
     use core::time::Duration;
     use nonempty::NonEmpty;
@@ -659,6 +676,58 @@ mod tests {
             history.body_text(""),
             "(ingen hälsning, ditt meddelande blir det första)",
             "an empty greeting choice explains the skip-greeting option"
+        );
+    }
+
+    /// A failed-generation choice renders as the red error container, keeping the
+    /// buttons live, instead of as the character speaking.
+    #[test]
+    fn render_components_draws_a_failed_choice_as_an_error() {
+        let character = character();
+        let mut history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(&character, "trasigt svar", 1.0)))
+            .build();
+        history.set_current_choice_error();
+        let container = history.render_components(&character, 1, None, &[], &[]);
+        let json = serde_json::to_string(&container).unwrap_or_default();
+        assert!(
+            json.contains(ERROR_HEADING),
+            "a failed choice shows the error heading"
+        );
+        assert!(
+            json.contains(&ERROR_COLOUR.to_string()),
+            "the error container carries the danger accent colour"
+        );
+        assert!(
+            json.contains("1prev") && json.contains("1next"),
+            "the navigation buttons stay live so the user can swipe to retry"
+        );
+        assert!(
+            !json.contains("## Harry"),
+            "an error is not rendered as the character speaking"
+        );
+    }
+
+    /// A normal choice renders as the character card, not the error container.
+    #[test]
+    fn render_components_draws_a_normal_choice_as_the_character() {
+        let character = character();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(&character, "hej", 1.0)))
+            .build();
+        let container = history.render_components(&character, 1, None, &[], &[]);
+        let json = serde_json::to_string(&container).unwrap_or_default();
+        assert!(
+            json.contains("## Harry"),
+            "a normal reply is rendered with the character title"
+        );
+        assert!(
+            !json.contains(ERROR_HEADING),
+            "a normal reply has no error heading"
         );
     }
 
