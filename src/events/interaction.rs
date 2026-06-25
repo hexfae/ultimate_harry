@@ -155,7 +155,9 @@ async fn dispatch(
     db: &Database,
     cancellations: &Cancellations,
 ) -> AppResult {
-    let ultimate_interaction = TryInto::<Interaction>::try_into(interaction)?;
+    let Some(ultimate_interaction) = route(&interaction.data.custom_id) else {
+        return Ok(());
+    };
 
     let (id, kind) = (ultimate_interaction.id, ultimate_interaction.kind);
 
@@ -204,6 +206,18 @@ async fn dispatch(
         | InteractionKind::Rollback => {}
     }
     Ok(())
+}
+
+/// Routes a pressed component by its `custom_id` before any history load.
+///
+/// `Some(_)` is one of Ultimate Harry's persistent message buttons
+/// (`<message_id><tag>`), to be dispatched to the matching handler. `None` is a
+/// button owned by a command's own ephemeral `ComponentInteractionCollector`
+/// (keyed on a bare interaction id, no tag): the global handler must leave it
+/// untouched so the collector can claim it, rather than acknowledging it out from
+/// under the command and breaking the two-modal character create/edit flow.
+fn route(custom_id: &str) -> Option<Interaction> {
+    Interaction::parse(custom_id).ok()
 }
 
 impl InteractionKind {
@@ -308,8 +322,31 @@ impl TryFrom<&ComponentInteraction> for Interaction {
 /// Tests for the tag encoding shared by every component `custom_id`.
 #[cfg(test)]
 mod tests {
-    use super::{Interaction, InteractionKind};
+    use super::{Interaction, InteractionKind, route};
     use serenity::all::MessageId;
+
+    /// A command's own collector button (the two-modal "tempting button", keyed
+    /// on a bare interaction id with no tag) must route to `None`, so the
+    /// global handler leaves it for the collector instead of acknowledging it as
+    /// an unknown interaction (which broke the character create/edit flow).
+    #[test]
+    fn collector_owned_custom_id_is_left_for_its_collector() {
+        let tempting_button = "1519649606525386782";
+        assert!(
+            route(tempting_button).is_none(),
+            "a bare interaction id belongs to a command's collector and must be ignored, not errored"
+        );
+    }
+
+    /// A persistent message button (`<message_id><tag>`) still routes to its
+    /// interaction, so the global handler dispatches it.
+    #[test]
+    fn message_button_custom_id_is_dispatched() {
+        assert!(
+            route("123456prev").is_some(),
+            "a well-formed message-button custom_id is ours to dispatch"
+        );
+    }
 
     /// Each kind's tag must be 4 characters and parse back to the same kind.
     #[test]
