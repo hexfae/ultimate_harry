@@ -681,9 +681,87 @@ impl LlmError {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChatResponse, LlmError, ModelsResponse, extract_description, model_supports_modality,
-        parse_dialogue_turns,
+        ChatResponse, LlmError, ModelOverrides, ModelSettings, ModelsResponse, extract_description,
+        model_supports_modality, parse_dialogue_turns,
     };
+
+    /// `apply_overrides` replaces only the supplied fields, across each branch.
+    #[test]
+    fn model_apply_overrides_replaces_only_supplied_fields() {
+        let mut settings = ModelSettings::default();
+        settings.apply_overrides(ModelOverrides {
+            model: Some("vendor/new".to_owned()),
+            temperature: Some(0.3),
+            vision_model: Some("vendor/vision".to_owned()),
+            audio_model: Some("vendor/audio".to_owned()),
+            ..ModelOverrides::default()
+        });
+        assert_eq!(settings.model, "vendor/new", "the supplied model is replaced");
+        assert_eq!(
+            settings.temperature.to_bits(),
+            0.3_f32.to_bits(),
+            "the supplied temperature is replaced"
+        );
+        assert_eq!(
+            settings.vision_model.as_deref(),
+            Some("vendor/vision"),
+            "the supplied vision model is replaced"
+        );
+        assert_eq!(
+            settings.audio_model.as_deref(),
+            Some("vendor/audio"),
+            "the supplied audio model is replaced"
+        );
+        assert!(
+            settings.api_key.is_empty(),
+            "the untouched API key is left as it was"
+        );
+    }
+
+    /// `ModelOverrides::is_empty` is true only for an all-None bundle.
+    #[test]
+    fn model_overrides_emptiness_is_detected() {
+        assert!(
+            ModelOverrides::default().is_empty(),
+            "an all-None bundle is empty"
+        );
+        assert!(
+            !ModelOverrides {
+                model: Some("vendor/x".to_owned()),
+                ..ModelOverrides::default()
+            }
+            .is_empty(),
+            "a bundle with any field set is not empty"
+        );
+    }
+
+    /// The summary reports the models and whether an API key is set, without leaking it.
+    #[test]
+    fn summary_reports_models_and_hides_the_api_key() {
+        let settings = ModelSettings {
+            api_key: "super-secret".to_owned(),
+            ..ModelSettings::default()
+        };
+        let summary = settings.summary();
+        assert!(
+            summary.contains("modell: deepseek/deepseek-v3.2"),
+            "the configured model is shown"
+        );
+        assert!(
+            summary.contains("api-nyckel: inställd"),
+            "a set API key is reported as set"
+        );
+        assert!(
+            !summary.contains("super-secret"),
+            "the API key value never appears in the summary"
+        );
+        assert!(
+            ModelSettings::default()
+                .summary()
+                .contains("api-nyckel: inte inställd"),
+            "an unset API key is reported as unset"
+        );
+    }
 
     /// Missing-model misconfigurations are permanent, while empty-response
     /// failures are transient and may differ on retry.
