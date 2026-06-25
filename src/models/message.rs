@@ -424,6 +424,23 @@ mod tests {
         assert_eq!(message.revision(), 2, "redo reaches the newest revision");
     }
 
+    /// Undo and redo on an unedited message (zero revisions) stay on the original
+    /// rather than panicking on the modulo, since most replies are never edited.
+    #[test]
+    fn undo_and_redo_are_no_ops_without_revisions() {
+        let mut message = Message::new_system("only");
+        assert_eq!(message.revisions_count(), 0, "a fresh message has no edits");
+        message.undo();
+        assert_eq!(message.revision(), 0, "undo stays on the original revision");
+        message.redo();
+        assert_eq!(message.revision(), 0, "redo stays on the original revision");
+        assert_eq!(
+            message.chosen_revision().head().content(),
+            "only",
+            "the original content is unchanged"
+        );
+    }
+
     /// A single-part conversion keeps the content, while an empty list falls back to a blank part.
     #[test]
     fn parts_conversions_preserve_content_or_blank() {
