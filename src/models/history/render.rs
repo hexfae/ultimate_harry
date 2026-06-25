@@ -116,6 +116,30 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> CreateReply<'a> {
+        // nothing has streamed in yet, so there is nothing to speak; the speak
+        // button and voice dropdown are disabled anyway while unfinished, but the
+        // dropdown is still rendered so it is present throughout the stream like
+        // the hand-off menu, rather than popping in only when the reply finishes
+        let voices = db.voice_options().await;
+        let container =
+            self.placeholder_components(character, id.into().into(), elapsed, stoppable, &voices, options);
+        CreateReply::default()
+            .flags(MessageFlags::IS_COMPONENTS_V2)
+            .components(container)
+    }
+
+    /// Builds the placeholder container, keyed on the reply's message `id`, given
+    /// the already-resolved voice palette so this stays synchronous. Carries the
+    /// character's accent colour so the placeholder matches the finished reply.
+    fn placeholder_components<'a>(
+        &self,
+        character: &'a Character,
+        id: u64,
+        elapsed: Duration,
+        stoppable: bool,
+        voices: &[VoiceEntry],
+        options: &[CharacterOption],
+    ) -> Vec<CreateComponent<'a>> {
         let (has_previous, has_edit) = (false, false);
 
         let footer = {
@@ -133,13 +157,8 @@ impl History {
 
         let title = vec![character_title_section(character, "…")].into();
 
-        // nothing has streamed in yet, so there is nothing to speak; the speak
-        // button and voice dropdown are disabled anyway while unfinished, but the
-        // dropdown is still rendered so it is present throughout the stream like
-        // the hand-off menu, rather than popping in only when the reply finishes
-        let voices = db.voice_options().await;
         let components = create_buttons(
-            id.into().into(),
+            id,
             self.has_finished,
             has_previous,
             has_edit,
@@ -147,16 +166,13 @@ impl History {
             stoppable,
             false,
             options,
-            &voices,
+            voices,
         );
 
-        let container = vec![CreateComponent::Container(CreateContainer::new(
-            [title, components, footer].concat(),
-        ))];
-
-        CreateReply::default()
-            .flags(MessageFlags::IS_COMPONENTS_V2)
-            .components(container)
+        vec![CreateComponent::Container(with_accent(
+            CreateContainer::new([title, components, footer].concat()),
+            character,
+        ))]
     }
 
     /// Converts the history into a Components V2 reply with the chosen message
@@ -387,18 +403,27 @@ impl History {
         // renders a placeholder: the skip-greeting hint or the stalled "…"
         let text = self.body_text(content);
 
-        let mut container = CreateContainer::new(
-            [
-                title_and_body_lines(character, text).into(),
-                components,
-                footer,
-            ]
-            .concat(),
+        let container = with_accent(
+            CreateContainer::new(
+                [
+                    title_and_body_lines(character, text).into(),
+                    components,
+                    footer,
+                ]
+                .concat(),
+            ),
+            character,
         );
-        if let Some(colour) = character.color() {
-            container = container.accent_colour(colour);
-        }
         vec![CreateComponent::Container(container)]
+    }
+}
+
+/// Tints `container` with the character's accent colour, or leaves it untinted
+/// when the character has no colour set.
+fn with_accent<'a>(container: CreateContainer<'a>, character: &Character) -> CreateContainer<'a> {
+    match character.color() {
+        Some(colour) => container.accent_colour(colour),
+        None => container,
     }
 }
 
@@ -792,6 +817,37 @@ mod tests {
         assert!(
             !json.contains("accent_color"),
             "a colourless character renders without an accent colour"
+        );
+    }
+
+    /// The streaming placeholder carries the character's accent colour when one
+    /// is set, so it matches the finished reply instead of flickering.
+    #[test]
+    fn placeholder_applies_the_character_accent_colour() {
+        let value: u32 = 0x00ab_cdef;
+        let mut character = character();
+        character.set_color(Color::new(value));
+        let history = finished_reply(&character, "hej");
+        let container =
+            history.placeholder_components(&character, 1, Duration::ZERO, true, &[], &[]);
+        let json = serde_json::to_string(&container).unwrap_or_default();
+        assert!(
+            json.contains(&value.to_string()),
+            "the placeholder carries the character's accent colour"
+        );
+    }
+
+    /// The placeholder omits the accent colour for a colourless character.
+    #[test]
+    fn placeholder_omits_the_accent_colour_when_unset() {
+        let character = character();
+        let history = finished_reply(&character, "hej");
+        let container =
+            history.placeholder_components(&character, 1, Duration::ZERO, false, &[], &[]);
+        let json = serde_json::to_string(&container).unwrap_or_default();
+        assert!(
+            !json.contains("accent_color"),
+            "a colourless placeholder has no accent colour"
         );
     }
 
