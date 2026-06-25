@@ -387,14 +387,18 @@ impl History {
         // renders a placeholder: the skip-greeting hint or the stalled "…"
         let text = self.body_text(content);
 
-        vec![CreateComponent::Container(CreateContainer::new(
+        let mut container = CreateContainer::new(
             [
                 title_and_body_lines(character, text).into(),
                 components,
                 footer,
             ]
             .concat(),
-        ))]
+        );
+        if let Some(colour) = character.color() {
+            container = container.accent_colour(colour);
+        }
+        vec![CreateComponent::Container(container)]
     }
 }
 
@@ -568,7 +572,7 @@ mod tests {
     use crate::models::{character::Character, history::History, message::Message};
     use core::time::Duration;
     use nonempty::NonEmpty;
-    use serenity::all::{MessageId, UserId};
+    use serenity::all::{Color, MessageId, UserId};
 
     /// Builds a minimal character with no name-similarity score.
     fn character() -> Character {
@@ -760,6 +764,34 @@ mod tests {
         assert!(
             !json.contains(ERROR_HEADING),
             "a normal reply has no error heading"
+        );
+    }
+
+    /// A normal reply carries the character's accent colour when one is set.
+    #[test]
+    fn render_components_applies_the_character_accent_colour() {
+        let value: u32 = 0x00ab_cdef;
+        let mut character = character();
+        character.set_color(Color::new(value));
+        let history = finished_reply(&character, "hej");
+        let container = history.render_components(&character, 1, None, &[], &[]);
+        let json = serde_json::to_string(&container).unwrap_or_default();
+        assert!(
+            json.contains(&value.to_string()),
+            "a normal reply carries the character's accent colour"
+        );
+    }
+
+    /// A reply for a character with no colour set carries no accent colour.
+    #[test]
+    fn render_components_omits_the_accent_colour_when_unset() {
+        let character = character();
+        let history = finished_reply(&character, "hej");
+        let container = history.render_components(&character, 1, None, &[], &[]);
+        let json = serde_json::to_string(&container).unwrap_or_default();
+        assert!(
+            !json.contains("accent_color"),
+            "a colourless character renders without an accent colour"
         );
     }
 
