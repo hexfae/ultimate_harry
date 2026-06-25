@@ -61,4 +61,52 @@ impl Character {
             |time| time.strftime(LATEST_CONVERSATION_FORMAT).to_string(),
         )
     }
+
+    /// Returns the character's lifetime generation totals, as `{words} ord, {tokens} tokens`.
+    #[must_use]
+    pub fn formatted_generation(&self) -> String {
+        format!(
+            "{} ord, {} tokens",
+            self.words_generated, self.tokens_generated
+        )
+    }
+}
+
+/// Tests for the character generation-stat formatting.
+#[cfg(test)]
+mod tests {
+    use super::Character;
+    use serenity::all::UserId;
+
+    /// Builds a character carrying the given lifetime generation totals.
+    fn character(words: u32, tokens: u32) -> Character {
+        Character::builder()
+            .id("id".to_owned())
+            .name("Harry")
+            .greeting("hej")
+            .creator(UserId::new(1))
+            .words_generated(words)
+            .tokens_generated(tokens)
+            .build()
+    }
+
+    /// A fresh character with no generation yet reads as all zeroes.
+    #[test]
+    fn formatted_generation_shows_zero_when_nothing_generated() {
+        assert_eq!(
+            character(0, 0).formatted_generation(),
+            "0 ord, 0 tokens",
+            "an unused character shows zero words and tokens"
+        );
+    }
+
+    /// The accumulated word and token totals are both rendered.
+    #[test]
+    fn formatted_generation_shows_word_and_token_totals() {
+        assert_eq!(
+            character(1234, 5678).formatted_generation(),
+            "1234 ord, 5678 tokens",
+            "both the word and token totals are shown"
+        );
+    }
 }

@@ -134,7 +134,7 @@ impl Database {
 
     /// Opens a fresh temporary database in a unique directory for tests.
     #[cfg(test)]
-    async fn temporary() -> Result<Self, DatabaseError> {
+    pub(crate) async fn temporary() -> Result<Self, DatabaseError> {
         use core::sync::atomic::{AtomicU64, Ordering};
         use std::{env, process};
         static COUNTER: AtomicU64 = AtomicU64::new(0);

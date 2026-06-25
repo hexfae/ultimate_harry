@@ -289,6 +289,26 @@ impl Character {
         self.latest_editor
     }
 
+    /// Returns the Discord user IDs of everyone who has ever edited the character.
+    ///
+    /// Sorted by user ID (it is a `BTreeSet`), so the rendered list is stable.
+    #[must_use]
+    pub const fn all_editors(&self) -> &BTreeSet<UserId> {
+        &self.all_editors
+    }
+
+    /// Returns the Discord user ID of the character's deleter, if it is deleted.
+    #[must_use]
+    pub const fn deleted_by(&self) -> Option<UserId> {
+        self.deleted_by
+    }
+
+    /// Returns the time the character was deleted, if it is deleted.
+    #[must_use]
+    pub const fn deleted_at(&self) -> Option<&Zoned> {
+        self.deleted_at.as_ref()
+    }
+
     /// Returns the time the character was created.
     #[must_use]
     pub const fn created_at(&self) -> &Zoned {
@@ -588,7 +608,28 @@ fn validate_url(maybe_url: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::Character;
+    use crate::models::modals::{EditCharacterModal, SecondEditCharacterModal};
     use serenity::all::UserId;
+
+    /// Builds a pair of edit modals that leave every field untouched.
+    fn empty_edit_modals() -> (EditCharacterModal, SecondEditCharacterModal) {
+        (
+            EditCharacterModal {
+                name: None,
+                greeting: None,
+                nickname: None,
+                description: None,
+                personality: None,
+            },
+            SecondEditCharacterModal {
+                avatar: None,
+                emoji: None,
+                system_prompt: None,
+                prompt: None,
+                scenario: None,
+            },
+        )
+    }
 
     /// Builds a minimal visible character with the given ID and name.
     fn basic_character(id: &str, name: &str) -> Character {
@@ -837,6 +878,75 @@ mod tests {
         assert!(
             current.is_visible(),
             "the rolled-back version is visible"
+        );
+    }
+
+    /// Every distinct editor is accumulated, not just the latest one.
+    #[test]
+    fn all_editors_accumulates_every_editor() {
+        let mut character = basic_character("id", "Harry");
+        assert!(
+            character.all_editors().is_empty(),
+            "a fresh character has no editors"
+        );
+
+        let (first, second) = empty_edit_modals();
+        character.edit_from_modals(UserId::new(2), first, second);
+        let (later_first, later_second) = empty_edit_modals();
+        character.edit_from_modals(UserId::new(3), later_first, later_second);
+
+        assert!(
+            character.all_editors().contains(&UserId::new(2)),
+            "the first editor is recorded"
+        );
+        assert!(
+            character.all_editors().contains(&UserId::new(3)),
+            "the second editor is recorded"
+        );
+        assert_eq!(
+            character.all_editors().len(),
+            2,
+            "every distinct editor is kept, not just the latest"
+        );
+        assert_eq!(
+            character.latest_editor(),
+            Some(UserId::new(3)),
+            "the latest editor is the most recent one"
+        );
+    }
+
+    /// Deletion records the deleter and time, and a restore clears both.
+    #[test]
+    fn deletion_metadata_records_the_deleter_and_clears_on_restore() {
+        let mut character = basic_character("id", "Harry");
+        assert!(
+            character.deleted_by().is_none(),
+            "a fresh character has no deleter"
+        );
+        assert!(
+            character.deleted_at().is_none(),
+            "a fresh character has no deletion time"
+        );
+
+        character.mark_deleted(UserId::new(2));
+        assert_eq!(
+            character.deleted_by(),
+            Some(UserId::new(2)),
+            "the deleter is recorded"
+        );
+        assert!(
+            character.deleted_at().is_some(),
+            "the deletion time is recorded"
+        );
+
+        character.restore();
+        assert!(
+            character.deleted_by().is_none(),
+            "restoring clears the deleter"
+        );
+        assert!(
+            character.deleted_at().is_none(),
+            "restoring clears the deletion time"
         );
     }
 
