@@ -1,6 +1,7 @@
 //! The different interaction events that can happen on a chat message.
 
 mod character;
+mod continue_reply;
 mod edit;
 mod next;
 mod pin;
@@ -27,6 +28,7 @@ use snafu::{ResultExt as _, Snafu};
 use tracing::warn;
 
 use character::character as character_fn;
+use continue_reply::continue_reply;
 use edit::edit;
 use next::next;
 use pin::pin;
@@ -67,6 +69,8 @@ pub enum InteractionKind {
     Tts,
     /// Stop this reply mid-stream, keeping whatever has streamed so far.
     Stop,
+    /// Continue this finished reply, streaming more text appended in place.
+    Continue,
     /// Send a new reply to this reply as the given character.
     Character,
     /// Speak this reply aloud with a chosen palette voice, or auto-assigned voices.
@@ -182,6 +186,9 @@ async fn dispatch(
         InteractionKind::Next => {
             next(ctx, interaction, id, db, history, character, cancellations).await?;
         }
+        InteractionKind::Continue => {
+            continue_reply(ctx, interaction, id, db, history, character, cancellations).await?;
+        }
         InteractionKind::Edit => edit(ctx, interaction, id, db, history, character).await?,
         InteractionKind::Undo => {
             swipe(ctx, interaction, id, db, history, character, History::undo).await?;
@@ -222,7 +229,7 @@ fn route(custom_id: &str) -> Option<Interaction> {
 
 impl InteractionKind {
     /// Every interaction kind, the basis for tag round-tripping and the round-trip test.
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 16] = [
         Self::Previous,
         Self::Next,
         Self::Edit,
@@ -231,6 +238,7 @@ impl InteractionKind {
         Self::Pin,
         Self::Tts,
         Self::Stop,
+        Self::Continue,
         Self::Character,
         Self::Voice,
         Self::Confirm,
@@ -252,6 +260,7 @@ impl InteractionKind {
             Self::Pin => "pinn",
             Self::Tts => "tala",
             Self::Stop => "stop",
+            Self::Continue => "cont",
             Self::Character => "char",
             Self::Voice => "voic",
             Self::Confirm => "conf",
@@ -345,6 +354,22 @@ mod tests {
         assert!(
             route("123456prev").is_some(),
             "a well-formed message-button custom_id is ours to dispatch"
+        );
+    }
+
+    /// The Continue button carries the `cont` tag, so its persistent `custom_id`
+    /// stays stable across restarts.
+    #[test]
+    fn continue_tag_is_cont() {
+        assert_eq!(
+            InteractionKind::Continue.as_tag(),
+            "cont",
+            "the Continue kind encodes as the cont tag"
+        );
+        assert_eq!(
+            InteractionKind::try_from("cont").ok(),
+            Some(InteractionKind::Continue),
+            "the cont tag decodes back to Continue"
         );
     }
 

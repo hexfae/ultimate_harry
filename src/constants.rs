@@ -20,6 +20,8 @@ pub const PIN: &str = "📌";
 pub const SPEAK: &str = "🔊";
 /// The emoji used for stopping an in-flight reply mid-stream.
 pub const STOP: &str = "⛔";
+/// The emoji used for continuing a finished reply, extending it in place.
+pub const CONTINUE: &str = "⏩";
 /// The emoji used for deleting a character.
 pub const DELETE: &str = "🗑";
 /// The emoji used for restoring a deleted character.
@@ -45,6 +47,13 @@ pub const MAX_RESULTS: usize = 25;
 
 /// How long a transient confirmation or notice message lingers before it is deleted.
 pub const TRANSIENT_LINGER: Duration = Duration::from_secs(5);
+
+/// How long after a reply finishes before its Continue button goes live.
+///
+/// The Continue button takes over the slot the live Stop button occupied while
+/// streaming, so this short delay keeps a Stop press as the stream ends from
+/// landing on a freshly live Continue and starting an unwanted continuation.
+pub const CONTINUE_REVEAL_DELAY: Duration = Duration::from_secs(1);
 
 /// The accent colour of a user-facing error container (Discord's danger red), so
 /// a failure reads as an error rather than as the character speaking.

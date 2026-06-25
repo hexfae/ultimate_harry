@@ -19,8 +19,8 @@ use serenity::all::{
 use crate::{
     components::emoji_button,
     constants::{
-        CHARACTER_LIMIT, EDIT, ERROR_COLOUR, ERROR_HEADING, NEXT, PIN, PREVIOUS, REDO, SPEAK, STOP,
-        UNDO,
+        CHARACTER_LIMIT, CONTINUE, EDIT, ERROR_COLOUR, ERROR_HEADING, NEXT, PIN, PREVIOUS, REDO,
+        SPEAK, STOP, UNDO,
     },
     database::Database,
     events::interaction::InteractionKind,
@@ -145,6 +145,7 @@ impl History {
             has_edit,
             false,
             stoppable,
+            false,
             options,
             &voices,
         );
@@ -362,6 +363,7 @@ impl History {
             self.chosen_has_edit(),
             is_speakable(content),
             !self.has_finished,
+            self.show_continue && self.continue_available(),
             options,
             voices,
         );
@@ -451,6 +453,7 @@ fn create_buttons<'a>(
     edit: bool,
     speakable: bool,
     stoppable: bool,
+    continuable: bool,
     options: &[CharacterOption],
     voices: &[VoiceEntry],
 ) -> Cow<'a, [CreateContainerComponent<'a>]> {
@@ -462,8 +465,18 @@ fn create_buttons<'a>(
     let pin_id = InteractionKind::Pin.custom_id(id);
     let tts_id = InteractionKind::Tts.custom_id(id);
     let stop_id = InteractionKind::Stop.custom_id(id);
+    let continue_id = InteractionKind::Continue.custom_id(id);
     let char_id = InteractionKind::Character.custom_id(id);
     let voice_id = InteractionKind::Voice.custom_id(id);
+
+    // one slot holds the live Stop while the reply streams, then becomes the
+    // Continue button once it finishes: enabled when the reply can be extended,
+    // disabled (e.g. at the character limit) otherwise
+    let stop_or_continue = if finished {
+        emoji_button(continue_id, CONTINUE).disabled(!continuable)
+    } else {
+        emoji_button(stop_id, STOP).disabled(!stoppable)
+    };
 
     let mut components = vec![
         CreateContainerComponent::ActionRow(CreateActionRow::Buttons(
@@ -480,7 +493,7 @@ fn create_buttons<'a>(
                 emoji_button(edit_msg_id, EDIT).disabled(!finished),
                 emoji_button(pin_id, PIN).disabled(!finished),
                 emoji_button(tts_id, SPEAK).disabled(!finished || !speakable),
-                emoji_button(stop_id, STOP).disabled(!stoppable),
+                stop_or_continue,
             ]
             .into(),
         )),
@@ -551,7 +564,7 @@ fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
 /// Tests for the response rendering: footer, body, and the error container.
 #[cfg(test)]
 mod tests {
-    use crate::constants::{ERROR_COLOUR, ERROR_HEADING};
+    use crate::constants::{CHARACTER_LIMIT, ERROR_COLOUR, ERROR_HEADING};
     use crate::models::{character::Character, history::History, message::Message};
     use core::time::Duration;
     use nonempty::NonEmpty;
@@ -747,6 +760,139 @@ mod tests {
         assert!(
             !json.contains(ERROR_HEADING),
             "a normal reply has no error heading"
+        );
+    }
+
+    /// Builds a finished single-reply history with the given content.
+    fn finished_reply(character: &Character, content: &str) -> History {
+        History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(character, content, 1.0)))
+            .build()
+    }
+
+    /// Reports whether the button keyed on `custom_id` is present in `history`'s
+    /// rendered components and, if so, whether it is disabled.
+    fn button_disabled(history: &History, character: &Character, custom_id: &str) -> Option<bool> {
+        let value =
+            serde_json::to_value(history.render_components(character, 1, None, &[], &[]))
+                .unwrap_or_default();
+        find_disabled(&value, custom_id)
+    }
+
+    /// Recursively searches `value` for a button object carrying `custom_id`,
+    /// returning its `disabled` flag (absent meaning enabled), or `None` when no
+    /// such button exists.
+    fn find_disabled(value: &serde_json::Value, custom_id: &str) -> Option<bool> {
+        if let Some(object) = value.as_object() {
+            if object.get("custom_id").and_then(serde_json::Value::as_str) == Some(custom_id) {
+                return Some(
+                    object
+                        .get("disabled")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                );
+            }
+            return object
+                .values()
+                .find_map(|nested| find_disabled(nested, custom_id));
+        }
+        value
+            .as_array()?
+            .iter()
+            .find_map(|nested| find_disabled(nested, custom_id))
+    }
+
+    /// A finished, continuable reply renders an enabled Continue button in the
+    /// Stop slot.
+    #[test]
+    fn continue_button_enabled_on_a_finished_reply() {
+        let character = character();
+        let history = finished_reply(&character, "hej");
+        assert_eq!(
+            button_disabled(&history, &character, "1cont"),
+            Some(false),
+            "a finished reply offers an enabled Continue button"
+        );
+        assert_eq!(
+            button_disabled(&history, &character, "1stop"),
+            None,
+            "Continue takes over the Stop slot, so no Stop button is rendered"
+        );
+    }
+
+    /// During the reveal delay (`show_continue` held false) the slot is already a
+    /// Continue button, just disabled until it is revealed.
+    #[test]
+    fn continue_button_disabled_during_the_reveal_delay() {
+        let character = character();
+        let mut history = finished_reply(&character, "hej");
+        history.set_show_continue(false);
+        assert_eq!(
+            button_disabled(&history, &character, "1cont"),
+            Some(true),
+            "the Continue button is present but disabled until it is revealed"
+        );
+        assert_eq!(
+            button_disabled(&history, &character, "1stop"),
+            None,
+            "no Stop button is rendered during the reveal delay"
+        );
+    }
+
+    /// A reply at the character limit shows a disabled Continue button: there is
+    /// nothing left to extend, but the slot still reads as Continue.
+    #[test]
+    fn continue_button_disabled_at_the_character_limit() {
+        let character = character();
+        let history = finished_reply(&character, &"x".repeat(CHARACTER_LIMIT));
+        assert_eq!(
+            button_disabled(&history, &character, "1cont"),
+            Some(true),
+            "a reply at the limit shows Continue as disabled rather than hiding it"
+        );
+        assert_eq!(
+            button_disabled(&history, &character, "1stop"),
+            None,
+            "the maxed-out reply keeps no Stop button in the slot"
+        );
+    }
+
+    /// A reply still streaming shows the live Stop button, not Continue.
+    #[test]
+    fn stop_button_shown_while_streaming() {
+        let character = character();
+        let mut history = finished_reply(&character, "hej");
+        history.set_finished(false);
+        assert_eq!(
+            button_disabled(&history, &character, "1stop"),
+            Some(false),
+            "a streaming reply shows the live Stop button"
+        );
+        assert_eq!(
+            button_disabled(&history, &character, "1cont"),
+            None,
+            "Continue only appears once the reply has finished"
+        );
+    }
+
+    /// A failed reply shows a disabled Continue button (it is not continuable),
+    /// not a Stop button.
+    #[test]
+    fn continue_button_disabled_on_an_error_reply() {
+        let character = character();
+        let mut history = finished_reply(&character, "trasigt");
+        history.set_current_choice_error();
+        assert_eq!(
+            button_disabled(&history, &character, "1cont"),
+            Some(true),
+            "an error reply is not continuable, so Continue is disabled"
+        );
+        assert_eq!(
+            button_disabled(&history, &character, "1stop"),
+            None,
+            "an error reply renders no Stop button in the slot"
         );
     }
 

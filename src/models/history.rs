@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use serenity::all::{MessageId, UserId};
 
 use crate::{
+    constants::CHARACTER_LIMIT,
     models::{
         character::Character,
         message::{DescribedAttachment, Message},
@@ -87,6 +88,14 @@ pub struct History {
     /// This is used to create embeds while streaming a response.
     #[builder(default = true)]
     has_finished: bool,
+    /// Whether the Continue button may be shown on a finished reply. Transient,
+    /// never stored.
+    ///
+    /// Held false for a beat right after a reply finishes so the button takes
+    /// over the live Stop slot only after a short delay (see
+    /// [`CONTINUE_REVEAL_DELAY`](crate::constants::CONTINUE_REVEAL_DELAY)).
+    #[builder(default = true)]
+    show_continue: bool,
     /// The previous messages (the chat context), in order. Contains no scaffolding.
     #[builder(default)]
     previous: Vec<Message>,
@@ -170,6 +179,29 @@ impl History {
     /// Sets whether the history has finished generating.
     pub const fn set_finished(&mut self, has_finished: bool) {
         self.has_finished = has_finished;
+    }
+
+    /// Sets whether a finished reply may show its Continue button.
+    pub const fn set_show_continue(&mut self, show_continue: bool) {
+        self.show_continue = show_continue;
+    }
+
+    /// Whether the chosen reply can be continued (extended in place).
+    ///
+    /// True only for a finished, genuine reply with room left to grow: a reply
+    /// still streaming, a failed-generation notice, an empty reply, or one that
+    /// already reached the character limit cannot be continued.
+    #[must_use]
+    pub fn continue_available(&self) -> bool {
+        if !self.has_finished {
+            return false;
+        }
+        let chosen = self.chosen_message();
+        if chosen.is_error() {
+            return false;
+        }
+        let content = chosen.chosen_revision().head().content();
+        !content.is_empty() && content.chars().count() < CHARACTER_LIMIT
     }
 
     /// Shows the previous choice by cycling the current index backward.
@@ -403,6 +435,7 @@ impl History {
             choices,
             current,
             has_finished: true,
+            show_continue: true,
             previous: stored.previous,
         })
     }
@@ -436,6 +469,7 @@ mod tests {
     use super::{
         BEGIN_EXAMPLE_MESSAGES, BEGIN_MESSAGE, History, SYSTEM_MESSAGE, StoredHistory, scaffolding,
     };
+    use crate::constants::CHARACTER_LIMIT;
     use crate::models::{
         character::Character,
         message::{DescribedAttachment, Message, Role},
@@ -604,6 +638,64 @@ mod tests {
             history.chosen_content(),
             "keep me",
             "re-submitting the pre-filled content unchanged round-trips to the same reply"
+        );
+    }
+
+    /// A finished, genuine, non-empty reply with room to grow is continuable.
+    #[test]
+    fn continue_available_for_a_finished_genuine_reply() {
+        let history = history_with_reply("a real reply");
+        assert!(
+            history.continue_available(),
+            "a finished non-empty reply below the limit can be continued"
+        );
+    }
+
+    /// A reply still streaming cannot be continued yet.
+    #[test]
+    fn continue_unavailable_while_unfinished() {
+        let mut history = history_with_reply("partial");
+        history.set_finished(false);
+        assert!(
+            !history.continue_available(),
+            "an unfinished reply is not continuable"
+        );
+    }
+
+    /// A failed-generation reply is not a genuine reply, so it cannot be continued.
+    #[test]
+    fn continue_unavailable_for_an_error_reply() {
+        let mut history = history_with_reply("trasigt");
+        history.set_current_choice_error();
+        assert!(
+            !history.continue_available(),
+            "an error notice is not continuable"
+        );
+    }
+
+    /// An empty reply has nothing to extend, so it is not continuable.
+    #[test]
+    fn continue_unavailable_for_an_empty_reply() {
+        let history = history_with_reply("");
+        assert!(
+            !history.continue_available(),
+            "an empty reply is not continuable"
+        );
+    }
+
+    /// A reply already at the character limit has no room to grow, so it is not
+    /// continuable; one character short of the limit still is.
+    #[test]
+    fn continue_unavailable_at_the_character_limit() {
+        let at_limit = history_with_reply(&"x".repeat(CHARACTER_LIMIT));
+        assert!(
+            !at_limit.continue_available(),
+            "a reply at the character limit cannot be continued"
+        );
+        let below_limit = history_with_reply(&"x".repeat(CHARACTER_LIMIT.saturating_sub(1)));
+        assert!(
+            below_limit.continue_available(),
+            "a reply one character short of the limit can still be continued"
         );
     }
 

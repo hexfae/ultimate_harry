@@ -10,7 +10,7 @@
 use crate::{
     AppResult,
     cancellation::Cancellations,
-    constants::CHARACTER_LIMIT,
+    constants::{CHARACTER_LIMIT, CONTINUE_REVEAL_DELAY},
     database::Database,
     error::{EditMessageSnafu, EditResponseSnafu, StreamingSnafu},
     llm::LlmManager,
@@ -28,7 +28,7 @@ use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
 use serenity::futures::StreamExt as _;
 use snafu::ResultExt as _;
 use std::time::Instant;
-use tokio::time::{MissedTickBehavior, interval};
+use tokio::time::{MissedTickBehavior, interval, sleep};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -53,6 +53,26 @@ fn truncate_to_chars(text: &mut String, limit: usize) {
     if let Some((cut, _)) = text.char_indices().nth(limit) {
         text.truncate(cut);
     }
+}
+
+/// Joins a continuation onto the reply it extends, capped at `limit` characters.
+///
+/// A single space is inserted only when the two sides would otherwise butt a word
+/// against a word (neither already carries a whitespace boundary), so a reply
+/// continued mid-sentence reads naturally rather than gluing two words together.
+fn combine_continuation(seed: &str, addition: &str, limit: usize) -> String {
+    let needs_space = !seed.is_empty()
+        && !addition.is_empty()
+        && !seed.ends_with(char::is_whitespace)
+        && !addition.starts_with(char::is_whitespace);
+    let mut combined = String::with_capacity(seed.len().saturating_add(addition.len()));
+    combined.push_str(seed);
+    if needs_space {
+        combined.push(' ');
+    }
+    combined.push_str(addition);
+    truncate_to_chars(&mut combined, limit);
+    combined
 }
 
 /// A finished streamed reply: the rendered text and the model's reported
@@ -139,6 +159,15 @@ pub trait ReplySink {
     /// posted message ID here; an interaction sink does nothing.
     fn before_persist(&mut self) {}
 
+    /// Whether a failed reply should keep whatever has already streamed rather
+    /// than be stored as the failure sentinel and marked an error.
+    ///
+    /// False for a fresh reply (a failure becomes the red error choice). True for
+    /// a continuation, which must never clobber the genuine reply it extends.
+    fn keeps_reply_on_failure(&self) -> bool {
+        false
+    }
+
     /// Persist the finished history together with the character's generation stats.
     fn persist(
         &mut self,
@@ -148,6 +177,29 @@ pub trait ReplySink {
 
     /// Re-render the current reply and edit it into the Discord target.
     fn render_and_edit(&mut self) -> impl Future<Output = AppResult> + Send;
+
+    /// Renders the settled reply, revealing its Continue button a beat later when
+    /// the reply can be continued.
+    ///
+    /// Continue takes over the slot the live Stop button held while streaming, so
+    /// a continuable reply is first rendered with Continue suppressed, then
+    /// re-rendered once it is revealed (the delay keeps a late Stop press from
+    /// landing on a freshly live Continue). A reply that cannot be continued just
+    /// renders once.
+    fn settle_and_reveal(&mut self) -> impl Future<Output = AppResult> + Send
+    where
+        Self: Send,
+    {
+        async move {
+            if self.history().continue_available() {
+                self.history().set_show_continue(false);
+                self.render_and_edit().await?;
+                sleep(CONTINUE_REVEAL_DELAY).await;
+                self.history().set_show_continue(true);
+            }
+            self.render_and_edit().await
+        }
+    }
 
     /// Store `total` as the current reply and render it after `elapsed`.
     fn progress(
@@ -177,13 +229,17 @@ pub trait ReplySink {
         async move {
             let counts = reply.counts();
             let complete = reply.complete;
-            self.store_choice((self.character().clone(), reply.text, elapsed));
-            self.before_persist();
-            if !complete {
-                self.history().set_current_choice_error();
+            // a failed continuation keeps the genuine reply it extends untouched;
+            // every other failure is stored as the sentinel and marked an error
+            if complete || !self.keeps_reply_on_failure() {
+                self.store_choice((self.character().clone(), reply.text, elapsed));
+                self.before_persist();
+                if !complete {
+                    self.history().set_current_choice_error();
+                }
             }
             self.persist(counts, complete).await?;
-            self.render_and_edit().await
+            self.settle_and_reveal().await
         }
     }
 }
@@ -335,6 +391,92 @@ impl ReplySink for InteractionSink<'_> {
             .await
             .context(EditResponseSnafu)?;
         Ok(())
+    }
+}
+
+/// Renders a streamed *continuation* of an existing reply onto a
+/// [`ComponentInteraction`] response (the Continue button).
+///
+/// Like [`InteractionSink`], but it seeds the LLM context with the reply being
+/// continued (as a trailing assistant turn) and prepends that reply's text to
+/// every streamed update, so the new tokens extend the reply in place rather than
+/// replacing it.
+pub struct ContinueSink<'a> {
+    /// The serenity context used to edit the response.
+    pub ctx: &'a Context,
+    /// The conversation the reply belongs to.
+    pub history: &'a mut History,
+    /// The character producing the reply.
+    pub character: &'a Character,
+    /// The interaction whose response is being edited.
+    pub interaction: &'a ComponentInteraction,
+    /// The message ID of the reply being extended.
+    pub id: MessageId,
+    /// The database used while rendering.
+    pub db: &'a Database,
+    /// The hand-off select-menu options, computed once for the whole stream.
+    pub options: &'a [CharacterOption],
+    /// The existing reply text the continuation is appended to.
+    pub seed: String,
+}
+
+impl ReplySink for ContinueSink<'_> {
+    fn message_id(&self) -> MessageId {
+        self.id
+    }
+
+    async fn prepare(&mut self) -> AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)> {
+        let (requester, mut context, mode) =
+            prepare_request(self.db, self.character, self.history).await?;
+        // give the model the reply so far as the last assistant turn, so it
+        // continues that text rather than starting a fresh reply
+        if !self.seed.is_empty() {
+            context.push(ChatMessage::new_assistant(self.seed.clone(), self.character));
+        }
+        Ok((requester, context, mode))
+    }
+
+    async fn placeholder(&mut self, _elapsed: Duration) -> AppResult {
+        // keep the existing reply (and a live Stop) on screen while waiting for
+        // the first continuation token, rather than blanking it to the "…" glyph
+        self.render_and_edit().await
+    }
+
+    fn history(&mut self) -> &mut History {
+        self.history
+    }
+
+    fn character(&self) -> &Character {
+        self.character
+    }
+
+    fn store_choice(&mut self, choice: (Character, String, Duration)) {
+        let (character, addition, elapsed) = choice;
+        let combined = combine_continuation(&self.seed, &addition, CHARACTER_LIMIT);
+        self.history
+            .update_current_choice((character, combined, elapsed));
+    }
+
+    async fn persist(&mut self, counts: (u32, u32), complete: bool) -> AppResult {
+        persist_reply(self.db, self.history, self.character, counts, complete).await
+    }
+
+    async fn render_and_edit(&mut self) -> AppResult {
+        let edit = self
+            .history
+            .to_edit_interaction(self.character, self.id, self.db, self.options)
+            .await;
+        self.interaction
+            .edit_response(&self.ctx.http, edit)
+            .await
+            .context(EditResponseSnafu)?;
+        Ok(())
+    }
+
+    /// A failed continuation keeps the reply it was extending, rather than
+    /// replacing it with an error: that reply was a genuine one.
+    fn keeps_reply_on_failure(&self) -> bool {
+        true
     }
 }
 
@@ -529,7 +671,10 @@ pub async fn stream_into<S: ReplySink + Send>(
 /// counts, and the pre-stream-failure sentinel.
 #[cfg(test)]
 mod tests {
-    use super::{ERROR_MESSAGE, Reply, ReplySink, finalize_failed, truncate_to_chars};
+    use super::{
+        ERROR_MESSAGE, GAVE_UP_MESSAGE, Reply, ReplySink, combine_continuation, finalize_failed,
+        truncate_to_chars,
+    };
     use crate::AppResult;
     use crate::llm::{LlmManager, ModelSettings};
     use crate::models::character::Character;
@@ -562,6 +707,8 @@ mod tests {
         character: Character,
         /// Where the driven side effects are recorded.
         records: &'a mut Records,
+        /// Whether a failed reply is kept rather than marked an error (a continuation).
+        keep_on_failure: bool,
     }
 
     impl ReplySink for TestSink<'_> {
@@ -596,6 +743,10 @@ mod tests {
 
         fn before_persist(&mut self) {
             self.records.before_persist = true;
+        }
+
+        fn keeps_reply_on_failure(&self) -> bool {
+            self.keep_on_failure
         }
 
         async fn persist(&mut self, counts: (u32, u32), complete: bool) -> AppResult {
@@ -666,6 +817,7 @@ mod tests {
             history: &mut history,
             character: test_character(),
             records: &mut records,
+            keep_on_failure: false,
         };
 
         let reply = Reply {
@@ -696,7 +848,10 @@ mod tests {
 
     /// Finalizing a genuine reply leaves the choice unmarked and persists it as
     /// complete, so its generation stats are recorded.
-    #[tokio::test]
+    ///
+    /// Paused-time: a genuine reply is continuable, so finalize sleeps for the
+    /// Continue reveal delay, which virtual time skips.
+    #[tokio::test(start_paused = true)]
     async fn finalize_keeps_a_genuine_reply() {
         let mut history = fresh_history();
         let mut records = Records::default();
@@ -704,6 +859,7 @@ mod tests {
             history: &mut history,
             character: test_character(),
             records: &mut records,
+            keep_on_failure: false,
         };
 
         let reply = Reply {
@@ -723,6 +879,130 @@ mod tests {
             Some(((2, 4), true)),
             "a genuine reply persists as complete with its word and token counts"
         );
+        assert_eq!(
+            records.rendered, 2,
+            "a continuable reply renders twice: once with Continue suppressed, then once revealed"
+        );
+    }
+
+    /// A continuable reply reveals Continue with a second render after the delay,
+    /// while a non-continuable one renders only once.
+    #[tokio::test(start_paused = true)]
+    async fn finalize_reveals_continue_with_a_delayed_second_render() {
+        let mut history = fresh_history();
+        let mut records = Records::default();
+        let sink = TestSink {
+            history: &mut history,
+            character: test_character(),
+            records: &mut records,
+            keep_on_failure: false,
+        };
+
+        let reply = Reply {
+            text: "ett riktigt svar".to_owned(),
+            output_tokens: 3,
+            complete: true,
+        };
+        let finalized = sink.finalize(reply, Duration::from_secs(1)).await;
+
+        assert!(finalized.is_ok(), "finalize succeeds");
+        assert_eq!(
+            records.rendered, 2,
+            "the reply is rendered with Continue suppressed, then again once it is revealed"
+        );
+        assert!(
+            history.continue_available(),
+            "the finished genuine reply ends up continuable"
+        );
+    }
+
+    /// `combine_continuation` appends the continuation onto the seed, inserting a
+    /// single space only when two words would otherwise be glued together.
+    #[test]
+    fn combine_continuation_joins_with_a_space_only_when_needed() {
+        assert_eq!(
+            combine_continuation("hello and", "the rain", 100),
+            "hello and the rain",
+            "a word-to-word join gets one separating space"
+        );
+        assert_eq!(
+            combine_continuation("hello ", "the rain", 100),
+            "hello the rain",
+            "a seed already ending in whitespace is not double-spaced"
+        );
+        assert_eq!(
+            combine_continuation("hello", " the rain", 100),
+            "hello the rain",
+            "a continuation already starting with whitespace is not double-spaced"
+        );
+        assert_eq!(
+            combine_continuation("", "fresh start", 100),
+            "fresh start",
+            "an empty seed yields the continuation alone, with no leading space"
+        );
+        assert_eq!(
+            combine_continuation("kept", "", 100),
+            "kept",
+            "an empty continuation leaves the seed untouched"
+        );
+    }
+
+    /// `combine_continuation` truncates the joined text to the character limit so a
+    /// continuation cannot push a reply past it.
+    #[test]
+    fn combine_continuation_caps_at_the_limit() {
+        let seed = "x".repeat(8);
+        let combined = combine_continuation(&seed, "yyyy", 10);
+        assert_eq!(
+            combined.chars().count(),
+            10,
+            "the joined text is capped at the limit"
+        );
+        assert_eq!(combined, "xxxxxxxx y", "the cap keeps the seed and cuts the tail");
+    }
+
+    /// A keep-on-failure sink (a continuation) leaves the reply it was extending
+    /// untouched on failure: it does not store the sentinel text and does not mark
+    /// the choice an error, so a failed Continue cannot clobber a genuine reply.
+    ///
+    /// Paused-time: the kept reply stays continuable, so finalize sleeps for the
+    /// Continue reveal delay, which virtual time skips.
+    #[tokio::test(start_paused = true)]
+    async fn finalize_keeps_the_reply_when_a_continuation_fails() {
+        let mut history = fresh_history();
+        let mut records = Records::default();
+        let sink = TestSink {
+            history: &mut history,
+            character: test_character(),
+            records: &mut records,
+            keep_on_failure: true,
+        };
+
+        let reply = Reply {
+            text: GAVE_UP_MESSAGE.to_owned(),
+            output_tokens: 0,
+            complete: false,
+        };
+        let finalized = sink.finalize(reply, Duration::from_secs(1)).await;
+
+        assert!(finalized.is_ok(), "finalize succeeds");
+        assert!(
+            !history.chosen_message().is_error(),
+            "a failed continuation does not mark the reply it extends as an error"
+        );
+        assert_eq!(
+            records.stored_text, None,
+            "the failure sentinel is not stored over the existing reply"
+        );
+        assert!(
+            !records.before_persist,
+            "the before-persist hook is skipped when the reply is kept"
+        );
+        assert_eq!(
+            records.persisted.map(|(_, complete)| complete),
+            Some(false),
+            "the kept reply still persists, classified as non-complete"
+        );
     }
 
     /// A pre-stream failure finalizes with the generic error sentinel, marking the
@@ -735,6 +1015,7 @@ mod tests {
             history: &mut history,
             character: test_character(),
             records: &mut records,
+            keep_on_failure: false,
         };
 
         let finalized = finalize_failed(sink).await;
