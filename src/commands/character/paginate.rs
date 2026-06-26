@@ -18,7 +18,6 @@ use crate::{
     events::interaction::{Interaction, InteractionKind},
     models::character::Character,
     phrases::{cancelled, rolled_back},
-    traits::RespondToWith as _,
     util::wrapping_previous,
 };
 use alloc::borrow::Cow;
@@ -471,7 +470,16 @@ pub async fn respond_then_clear<T: AsRef<str>>(
     interaction: ComponentInteraction,
     text: T,
 ) -> AppResult {
-    ctx.respond_to_with(&interaction, text)
+    interaction
+        .create_response(
+            ctx.http(),
+            CreateInteractionResponse::UpdateMessage(
+                CreateInteractionResponseMessage::new()
+                    .content(text.as_ref())
+                    .embeds(vec![])
+                    .components(vec![]),
+            ),
+        )
         .await
         .context(SendResponseSnafu)?;
     sleep(TRANSIENT_LINGER).await;

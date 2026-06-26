@@ -5,9 +5,11 @@ use crate::{
     database::Database,
     error::{EditResponseSnafu, ShowModalSnafu},
     models::{character::Character, history::History, modals::EditMessageModal},
-    traits::ShowModal as _,
 };
-use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
+use poise::{
+    execute_modal_on_component_interaction,
+    serenity_prelude::{ComponentInteraction, Context, MessageId},
+};
 use snafu::ResultExt as _;
 
 /// Edit the contents of a character's chat message.
@@ -19,10 +21,14 @@ pub async fn edit(
     mut history: History,
     character: Character,
 ) -> AppResult {
-    let Some(modal): Option<EditMessageModal> = ctx
-        .show_modal_with_defaults(interaction.to_owned(), history.edit_modal_default())
-        .await
-        .context(ShowModalSnafu)?
+    let Some(modal): Option<EditMessageModal> = execute_modal_on_component_interaction(
+        ctx,
+        interaction.to_owned(),
+        Some(history.edit_modal_default()),
+        None,
+    )
+    .await
+    .context(ShowModalSnafu)?
     else {
         return Ok(());
     };
