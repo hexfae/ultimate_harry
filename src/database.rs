@@ -1,18 +1,21 @@
 //! A convenience wrapper over a directory of JSON files used as the bot's storage.
 
+mod store;
+
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use miette::{Diagnostic, SourceSpan};
 use nanorand::Rng as _;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 use serenity::all::{ChannelId, Color, MessageId, ReactionType, UserId};
 use snafu::{IntoError, OptionExt as _, ResultExt as _, Snafu};
-use std::ffi::OsStr;
-use std::io::{self, ErrorKind};
+use std::io;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::sync::Mutex;
-use tracing::{error, warn};
+use tracing::warn;
+
+pub use store::StoreError;
+use store::{is_safe_id, read_json, read_or, scan_dir};
 
 use crate::constants::MAX_RESULTS;
 use crate::llm::{CharacterModelSettings, ModelSettings};
@@ -39,64 +42,6 @@ const MODEL_SETTINGS_FILE: &str = "model_settings.json";
 const PIN_CHANNEL_FILE: &str = "pin_channel.json";
 /// The config file storing the bot's text-to-speech settings.
 const TTS_SETTINGS_FILE: &str = "tts_settings.json";
-
-/// Reads and deserializes a JSON record from `path`, returning `None` if the file does not exist.
-async fn read_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>, StoreError> {
-    let bytes = match fs::read(path).await {
-        Ok(bytes) => bytes,
-        Err(why) if why.kind() == ErrorKind::NotFound => return Ok(None),
-        Err(why) => return Err(StoreError::Io { source: why }),
-    };
-    serde_json::from_slice(&bytes)
-        .map(Some)
-        .context(DeserializeSnafu)
-}
-
-/// Reads and deserializes every `*.json` file in `dir`, returning an empty vector if the directory
-/// does not exist. Skips the transient `*.json.tmp` files written during an atomic save.
-async fn scan_dir<T: DeserializeOwned>(dir: &Path) -> Result<Vec<T>, StoreError> {
-    let mut entries = match fs::read_dir(dir).await {
-        Ok(entries) => entries,
-        Err(why) if why.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(why) => return Err(StoreError::Io { source: why }),
-    };
-    let mut records = Vec::new();
-    while let Some(entry) = entries.next_entry().await.context(IoSnafu)? {
-        let path = entry.path();
-        if path.extension().and_then(OsStr::to_str) == Some("json")
-            && let Some(record) = read_json(&path).await?
-        {
-            records.push(record);
-        }
-    }
-    Ok(records)
-}
-
-/// Reads a JSON record from `path`, falling back to `default` rather than blocking the bot.
-///
-/// A legitimately absent file defaults silently; a genuine read or parse *failure* (corruption) is
-/// logged at error level under `label`, since it would otherwise surface downstream as a confusing
-/// unrelated error (for example an empty API key).
-async fn read_or<T: DeserializeOwned>(path: &Path, label: &str, default: impl FnOnce() -> T) -> T {
-    match read_json(path).await {
-        Ok(Some(value)) => value,
-        Ok(None) => default(),
-        Err(why) => {
-            error!("failed to read {label}, using default: {why}");
-            default()
-        }
-    }
-}
-
-/// Whether `id` is a safe single path segment: non-empty and free of path
-/// separators or parent-directory components, so it cannot escape its directory
-/// when interpolated into a record's file path. Record IDs are server-minted
-/// ULIDs or numeric Discord snowflakes, but a component interaction can submit
-/// an arbitrary select value, so a client-supplied ID is validated before it
-/// reaches the filesystem.
-fn is_safe_id(id: &str) -> bool {
-    !id.is_empty() && !id.contains(['/', '\\']) && !id.contains("..")
-}
 
 /// A directory of JSON files used as the bot's storage.
 pub struct Database {
@@ -174,18 +119,14 @@ impl Database {
         self.root.join(CONFIG_DIR).join(TTS_SETTINGS_FILE)
     }
 
-    /// Serializes `value` to pretty JSON and writes it to `path` atomically (write to a temp file,
-    /// then rename over the target), so a crash mid-write never leaves a partial file.
-    async fn write_json<T: Serialize + Sync>(&self, path: &Path, value: &T) -> Result<(), StoreError> {
-        let bytes = serde_json::to_vec_pretty(value).context(SerializeSnafu)?;
-        let _guard = self.write_lock.lock().await;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).await.context(IoSnafu)?;
-        }
-        let temp = path.with_extension("json.tmp");
-        fs::write(&temp, &bytes).await.context(IoSnafu)?;
-        fs::rename(&temp, path).await.context(IoSnafu)?;
-        Ok(())
+    /// Atomically serializes `value` to pretty JSON at `path`, serializing concurrent writes
+    /// through the database's write lock. See [`store::write_json`].
+    async fn write_json<T: Serialize + Sync>(
+        &self,
+        path: &Path,
+        value: &T,
+    ) -> Result<(), StoreError> {
+        store::write_json(&self.write_lock, path, value).await
     }
 
     /// Returns every character currently stored, regardless of visibility.
@@ -767,30 +708,6 @@ impl DatabaseError {
                 | Self::SetTtsSettings { .. }
         )
     }
-}
-
-/// A low-level storage failure underlying a [`DatabaseError`]: a filesystem error or a JSON
-/// (de)serialization error.
-#[derive(Debug, Snafu)]
-pub enum StoreError {
-    /// A filesystem operation failed.
-    #[snafu(display("filfel: {source}"))]
-    Io {
-        /// The source of the error.
-        source: io::Error,
-    },
-    /// Serializing a record to JSON failed.
-    #[snafu(display("kunde inte serialisera posten: {source}"))]
-    Serialize {
-        /// The source of the error.
-        source: serde_json::Error,
-    },
-    /// Deserializing a record from JSON failed.
-    #[snafu(display("kunde inte tolka posten: {source}"))]
-    Deserialize {
-        /// The source of the error.
-        source: serde_json::Error,
-    },
 }
 
 /// Characterization tests pinning the load-mutate-write methods.
