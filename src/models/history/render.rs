@@ -528,43 +528,58 @@ fn create_buttons<'a>(
         )),
     ];
     if !options.is_empty() {
-        components.push(CreateContainerComponent::ActionRow(
-            CreateActionRow::SelectMenu(
-                CreateSelectMenu::new(
-                    char_id,
-                    CreateSelectMenuKind::String {
-                        options: options
-                            .iter()
-                            .map(|option| {
-                                CreateSelectMenuOption::new(
-                                    option.label().to_owned(),
-                                    option.id().to_owned(),
-                                )
-                                .description(option.description().to_owned())
-                            })
-                            .collect(),
-                    },
-                )
-                .placeholder("Svara som…")
-                .disabled(!finished),
-            ),
-        ));
+        components.push(character_select_menu(char_id, options, finished));
     }
     if !voices.is_empty() {
-        components.push(CreateContainerComponent::ActionRow(
-            CreateActionRow::SelectMenu(
-                CreateSelectMenu::new(
-                    voice_id,
-                    CreateSelectMenuKind::String {
-                        options: voice_options(voices).into(),
-                    },
-                )
-                .placeholder("Läs upp som…")
-                .disabled(!finished || !speakable),
-            ),
-        ));
+        components.push(voice_select_menu(voice_id, voices, finished, speakable));
     }
     components.into()
+}
+
+/// Builds the "reply as another character" hand-off select menu keyed on `char_id`.
+fn character_select_menu<'a>(
+    char_id: String,
+    options: &[CharacterOption],
+    finished: bool,
+) -> CreateContainerComponent<'a> {
+    CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
+        CreateSelectMenu::new(
+            char_id,
+            CreateSelectMenuKind::String {
+                options: options
+                    .iter()
+                    .map(|option| {
+                        CreateSelectMenuOption::new(
+                            option.label().to_owned(),
+                            option.id().to_owned(),
+                        )
+                        .description(option.description().to_owned())
+                    })
+                    .collect(),
+            },
+        )
+        .placeholder("Svara som…")
+        .disabled(!finished),
+    ))
+}
+
+/// Builds the read-aloud voice select menu keyed on `voice_id`.
+fn voice_select_menu<'a>(
+    voice_id: String,
+    voices: &[VoiceEntry],
+    finished: bool,
+    speakable: bool,
+) -> CreateContainerComponent<'a> {
+    CreateContainerComponent::ActionRow(CreateActionRow::SelectMenu(
+        CreateSelectMenu::new(
+            voice_id,
+            CreateSelectMenuKind::String {
+                options: voice_options(voices).into(),
+            },
+        )
+        .placeholder("Läs upp som…")
+        .disabled(!finished || !speakable),
+    ))
 }
 
 /// Builds the voice dropdown's options: a leading "automatic" entry followed by
