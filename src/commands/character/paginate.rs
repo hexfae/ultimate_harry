@@ -10,14 +10,14 @@ use crate::{
     AppResult, Context,
     commands::character::render::character_embed,
     commands::notify_no_character,
-    components::{confirm_interaction_response, emoji_button},
+    components::emoji_button,
     constants::{
         CANCEL, NEWER_VERSION, NEXT, OLDER_VERSION, PREVIOUS, ROLLBACK, TRANSIENT_LINGER,
     },
     error::{DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
     events::interaction::{Interaction, InteractionKind},
     models::character::Character,
-    phrases::{cancelled, rolled_back},
+    phrases::{cancelled, no, rolled_back, yes},
     util::wrapping_previous,
 };
 use alloc::borrow::Cow;
@@ -25,8 +25,9 @@ use nonempty::NonEmpty;
 use poise::{
     CreateReply, ReplyHandle,
     serenity_prelude::{
-        ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateComponent,
-        CreateEmbed, CreateInteractionResponse, CreateInteractionResponseMessage,
+        ButtonStyle, ComponentInteraction, ComponentInteractionCollector, CreateActionRow,
+        CreateButton, CreateComponent, CreateEmbed, CreateInteractionResponse,
+        CreateInteractionResponseMessage,
         small_fixed_array::{FixedArray, FixedString},
     },
 };
@@ -488,6 +489,38 @@ pub async fn respond_then_clear<T: AsRef<str>>(
         .await
         .context(DeleteResponseSnafu)?;
     Ok(())
+}
+
+/// Builds a confirmation update-message response with confirm/cancel buttons keyed on `id`.
+fn confirm_interaction_response<I, C>(id: I, content: C) -> CreateInteractionResponse<'static>
+where
+    I: Into<u64>,
+    C: Into<String>,
+{
+    let buttons = confirm_buttons(id);
+    CreateInteractionResponse::UpdateMessage(
+        CreateInteractionResponseMessage::new()
+            .content(content.into())
+            .components(buttons),
+    )
+}
+
+/// Builds confirmation buttons with "confirm" and "cancel" actions keyed on `into_id`.
+fn confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
+    let id: u64 = into_id.into();
+    let confirm_id = InteractionKind::Confirm.custom_id(id);
+    let cancel_id = InteractionKind::Cancel.custom_id(id);
+    vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
+        vec![
+            CreateButton::new(confirm_id)
+                .style(ButtonStyle::Secondary)
+                .label(yes()),
+            CreateButton::new(cancel_id)
+                .style(ButtonStyle::Secondary)
+                .label(no()),
+        ]
+        .into(),
+    ))]
 }
 
 /// Shows a confirm/cancel prompt on `interaction`, waits for the press, and

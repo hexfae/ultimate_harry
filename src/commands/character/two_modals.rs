@@ -7,7 +7,6 @@
 
 use crate::{
     AppResult, ApplicationContext, Context,
-    components::single_button_row,
     error::{DeleteMessageSnafu, SendMessageSnafu, ShowModalSnafu},
     phrases::{click_below, click_me},
 };
@@ -15,7 +14,8 @@ use alloc::borrow::Cow;
 use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal, execute_modal_on_component_interaction,
     serenity_prelude::{
-        ComponentInteraction, ComponentInteractionCollector,
+        ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateButton,
+        CreateComponent,
         small_fixed_array::{FixedArray, FixedString},
     },
 };
@@ -91,4 +91,14 @@ fn tempting_button_reply<'a>(id: impl Into<Cow<'a, str>>) -> CreateReply<'a> {
         .content(click_below())
         .components(single_button_row(id, click_me()))
         .ephemeral(true)
+}
+
+/// Builds a single-button action row labelled `label` and keyed on `custom_id`.
+fn single_button_row<'a, I, L>(custom_id: I, label: L) -> Vec<CreateComponent<'a>>
+where
+    I: Into<Cow<'a, str>>,
+    L: Into<Cow<'a, str>>,
+{
+    let button = vec![CreateButton::new(custom_id).label(label)].into();
+    vec![CreateComponent::ActionRow(CreateActionRow::Buttons(button))]
 }
