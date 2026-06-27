@@ -114,7 +114,7 @@ pub enum AppError {
         source: TtsError,
     },
     /// Streaming a reply failed.
-    #[snafu(display("Strömning misslyckades"))]
+    #[snafu(display("Kunde inte strömma svaret"))]
     Streaming {
         /// The source of the error.
         source: StreamingError,
@@ -213,20 +213,19 @@ impl Diagnostic for AppError {
         match self {
             Self::Database { source } => source.help(),
             Self::UnknownInteraction { source } => source.help(),
-            Self::SendMessage { .. } => Some(Box::new("Meddelandet kan ha varit för långt")),
+            Self::SendMessage { .. } => Some(Box::new("Meddelandet kan ha varit för långt.")),
             Self::EditMessage { .. } | Self::RetrieveMessage { .. } => {
-                Some(Box::new("Meddelandet kan vara borta"))
+                Some(Box::new("Meddelandet kan vara borta."))
             }
-            Self::DeleteMessage { .. } => Some(Box::new("Meddelandet kan redan vara borta")),
+            Self::DeleteMessage { .. } => Some(Box::new("Meddelandet kan redan vara borta.")),
             Self::SendResponse { .. } | Self::EditResponse { .. } | Self::ShowModal { .. } => {
-                Some(Box::new("Interaktionen kan ha gått ut"))
+                Some(Box::new("Interaktionen kan ha gått ut."))
             }
             Self::DeleteResponse { .. } => Some(Box::new(
-                "Interaktionen kan ha gått ut eller redan vara borta",
+                "Interaktionen kan ha gått ut eller redan vara borta.",
             )),
-            Self::Llm { .. } | Self::Streaming { .. } => {
-                Some(Box::new("Förmodligen OpenRouter's fel"))
-            }
+            Self::Llm { source } => source.help(),
+            Self::Streaming { .. } => Some(Box::new("Förmodligen ett fel hos OpenRouter.")),
             Self::Tts { source } => source.help(),
             Self::RegisterCommand { .. } => Some(Box::new("¯\\_(ツ)_/¯")),
         }
