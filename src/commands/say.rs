@@ -51,7 +51,7 @@ pub async fn say(
     message: String,
 ) -> AppResult {
     if !is_speakable(&message) {
-        ctx.say_ephemeral("Det finns inget att läsa upp.")
+        ctx.say_ephemeral("Du gav mig ju ingenting att läsa upp.")
             .await
             .context(SendMessageSnafu)?;
         return Ok(());
@@ -168,7 +168,7 @@ async fn require_guild_member(ctx: Context<'_>) -> AppResult<bool> {
     if is_member_of_any(lookups) {
         return Ok(true);
     }
-    ctx.say_ephemeral("Du måste vara med i Harrys server för att använda detta kommando.")
+    ctx.say_ephemeral("Det här kommandot är bara för Harrys eget folk. Ut med dig.")
         .await
         .context(SendMessageSnafu)?;
     Ok(false)

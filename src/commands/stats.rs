@@ -95,7 +95,7 @@ fn aggregate_user_stats(characters: &[Character]) -> Vec<UserStats> {
 /// user has used any character.
 fn format_user_leaderboard(stats: &[UserStats], names: &BTreeMap<UserId, String>) -> String {
     if stats.is_empty() {
-        return "Ingen har använt någon gubbe än.".to_owned();
+        return "Ingen har snackat med en enda gubbe än. Antiklimax.".to_owned();
     }
 
     let mut text = String::new();
@@ -131,7 +131,7 @@ fn format_user_leaderboard(stats: &[UserStats], names: &BTreeMap<UserId, String>
 /// nothing to rank.
 fn format_leaderboard(characters: &[Character]) -> String {
     if characters.is_empty() {
-        return "Det finns inga gubbar än.".to_owned();
+        return "Inte en enda gubbe finns. Sorgligt.".to_owned();
     }
 
     let mut text = String::new();
@@ -310,7 +310,7 @@ mod tests {
     fn an_empty_user_leaderboard_shows_the_empty_state() {
         assert_eq!(
             format_user_leaderboard(&[], &BTreeMap::new()),
-            "Ingen har använt någon gubbe än."
+            "Ingen har snackat med en enda gubbe än. Antiklimax."
         );
     }
 
@@ -355,7 +355,7 @@ mod tests {
     /// An empty leaderboard renders the empty-state message, not a bare header.
     #[test]
     fn an_empty_leaderboard_shows_the_empty_state() {
-        assert_eq!(format_leaderboard(&[]), "Det finns inga gubbar än.");
+        assert_eq!(format_leaderboard(&[]), "Inte en enda gubbe finns. Sorgligt.");
     }
 
     /// A never-used character is ranked first, showing its stats and `aldrig`.

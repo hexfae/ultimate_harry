@@ -127,7 +127,7 @@ async fn report_framework_error(
 ) -> Result<()> {
     match framework_error {
         FrameworkError::SubcommandRequired { ctx } => {
-            send_error(ctx, "Du måste välja ett underkommando.".to_owned()).await?;
+            send_error(ctx, "Du glömde välja ett underkommando.".to_owned()).await?;
         }
         FrameworkError::ArgumentParse {
             error, input, ctx, ..
@@ -138,7 +138,7 @@ async fn report_framework_error(
             );
             send_error(
                 ctx,
-                "Ogiltigt argument, kontrollera värdet och försök igen.".to_owned(),
+                "Det där argumentet köpte jag inte. Kontrollera värdet.".to_owned(),
             )
             .await?;
         }
@@ -147,7 +147,7 @@ async fn report_framework_error(
                 command = %ctx.command().qualified_name,
                 "command panicked: {payload:?}"
             );
-            send_error(ctx, "Ett internt fel inträffade.".to_owned()).await?;
+            send_error(ctx, "Något small internt. Inte ditt fel den här gången.".to_owned()).await?;
         }
         other => {
             if let Err(why) = builtins::on_error(other).await {

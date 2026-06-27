@@ -46,10 +46,10 @@ const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 const TIMEOUT_MESSAGE: &str = "30 sekunder har gått utan ett svar. Jag ger upp.";
 
 /// Reply shown when every attempt returned an empty completion.
-const GAVE_UP_MESSAGE: &str = "AI:n gav inget svar efter flera försök. Jag ger upp.";
+const GAVE_UP_MESSAGE: &str = "Gubben gav inget svar efter flera försök. Jag ger upp.";
 
 /// Reply shown when the request fails to start or the stream errors out.
-const ERROR_MESSAGE: &str = "Något gick fel när jag försökte svara. Försök igen senare.";
+const ERROR_MESSAGE: &str = "Det krånglade när jag försökte svara. Jag ger upp.";
 
 /// Truncates `text` to at most `limit` characters, never splitting a multi-byte
 /// character. Discord counts characters, not bytes, so the limit is in characters.
