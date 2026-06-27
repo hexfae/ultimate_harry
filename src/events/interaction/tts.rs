@@ -5,6 +5,7 @@ use crate::{
     AppResult,
     database::Database,
     models::{character::Character, history::History},
+    read_aloud,
     tts::TtsError,
 };
 use serenity::all::{ComponentInteraction, Context};
@@ -27,14 +28,13 @@ pub async fn tts(
     history: History,
     character: Character,
 ) -> AppResult {
-    let requested_at = speak::requested_now();
+    let requested_at = read_aloud::requested_now();
     let (settings, manager, text) = speak::setup(db, &history).await;
     let voice = manager.voice_for(&character).ok_or(TtsError::NoVoice)?;
     let model = settings.solo_model(&voice).to_owned();
 
     speak::defer(ctx, interaction).await?;
 
-    let speak_text = speak::enrich(db, &settings, &model, text).await;
-    let audio = manager.synthesize(&speak_text, &voice, &model).await?;
+    let audio = read_aloud::synthesize_single(db, &settings, &manager, &voice, &model, text).await?;
     speak::post_followup(ctx, interaction, audio, &character, &requested_at).await
 }

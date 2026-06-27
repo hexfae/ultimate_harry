@@ -15,6 +15,7 @@ mod llm;
 mod media;
 mod models;
 mod phrases;
+mod read_aloud;
 mod shortcodes;
 mod traits;
 mod tts;

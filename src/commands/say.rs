@@ -2,32 +2,19 @@
 
 use crate::{
     AppResult, Context,
-    database::Database,
     error::{SendMessageSnafu, SendResponseSnafu},
-    llm::{LlmManager, VoiceChoice},
+    read_aloud,
     traits::SayEphemeral as _,
-    tts::{
-        DialogueTurn, TtsError, TtsManager, TtsSettings, audio_filename, enforce_allowed_voices,
-        is_speakable, plan_dialogue,
-    },
-    util::report_error,
+    tts::{TtsError, TtsManager, TtsSettings, audio_filename, is_speakable},
 };
-use jiff::{Timestamp, Zoned};
 use poise::{
     CreateReply,
     serenity_prelude::{AutocompleteChoice, CreateAttachment, CreateAutocompleteResponse},
 };
 use snafu::ResultExt as _;
-use tracing::warn;
 
-/// The autocomplete label and select value that requests auto voice assignment.
+/// The autocomplete label that requests auto voice assignment.
 const AUTO_LABEL: &str = "Automatiskt";
-
-/// The sentinel matching the auto reading regardless of the displayed label.
-const AUTO_VALUE: &str = "auto";
-
-/// The timezone the audio filename's request timestamp is rendered in.
-const FILENAME_TIMEZONE: &str = "Europe/Stockholm";
 
 /// How a message should be read aloud, resolved from the chosen voice.
 #[derive(Debug, PartialEq, Eq)]
@@ -82,16 +69,16 @@ pub async fn say(
     let manager = TtsManager::new(settings.clone());
     let audio = match reading {
         Reading::Solo { voice_id, model } => {
-            let speak_text = enrich(db, &settings, &model, message).await;
-            manager.synthesize(&speak_text, &voice_id, &model).await?
+            read_aloud::synthesize_single(db, &settings, &manager, &voice_id, &model, message).await?
         }
         Reading::Auto => {
             let fallback = auto_fallback(&settings).ok_or(TtsError::NoVoice)?;
-            synthesize_auto(db, &settings, &manager, &fallback, message).await?
+            read_aloud::synthesize_auto(db, &settings, &manager, &fallback, None, message).await?
         }
     };
 
-    let attachment = CreateAttachment::bytes(audio, audio_filename(&voice, &requested_now()));
+    let attachment =
+        CreateAttachment::bytes(audio, audio_filename(&voice, &read_aloud::requested_now()));
     ctx.send(CreateReply::default().attachment(attachment))
         .await
         .context(SendMessageSnafu)?;
@@ -103,7 +90,9 @@ pub async fn say(
 /// [`Reading::Solo`] with its solo model, and anything else into `None`.
 fn resolve_reading(settings: &TtsSettings, choice: &str) -> Option<Reading> {
     let trimmed = choice.trim();
-    if trimmed.eq_ignore_ascii_case(AUTO_LABEL) || trimmed.eq_ignore_ascii_case(AUTO_VALUE) {
+    if trimmed.eq_ignore_ascii_case(AUTO_LABEL)
+        || trimmed.eq_ignore_ascii_case(read_aloud::AUTO_VALUE)
+    {
         return Some(Reading::Auto);
     }
     let lowered = trimmed.to_lowercase();
@@ -154,80 +143,6 @@ async fn autocomplete_reading_voice<'a>(
         .map(|name| AutocompleteChoice::new(name.clone(), name))
         .collect::<Vec<AutocompleteChoice<'_>>>();
     CreateAutocompleteResponse::new().set_choices(choices)
-}
-
-/// Synthesizes the message with auto-assigned voices, falling back to a single
-/// voice when assignment yields nothing usable or only one distinct voice.
-async fn synthesize_auto(
-    db: &Database,
-    settings: &TtsSettings,
-    manager: &TtsManager,
-    fallback: &str,
-    text: String,
-) -> Result<Vec<u8>, TtsError> {
-    let Some(turns) = assign_turns(db, settings, fallback, &text).await else {
-        let speak_text = enrich(db, settings, &settings.model, text).await;
-        return manager.synthesize(&speak_text, fallback, &settings.model).await;
-    };
-    manager.synthesize_plan(plan_dialogue(turns, fallback)).await
-}
-
-/// Asks the enricher to split `text` into per-voice turns over the palette,
-/// validating the returned voice IDs against the allowed set (palette + fallback)
-/// and replacing any unknown ID with the fallback. Returns `None` (so the caller
-/// speaks a single voice) when no enricher model is set, the palette is empty, or
-/// assignment fails.
-async fn assign_turns(
-    db: &Database,
-    settings: &TtsSettings,
-    fallback: &str,
-    text: &str,
-) -> Option<Vec<DialogueTurn>> {
-    let model = settings.tag_model.clone().filter(|model| !model.is_empty())?;
-    let choices: Vec<VoiceChoice> = settings.voices().iter().map(VoiceChoice::from_entry).collect();
-    if choices.is_empty() {
-        return None;
-    }
-    let mut allowed: Vec<String> = choices.iter().map(|choice| choice.voice_id.clone()).collect();
-    if !allowed.iter().any(|id| id == fallback) {
-        allowed.push(fallback.to_owned());
-    }
-
-    let llm = LlmManager::new(db.model_settings().await);
-    let add_tags = settings.tag_model_if_enabled().is_some();
-    match llm.assign_voices(text, &model, &choices, add_tags).await {
-        Ok(turns) => Some(enforce_allowed_voices(turns, &allowed, fallback)),
-        Err(why) => {
-            warn!("voice assignment failed, speaking a single voice");
-            report_error(why);
-            None
-        }
-    }
-}
-
-/// Enriches `text` with v3 audio tags when a tag model is enabled for the
-/// effective synthesis `model`, falling back to the plain text on failure.
-async fn enrich(db: &Database, settings: &TtsSettings, model: &str, text: String) -> String {
-    let Some(tag_model) = settings.tag_model_for(model) else {
-        return text;
-    };
-    let llm = LlmManager::new(db.model_settings().await);
-    match llm.add_audio_tags(&text, tag_model).await {
-        Ok(tagged) => tagged,
-        Err(why) => {
-            warn!("audio-tag enhancement failed, speaking the plain text");
-            report_error(why);
-            text
-        }
-    }
-}
-
-/// The moment the reading was requested, in the filename timezone, used to name
-/// the MP3; falls back to the system zone if the named zone is unavailable.
-fn requested_now() -> Zoned {
-    Timestamp::now()
-        .in_tz(FILENAME_TIMEZONE)
-        .unwrap_or_else(|_| Zoned::now())
 }
 
 /// Whether the user is a member of at least one of the bot's guilds, given the
