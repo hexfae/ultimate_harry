@@ -375,11 +375,12 @@ impl Database {
             .context(InsertSnafu)
     }
 
-    /// Updates or inserts a user's emoji, preserving their stored display name.
-    pub async fn upsert_user_emoji<T: Into<UserId>>(
+    /// Loads the given user's preferences (or a fresh default), applies `apply`, and writes
+    /// them back. Mirrors [`Self::mutate_character`] for the single-file user records.
+    async fn mutate_user_prefs<T: Into<UserId>>(
         &self,
         user_id: T,
-        emoji: ReactionType,
+        apply: impl FnOnce(&mut UserPrefs),
     ) -> Result<(), DatabaseError> {
         let id = user_id.into().to_string();
         let path = self.user_path(&id);
@@ -387,8 +388,18 @@ impl Database {
             .await
             .context(GetSnafu)?
             .unwrap_or_else(|| UserPrefs::new(id));
-        prefs.emoji = Some(emoji);
+        apply(&mut prefs);
         self.write_json(&path, &prefs).await.context(InsertSnafu)
+    }
+
+    /// Updates or inserts a user's emoji, preserving their stored display name.
+    pub async fn upsert_user_emoji<T: Into<UserId>>(
+        &self,
+        user_id: T,
+        emoji: ReactionType,
+    ) -> Result<(), DatabaseError> {
+        self.mutate_user_prefs(user_id, |prefs| prefs.emoji = Some(emoji))
+            .await
     }
 
     /// Returns every user's set emoji, paired with their Discord user ID.
@@ -582,14 +593,8 @@ impl Database {
         user_id: T,
         name: String,
     ) -> Result<(), DatabaseError> {
-        let id = user_id.into().to_string();
-        let path = self.user_path(&id);
-        let mut prefs = read_json::<UserPrefs>(&path)
+        self.mutate_user_prefs(user_id, |prefs| prefs.name = Some(name))
             .await
-            .context(GetSnafu)?
-            .unwrap_or_else(|| UserPrefs::new(id));
-        prefs.name = Some(name);
-        self.write_json(&path, &prefs).await.context(InsertSnafu)
     }
 }
 
