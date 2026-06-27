@@ -286,6 +286,18 @@ impl TtsManager {
         .await
     }
 
+    /// Synthesizes a [`DialoguePlan`]: a [`Single`](DialoguePlan::Single) plan as a
+    /// single-voice request over the joined text (spoken with the configured model),
+    /// a [`Multi`](DialoguePlan::Multi) plan via the text-to-dialogue endpoint.
+    pub async fn synthesize_plan(&self, plan: DialoguePlan) -> Result<Vec<u8>, TtsError> {
+        match plan {
+            DialoguePlan::Single { text, voice_id } => {
+                self.synthesize(&text, &voice_id, &self.settings.model).await
+            }
+            DialoguePlan::Multi(turns) => self.synthesize_dialogue(&turns).await,
+        }
+    }
+
     /// POSTs `body` to `url` on `ElevenLabs` and returns the MP3 bytes, failing
     /// early without an API key and validating the response status and that the
     /// audio is non-empty. Shared by the single-voice and dialogue paths.

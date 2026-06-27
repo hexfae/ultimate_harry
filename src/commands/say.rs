@@ -7,8 +7,8 @@ use crate::{
     llm::{LlmManager, VoiceChoice},
     traits::SayEphemeral as _,
     tts::{
-        DialoguePlan, DialogueTurn, TtsError, TtsManager, TtsSettings, audio_filename,
-        enforce_allowed_voices, is_speakable, plan_dialogue,
+        DialogueTurn, TtsError, TtsManager, TtsSettings, audio_filename, enforce_allowed_voices,
+        is_speakable, plan_dialogue,
     },
     util::report_error,
 };
@@ -169,12 +169,7 @@ async fn synthesize_auto(
         let speak_text = enrich(db, settings, &settings.model, text).await;
         return manager.synthesize(&speak_text, fallback, &settings.model).await;
     };
-    match plan_dialogue(turns, fallback) {
-        DialoguePlan::Single { text: joined, voice_id } => {
-            manager.synthesize(&joined, &voice_id, &settings.model).await
-        }
-        DialoguePlan::Multi(spoken) => manager.synthesize_dialogue(&spoken).await,
-    }
+    manager.synthesize_plan(plan_dialogue(turns, fallback)).await
 }
 
 /// Asks the enricher to split `text` into per-voice turns over the palette,
