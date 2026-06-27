@@ -106,10 +106,10 @@ pub async fn character_embed<F: Into<String>>(
     }
 
     if let Some(name) = deleter_name {
-        embed = embed.field("Borttagen av", name, true);
+        embed = embed.field("Dödad av", name, true);
     }
     if let Some(deleted_text) = deleted {
-        embed = embed.field("Borttagen", deleted_text, false);
+        embed = embed.field("Dödad", deleted_text, false);
     }
 
     embed = embed
@@ -284,7 +284,7 @@ mod tests {
         let json = serde_json::to_string(&embed).unwrap_or_default();
 
         assert!(
-            json.contains("Borttagen av"),
+            json.contains("Dödad av"),
             "a deleted character shows who deleted it"
         );
         assert!(json.contains("Cesar"), "the deleter is shown by name");
@@ -302,7 +302,7 @@ mod tests {
         let json = serde_json::to_string(&embed).unwrap_or_default();
 
         assert!(
-            !json.contains("Borttagen"),
+            !json.contains("Dödad"),
             "a visible character has no deletion fields"
         );
     }

@@ -655,9 +655,9 @@ pub enum DatabaseError {
         source: StoreError,
     },
     /// No character by the given ID was found.
-    #[snafu(display("Ingen sådan karaktär hittades i databasen: {found}"))]
+    #[snafu(display("Ingen sådan gubbe hittades i databasen: {found}"))]
     #[diagnostic(
-        help("Kontrollera namnet eller skapa en ny karaktär först"),
+        help("Kontrollera namnet eller skapa en ny gubbe först."),
         code(database::no_character)
     )]
     NoCharacter {
@@ -679,9 +679,9 @@ pub enum DatabaseError {
         source: StoreError,
     },
     /// Setting the bot's pin Discord channel failed.
-    #[snafu(display("Kunde inte spara kanal för pins: {source}"))]
+    #[snafu(display("Kunde inte spara fästkanalen"))]
     #[diagnostic(
-        help("Kontrollera att kanalen är giltig"),
+        help("Kontrollera att kanalen är giltig."),
         code(database::set_pins_channel)
     )]
     SetPinsChannel {
