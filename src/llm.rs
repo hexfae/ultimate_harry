@@ -86,7 +86,7 @@ impl LlmManager {
 #[derive(Debug, Snafu, Diagnostic)]
 pub enum LlmError {
     /// Failed to build the Rig client.
-    #[snafu(display("Misslyckades med att bygga LLM-klienten: {source}"))]
+    #[snafu(display("Kunde inte bygga LLM-klienten"))]
     #[diagnostic(
         help("Kontrollera att API-nyckeln är korrekt och att du har tillgång till modellen."),
         code(llm::build_client)
@@ -96,7 +96,7 @@ pub enum LlmError {
         source: RigError,
     },
     /// Failed to list the available models from `OpenRouter`.
-    #[snafu(display("Kunde inte hämta modeller från OpenRouter: {source}"))]
+    #[snafu(display("Kunde inte hämta modeller från OpenRouter"))]
     #[diagnostic(
         help("Kontrollera din internetanslutning och OpenRouter-status."),
         code(llm::list_models)
@@ -106,7 +106,7 @@ pub enum LlmError {
         source: reqwest::Error,
     },
     /// Failed to describe an image with the vision model.
-    #[snafu(display("Kunde inte beskriva bilden: {source}"))]
+    #[snafu(display("Kunde inte beskriva bilden"))]
     #[diagnostic(
         help("Kontrollera att synmodellen och API-nyckeln är giltiga."),
         code(llm::describe_image)
@@ -124,14 +124,14 @@ pub enum LlmError {
     #[diagnostic(help("Prova en annan synmodell."), code(llm::empty_description))]
     EmptyDescription,
     /// Failed to download the voice message before transcribing it.
-    #[snafu(display("Kunde inte hämta ljudet: {source}"))]
+    #[snafu(display("Kunde inte hämta ljudet"))]
     #[diagnostic(help("Kontrollera att filen finns kvar."), code(llm::fetch_audio))]
     FetchAudio {
         /// The source of the error.
         source: reqwest::Error,
     },
     /// Failed to transcribe a voice message with the audio model.
-    #[snafu(display("Kunde inte transkribera ljudet: {source}"))]
+    #[snafu(display("Kunde inte transkribera ljudet"))]
     #[diagnostic(
         help("Kontrollera att ljudmodellen och API-nyckeln är giltiga."),
         code(llm::transcribe_audio)
@@ -149,7 +149,7 @@ pub enum LlmError {
     #[diagnostic(help("Prova en annan ljudmodell."), code(llm::empty_transcription))]
     EmptyTranscription,
     /// Failed to enrich the reply with audio tags.
-    #[snafu(display("Kunde inte lägga till ljudtaggar: {source}"))]
+    #[snafu(display("Kunde inte lägga till ljudtaggar"))]
     #[diagnostic(
         help("Kontrollera att tagg-modellen och API-nyckeln är giltiga."),
         code(llm::add_tags)
@@ -163,7 +163,7 @@ pub enum LlmError {
     #[diagnostic(help("Prova en annan tagg-modell."), code(llm::empty_tags))]
     EmptyTags,
     /// Failed to assign voices for a multi-voice reading.
-    #[snafu(display("Kunde inte fördela rösterna: {source}"))]
+    #[snafu(display("Kunde inte fördela rösterna"))]
     #[diagnostic(
         help("Kontrollera att tagg-modellen och API-nyckeln är giltiga."),
         code(llm::assign_voices)
@@ -174,7 +174,7 @@ pub enum LlmError {
     },
     /// The model returned no usable voice assignment.
     #[snafu(display("Röstfördelningen gick inte att tolka"))]
-    #[diagnostic(help("Prova igen eller en annan tagg-modell."), code(llm::empty_voices))]
+    #[diagnostic(help("Prova en annan tagg-modell."), code(llm::empty_voices))]
     EmptyVoices,
 }
 

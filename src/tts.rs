@@ -474,14 +474,14 @@ pub enum TtsError {
     #[diagnostic(help("Ställ in en API-nyckel med /tal."), code(tts::missing_api_key))]
     MissingApiKey,
     /// The character has no voice and no generic default voice is configured.
-    #[snafu(display("Ingen röst är kopplad till karaktären"))]
+    #[snafu(display("Ingen röst är kopplad till gubben"))]
     #[diagnostic(
         help("Koppla en röst med /gubbe röst, eller ställ in en standardröst med /tal."),
         code(tts::no_voice)
     )]
     NoVoice,
     /// The request to `ElevenLabs` failed to send or read its response.
-    #[snafu(display("Kunde inte läsa upp svaret: {source}"))]
+    #[snafu(display("Kunde inte läsa upp svaret"))]
     #[diagnostic(
         help("Kontrollera din internetanslutning och ElevenLabs-status."),
         code(tts::request)
@@ -502,7 +502,7 @@ pub enum TtsError {
     },
     /// `ElevenLabs` returned an empty audio body.
     #[snafu(display("ElevenLabs gav inget ljud"))]
-    #[diagnostic(help("Prova igen eller med en annan röst."), code(tts::empty_audio))]
+    #[diagnostic(help("Prova en annan röst."), code(tts::empty_audio))]
     EmptyAudio,
 }
 

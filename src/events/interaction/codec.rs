@@ -57,7 +57,7 @@ pub enum InteractionKind {
 #[derive(Debug, Snafu, Diagnostic)]
 #[snafu(display("Okänd interaktion: {custom_id}"))]
 #[diagnostic(
-    help("Knappen kan vara för gammal, försök igen."),
+    help("Knappen hör till ett gammalt meddelande och fungerar inte längre."),
     code(events::interaction::unknown)
 )]
 pub struct UnknownInteraction {

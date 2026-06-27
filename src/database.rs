@@ -607,7 +607,7 @@ pub enum DatabaseError {
     /// Creating the database directory failed.
     #[snafu(display("Kunde inte öppna databasmappen"))]
     #[diagnostic(
-        help("Kontrollera att databasmappen går att läsa och skriva till"),
+        help("Kontrollera att databasmappen går att läsa och skriva till."),
         code(database::connect)
     )]
     Connect {
@@ -615,9 +615,9 @@ pub enum DatabaseError {
         source: io::Error,
     },
     /// Getting a record failed.
-    #[snafu(display("Kunde inte hämta från databasen: {source}"))]
+    #[snafu(display("Kunde inte hämta från databasen"))]
     #[diagnostic(
-        help("Kontrollera att posten finns"),
+        help("Kontrollera att posten finns."),
         code(database::get)
     )]
     Get {
@@ -625,9 +625,9 @@ pub enum DatabaseError {
         source: StoreError,
     },
     /// Inserting a record failed.
-    #[snafu(display("Kunde inte infoga i databasen: {source}"))]
+    #[snafu(display("Kunde inte infoga i databasen"))]
     #[diagnostic(
-        help("Kontrollera att datat är korrekt"),
+        help("Kontrollera att datat är korrekt."),
         code(database::insert)
     )]
     Insert {
@@ -635,9 +635,9 @@ pub enum DatabaseError {
         source: StoreError,
     },
     /// Deleting a record failed.
-    #[snafu(display("Kunde inte ta bort från databasen: {source}"))]
+    #[snafu(display("Kunde inte ta bort från databasen"))]
     #[diagnostic(
-        help("Kontrollera att posten finns"),
+        help("Kontrollera att posten finns."),
         code(database::delete)
     )]
     Delete {
@@ -645,9 +645,9 @@ pub enum DatabaseError {
         source: StoreError,
     },
     /// Updating a record failed.
-    #[snafu(display("Kunde inte uppdatera databasen: {source}"))]
+    #[snafu(display("Kunde inte uppdatera databasen"))]
     #[diagnostic(
-        help("Kontrollera att posten finns"),
+        help("Kontrollera att posten finns."),
         code(database::update)
     )]
     Update {
@@ -669,9 +669,9 @@ pub enum DatabaseError {
         span: SourceSpan,
     },
     /// Setting the bot's AI model settings failed.
-    #[snafu(display("Kunde inte spara modellinställningar: {source}"))]
+    #[snafu(display("Kunde inte spara modellinställningar"))]
     #[diagnostic(
-        help("Kontrollera att inställningarna är giltiga"),
+        help("Kontrollera att inställningarna är giltiga."),
         code(database::set_model_settings)
     )]
     SetModelSettings {
@@ -689,9 +689,9 @@ pub enum DatabaseError {
         source: StoreError,
     },
     /// Setting the bot's text-to-speech settings failed.
-    #[snafu(display("Kunde inte spara uppläsningsinställningar: {source}"))]
+    #[snafu(display("Kunde inte spara uppläsningsinställningar"))]
     #[diagnostic(
-        help("Kontrollera att inställningarna är giltiga"),
+        help("Kontrollera att inställningarna är giltiga."),
         code(database::set_tts_settings)
     )]
     SetTtsSettings {
