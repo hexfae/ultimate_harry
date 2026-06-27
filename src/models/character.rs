@@ -459,10 +459,29 @@ impl Display for Character {
     }
 }
 
+/// Shared character fixtures for the model's test modules (this module plus the
+/// `ranking` child), so the minimal-character builder lives in one place.
+#[cfg(test)]
+mod test_support {
+    use super::Character;
+    use serenity::all::UserId;
+
+    /// Builds a minimal visible character with the given ID and name.
+    pub(super) fn basic_character(id: &str, name: &str) -> Character {
+        Character::builder()
+            .id(id.to_owned())
+            .name(name)
+            .greeting("hello")
+            .creator(UserId::new(1))
+            .build()
+    }
+}
+
 /// Tests for character similarity ranking.
 #[cfg(test)]
 mod tests {
     use super::Character;
+    use super::test_support::basic_character;
     use crate::{
         llm::CharacterModelSettings,
         models::modals::{EditCharacterModal, SecondEditCharacterModal},
@@ -489,16 +508,6 @@ mod tests {
                 scenario: None,
             },
         )
-    }
-
-    /// Builds a minimal visible character with the given ID and name.
-    fn basic_character(id: &str, name: &str) -> Character {
-        Character::builder()
-            .id(id.to_owned())
-            .name(name)
-            .greeting("hello")
-            .creator(UserId::new(1))
-            .build()
     }
 
     /// Builds a character with every editable content field populated.

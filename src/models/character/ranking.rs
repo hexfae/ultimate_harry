@@ -72,18 +72,9 @@ impl Character {
 #[cfg(test)]
 mod tests {
     use super::super::Character;
+    use super::super::test_support::basic_character;
     use crate::constants::MAX_RESULTS;
     use serenity::all::UserId;
-
-    /// Builds a minimal visible character with the given ID and name.
-    fn basic_character(id: &str, name: &str) -> Character {
-        Character::builder()
-            .id(id.to_owned())
-            .name(name)
-            .greeting("hello")
-            .creator(UserId::new(1))
-            .build()
-    }
 
     /// Returns the index of the character with the given ID in the ranked list.
     fn position_of(ranked: &[Character], id: &str) -> Option<usize> {
