@@ -67,7 +67,7 @@ impl ModelSettings {
         let vision_model = self.vision_model.as_deref().unwrap_or("ingen");
         let audio_model = self.audio_model.as_deref().unwrap_or("ingen");
         format!(
-            "modell: {}\nsynmodell: {vision_model}\nljudmodell: {audio_model}\ntemperatur: {}\napi-nyckel: {api_key}",
+            "modell: {}\nsyn-modell: {vision_model}\nljud-modell: {audio_model}\ntemperatur: {}\napi-nyckel: {api_key}",
             self.model, self.temperature
         )
     }

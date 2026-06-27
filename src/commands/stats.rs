@@ -13,9 +13,9 @@ use crate::{
 };
 
 /// Swedish header for the character section of the stats message.
-const CHARACTER_HEADER: &str = "**Gubbar**";
+const CHARACTER_HEADER: &str = "## Gubbar";
 /// Swedish header for the per-user section of the stats message.
-const USER_HEADER: &str = "**Användare**";
+const USER_HEADER: &str = "## Användare";
 
 /// Visar en topplista över gubbarnas statistik.
 #[poise::command(slash_command, rename = "statistik")]

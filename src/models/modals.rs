@@ -119,6 +119,7 @@ pub struct SecondEditCharacterModal {
     #[placeholder = "En länk till rätt bild."]
     pub avatar: Option<String>,
     /// The character's new emoji.
+    #[paragraph]
     #[name = "Emoji"]
     #[placeholder = "Till exempel 🤩, :robot:, eller :chosad:, syns oftast bredvid gubbens namn."]
     pub emoji: Option<String>,

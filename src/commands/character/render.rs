@@ -83,7 +83,7 @@ pub async fn character_embed<F: Into<String>>(
     }
 
     if let Some(system_prompt) = character.system_prompt() {
-        embed = embed.field("System Prompt", truncate_field(system_prompt.to_owned()), true);
+        embed = embed.field("Systemprompt", truncate_field(system_prompt.to_owned()), true);
     }
 
     if let Some(scenario) = character.scenario() {
