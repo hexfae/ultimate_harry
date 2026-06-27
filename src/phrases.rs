@@ -8,20 +8,15 @@ use core::fmt::Display;
 use nanorand::Rng as _;
 
 /// Returns a randomly sampled item from the given list.
-pub fn sample<T: Clone + Default>(list: &[T]) -> T {
+fn sample<T: Clone + Default>(list: &[T]) -> T {
     let mut rng = nanorand::tls_rng();
     let index = rng.generate_range(0..list.len());
     list.get(index).cloned().unwrap_or_default()
 }
 
 /// Returns a randomly sampled phrase with `{character}` replaced by the given name.
-pub fn sample_name<N: Display>(list: &[&str], name: N) -> String {
-    let mut rng = nanorand::tls_rng();
-    let index = rng.generate_range(0..list.len());
-    list.get(index)
-        .copied()
-        .unwrap_or_default()
-        .replace("{character}", &name.to_string())
+fn sample_name<N: Display>(list: &[&str], name: N) -> String {
+    sample(list).replace("{character}", &name.to_string())
 }
 
 /// Returns an affirmative phrase.
