@@ -28,7 +28,7 @@ use tokio::time::sleep;
 use tracing::warn;
 
 use crate::{
-    AppResult, Context,
+    AppResult, ApplicationContext, Context,
     app_state::AppState,
     constants::TRANSIENT_LINGER,
     database::DatabaseError,
@@ -114,6 +114,22 @@ pub async fn first_character_or_notify(
         return Ok(None);
     };
     Ok(Some(character))
+}
+
+/// Sends `text` as an ephemeral reply, lets it linger briefly, then deletes it,
+/// the transient success notice shared by the create and edit commands (the
+/// [`ApplicationContext`] sibling of the paginator's `respond_then_clear`).
+pub async fn say_transient<T: Into<String>>(ctx: ApplicationContext<'_>, text: T) -> AppResult {
+    let message = ctx
+        .say_ephemeral(text.into())
+        .await
+        .context(SendMessageSnafu)?;
+    sleep(TRANSIENT_LINGER).await;
+    message
+        .delete(Context::Application(ctx))
+        .await
+        .context(DeleteMessageSnafu)?;
+    Ok(())
 }
 
 /// Builds the plain-text autocomplete label for a character: its name preceded

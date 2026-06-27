@@ -1,20 +1,15 @@
 //! The bot's Discord slash command for creating characters.
 
 use crate::{
-    AppResult, ApplicationContext, Context,
-    commands::character::two_modals::prompt_two_modals,
-    constants::TRANSIENT_LINGER,
-    error::{DeleteMessageSnafu, SendMessageSnafu},
+    AppResult, ApplicationContext,
+    commands::{character::two_modals::prompt_two_modals, say_transient},
     models::{
         character::Character,
         modals::{CreateCharacterModal, SecondCreateCharacterModal},
     },
     phrases::created,
     shortcodes::{guild_emojis, resolve_create_modals},
-    traits::SayEphemeral as _,
 };
-use snafu::ResultExt as _;
-use tokio::time::sleep;
 
 /// Skapar en ny gubbe.
 #[poise::command(slash_command, rename = "skapa")]
@@ -36,12 +31,5 @@ pub async fn create(ctx: ApplicationContext<'_>) -> AppResult {
     let notice = created(&character);
     ctx.data().db.insert_character(character).await?;
 
-    let success_message = ctx.say_ephemeral(notice).await.context(SendMessageSnafu)?;
-    sleep(TRANSIENT_LINGER).await;
-    success_message
-        .delete(Context::Application(ctx))
-        .await
-        .context(DeleteMessageSnafu)?;
-
-    Ok(())
+    say_transient(ctx, notice).await
 }

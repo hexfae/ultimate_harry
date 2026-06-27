@@ -2,15 +2,13 @@
 
 use crate::{
     AppResult, ApplicationContext, Context,
-    commands::{autocomplete, character::two_modals::prompt_two_modals, first_character_or_notify},
-    constants::TRANSIENT_LINGER,
-    error::{DeleteMessageSnafu, SendMessageSnafu},
+    commands::{
+        autocomplete, character::two_modals::prompt_two_modals, first_character_or_notify,
+        say_transient,
+    },
     phrases::edited,
     shortcodes::{guild_emojis, resolve_edit_modals},
-    traits::SayEphemeral as _,
 };
-use snafu::ResultExt as _;
-use tokio::time::sleep;
 
 /// Ändrar en gubbe.
 #[poise::command(slash_command, rename = "ändra")]
@@ -50,14 +48,5 @@ pub async fn edit(
         .await?;
     ctx.data().db.insert_character(character).await?;
 
-    let success_message = ctx
-        .say_ephemeral(edited(character_name))
-        .await
-        .context(SendMessageSnafu)?;
-    sleep(TRANSIENT_LINGER).await;
-    success_message
-        .delete(Context::Application(ctx))
-        .await
-        .context(DeleteMessageSnafu)?;
-    Ok(())
+    say_transient(ctx, edited(character_name)).await
 }
