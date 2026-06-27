@@ -48,10 +48,9 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> CreateInteractionResponse<'a> {
-        CreateInteractionResponse::UpdateMessage(
+        as_update_message(
             self.to_placeholder(character, id, Duration::ZERO, true, db, options)
-                .await
-                .to_slash_initial_response(CreateInteractionResponseMessage::new()),
+                .await,
         )
     }
 
@@ -64,9 +63,10 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> EditInteractionResponse<'a> {
-        self.to_placeholder(character, id, elapsed, true, db, options)
-            .await
-            .to_slash_initial_response_edit(EditInteractionResponse::new())
+        as_edit_interaction(
+            self.to_placeholder(character, id, elapsed, true, db, options)
+                .await,
+        )
     }
 
     /// Converts the history to a placeholder message.
@@ -99,10 +99,10 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> EditMessage<'a> {
-        self.to_placeholder(character, id, elapsed, true, db, options)
-            .await
-            .to_prefix_edit(EditMessage::new())
-            .allowed_mentions(CreateAllowedMentions::new())
+        as_message_edit(
+            self.to_placeholder(character, id, elapsed, true, db, options)
+                .await,
+        )
     }
 
     /// Converts the history to a placeholder, keying its buttons (the live Stop
@@ -228,11 +228,7 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> CreateInteractionResponse<'a> {
-        CreateInteractionResponse::UpdateMessage(
-            self.to_response(character, id, db, options)
-                .await
-                .to_slash_initial_response(CreateInteractionResponseMessage::new()),
-        )
+        as_update_message(self.to_response(character, id, db, options).await)
     }
 
     /// Converts the history to an edit interaction response.
@@ -243,9 +239,7 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> EditInteractionResponse<'a> {
-        self.to_response(character, id, db, options)
-            .await
-            .to_slash_initial_response_edit(EditInteractionResponse::new())
+        as_edit_interaction(self.to_response(character, id, db, options).await)
     }
 
     /// Converts the history to an edit message response.
@@ -256,10 +250,7 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> EditMessage<'a> {
-        self.to_response(character, id, db, options)
-            .await
-            .to_prefix_edit(EditMessage::new())
-            .allowed_mentions(CreateAllowedMentions::new())
+        as_message_edit(self.to_response(character, id, db, options).await)
     }
 
     /// Builds the footer line of a full response: the page counter, name
@@ -416,6 +407,25 @@ impl History {
         );
         vec![CreateComponent::Container(container)]
     }
+}
+
+/// Wraps a built [`CreateReply`] as an `UpdateMessage` interaction response.
+fn as_update_message(reply: CreateReply<'_>) -> CreateInteractionResponse<'_> {
+    CreateInteractionResponse::UpdateMessage(
+        reply.to_slash_initial_response(CreateInteractionResponseMessage::new()),
+    )
+}
+
+/// Wraps a built [`CreateReply`] as an interaction-response edit.
+fn as_edit_interaction(reply: CreateReply<'_>) -> EditInteractionResponse<'_> {
+    reply.to_slash_initial_response_edit(EditInteractionResponse::new())
+}
+
+/// Wraps a built [`CreateReply`] as a message edit that clears allowed mentions.
+fn as_message_edit(reply: CreateReply<'_>) -> EditMessage<'_> {
+    reply
+        .to_prefix_edit(EditMessage::new())
+        .allowed_mentions(CreateAllowedMentions::new())
 }
 
 /// Tints `container` with the character's accent colour, or leaves it untinted
