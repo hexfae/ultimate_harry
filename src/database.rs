@@ -238,6 +238,9 @@ impl Database {
     where
         C: IntoError<DatabaseError, Source = StoreError> + Copy,
     {
+        if !is_safe_id(id) {
+            return Ok(None);
+        }
         let path = self.character_path(id);
         let Some(mut character) = read_json::<Character>(&path).await.context(context)? else {
             return Ok(None);
@@ -733,6 +736,44 @@ mod tests {
         assert!(!is_safe_id(""), "an empty id is rejected");
         assert!(!is_safe_id("../config/tts_settings"), "a parent traversal is rejected");
         assert!(!is_safe_id("sub/dir"), "a separator is rejected");
+    }
+
+    /// A path-traversal character ID must not reach a record on a *write* path,
+    /// the way it cannot on the [`Database::character`] read path. An `id` like
+    /// `../characters/<real>` resolves back to a stored record, so without the
+    /// guard in `mutate_character` a crafted select value would mutate it; the
+    /// guard now short-circuits every mutation to `None`, leaving it untouched.
+    #[tokio::test]
+    async fn mutations_reject_path_traversal_ids() {
+        let opened = Database::temporary().await;
+        assert!(
+            opened.is_ok(),
+            "opening a temporary database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        insert(&db, character("sentinel", "Harry")).await;
+
+        let traversal = "../characters/sentinel";
+
+        let deleted = db.delete_character(traversal, UserId::new(2)).await;
+        assert!(
+            matches!(deleted, Ok(None)),
+            "a traversal id is rejected on the delete path, returning None instead of mutating"
+        );
+
+        let recolored = db
+            .set_character_color(traversal, Color::new(0x00ff_0000))
+            .await;
+        assert!(
+            matches!(recolored, Ok(None)),
+            "a traversal id is rejected on the color write path too"
+        );
+
+        let stored = db.character("sentinel").await.ok().flatten();
+        assert!(
+            stored.is_some_and(|record| record.is_visible() && record.color().is_none()),
+            "the real character is left untouched by the traversal attempts"
+        );
     }
 
     /// Builds a minimal visible character with the given ID and name.
