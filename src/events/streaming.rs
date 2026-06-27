@@ -253,7 +253,7 @@ pub trait ReplySink {
 /// resolves how attachments are sent (describing and caching images when the
 /// model lacks vision). Borrows the history mutably only for the duration of
 /// attachment resolution, so the caller can hand it to a [`ReplySink`] after.
-pub async fn prepare_request(
+async fn prepare_request(
     db: &Database,
     character: &Character,
     history: &mut History,
@@ -320,7 +320,7 @@ async fn finalize_failed<S: ReplySink + Send>(sink: S) -> AppResult {
     clippy::cognitive_complexity,
     reason = "the select loop, retry/timeout/limit handling and their logging are one cohesive flow that the module deliberately keeps together"
 )]
-pub async fn stream_into<S: ReplySink + Send>(
+async fn stream_into<S: ReplySink + Send>(
     requester: &LlmManager,
     context: &[ChatMessage],
     prompt: Option<String>,
