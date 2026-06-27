@@ -8,7 +8,7 @@
 use tracing::warn;
 
 use crate::{
-    llm::{LlmManager, fetch_audio_base64},
+    llm::{LlmError, LlmManager, fetch_audio_base64},
     models::{
         history::History,
         message::{AttachmentMode, DescribedAttachment, MediaMode, Message},
@@ -114,18 +114,23 @@ fn unique_urls(context: &[Message], select: impl Fn(&Message) -> Vec<String>) ->
     urls
 }
 
-/// Asks the vision model to describe each unique undescribed image URL found across `context`.
-async fn describe_images(
+/// Resolves each unique URL that `select` produces across `context` through the async `describe`
+/// call, collecting the successful descriptions and logging `failure` for any that error. Shared by
+/// image description and audio transcription.
+async fn describe_modality(
     requester: &LlmManager,
     context: &[Message],
+    select: impl Fn(&Message) -> Vec<String>,
+    describe: impl AsyncFn(&LlmManager, String) -> Result<String, LlmError>,
+    failure: &str,
 ) -> Vec<DescribedAttachment> {
-    let urls = unique_urls(context, Message::undescribed_image_urls);
+    let urls = unique_urls(context, select);
     let mut described = Vec::new();
     for url in urls {
-        match requester.describe_image(&url).await {
+        match describe(requester, url.clone()).await {
             Ok(description) => described.push(DescribedAttachment { url, description }),
             Err(why) => {
-                warn!("could not describe an image, leaving it undescribed");
+                warn!("{failure}");
                 report_error(why);
             }
         }
@@ -133,26 +138,34 @@ async fn describe_images(
     described
 }
 
+/// Asks the vision model to describe each unique undescribed image URL found across `context`.
+async fn describe_images(
+    requester: &LlmManager,
+    context: &[Message],
+) -> Vec<DescribedAttachment> {
+    describe_modality(
+        requester,
+        context,
+        Message::undescribed_image_urls,
+        async |manager, url| manager.describe_image(&url).await,
+        "could not describe an image, leaving it undescribed",
+    )
+    .await
+}
+
 /// Asks the audio model to transcribe each unique untranscribed voice URL found across `context`.
 async fn transcribe_audio(
     requester: &LlmManager,
     context: &[Message],
 ) -> Vec<DescribedAttachment> {
-    let urls = unique_urls(context, Message::undescribed_audio_urls);
-    let mut described = Vec::new();
-    for url in urls {
-        match requester.transcribe_audio(&url).await {
-            Ok(transcription) => described.push(DescribedAttachment {
-                url,
-                description: transcription,
-            }),
-            Err(why) => {
-                warn!("could not transcribe a voice message, leaving it untranscribed");
-                report_error(why);
-            }
-        }
-    }
-    described
+    describe_modality(
+        requester,
+        context,
+        Message::undescribed_audio_urls,
+        async |manager, url| manager.transcribe_audio(&url).await,
+        "could not transcribe a voice message, leaving it untranscribed",
+    )
+    .await
 }
 
 /// Downloads and base64-encodes each unique voice URL across `context` into the messages, so an
