@@ -2,9 +2,8 @@
 
 use crate::{
     AppResult, Context,
-    commands::{autocomplete, notify_no_character},
+    commands::{autocomplete, first_character_or_notify},
     error::SendMessageSnafu,
-    models::character::Character,
     traits::SayEphemeral as _,
 };
 use poise::serenity_prelude::all::Color;
@@ -33,9 +32,7 @@ pub async fn color(
     color: Option<String>,
 ) -> AppResult {
     let db = &ctx.data().db;
-    let characters: Vec<Character> = db.characters_by_similarity(name).await?;
-    let Some(character) = characters.first() else {
-        notify_no_character(ctx).await?;
+    let Some(character) = first_character_or_notify(ctx, name).await? else {
         return Ok(());
     };
 

@@ -94,6 +94,28 @@ pub async fn notify_no_character(ctx: Context<'_>) -> AppResult {
     Ok(())
 }
 
+/// Returns the visible character most similar to `name`, or sends the shared
+/// "no character found" notice and returns `None` when the search finds nothing.
+/// The single search-then-pick-first-or-notify policy shared by the commands that
+/// act on one named character.
+pub async fn first_character_or_notify(
+    ctx: Context<'_>,
+    name: String,
+) -> AppResult<Option<Character>> {
+    let Some(character) = ctx
+        .data()
+        .db
+        .characters_by_similarity(name)
+        .await?
+        .into_iter()
+        .next()
+    else {
+        notify_no_character(ctx).await?;
+        return Ok(None);
+    };
+    Ok(Some(character))
+}
+
 /// Builds the plain-text autocomplete label for a character: its name preceded
 /// by any unicode emoji, with custom server emoji dropped. Discord renders only
 /// unicode emoji in autocomplete choices and would show `<:name:id>` markup as

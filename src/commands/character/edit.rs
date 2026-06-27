@@ -2,7 +2,7 @@
 
 use crate::{
     AppResult, ApplicationContext, Context,
-    commands::{autocomplete, character::two_modals::prompt_two_modals, notify_no_character},
+    commands::{autocomplete, character::two_modals::prompt_two_modals, first_character_or_notify},
     constants::TRANSIENT_LINGER,
     error::{DeleteMessageSnafu, SendMessageSnafu},
     phrases::edited,
@@ -22,15 +22,9 @@ pub async fn edit(
     #[autocomplete = autocomplete]
     name: String,
 ) -> AppResult {
-    let Some(mut character) = ctx
-        .data()
-        .db
-        .characters_by_similarity(name)
-        .await?
-        .into_iter()
-        .next()
+    let Some(mut character) = first_character_or_notify(Context::Application(ctx), name).await?
     else {
-        return notify_no_character(Context::Application(ctx)).await;
+        return Ok(());
     };
 
     // the pre-filled first modal shows the current values, so it doubles as the
