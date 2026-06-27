@@ -6,8 +6,9 @@ use crate::{
         autocomplete, character::two_modals::prompt_two_modals, first_character_or_notify,
         say_transient,
     },
+    models::modals::resolve_edit_modals,
     phrases::edited,
-    shortcodes::{guild_emojis, resolve_edit_modals},
+    shortcodes::guild_emojis,
 };
 
 /// Ändrar en gubbe.

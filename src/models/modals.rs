@@ -1,6 +1,8 @@
 //! Modal forms for creating and editing characters and messages.
 
+use crate::shortcodes::resolve;
 use poise::Modal;
+use poise::serenity_prelude::Emoji;
 
 /// The first modal form for creating a new character.
 ///
@@ -148,4 +150,55 @@ pub struct EditMessageModal {
     #[name = "Meddelande"]
     #[placeholder = "Vad ska egentligen stå här?"]
     pub content: String,
+}
+
+/// Resolves shortcodes in an optional field in place, leaving `None` untouched.
+fn resolve_field(field: &mut Option<String>, guild_emojis: &[Emoji]) {
+    if let Some(value) = field {
+        *value = resolve(value, guild_emojis);
+    }
+}
+
+/// Expands shortcodes in every text field of the character creation modals. The
+/// avatar is a URL and so is left untouched.
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "resolves the create modals, which live in this module; the suffix names what it acts on"
+)]
+pub fn resolve_create_modals(
+    first: &mut CreateCharacterModal,
+    second: &mut SecondCreateCharacterModal,
+    guild_emojis: &[Emoji],
+) {
+    first.name = resolve(&first.name, guild_emojis);
+    first.greeting = resolve(&first.greeting, guild_emojis);
+    resolve_field(&mut first.nickname, guild_emojis);
+    resolve_field(&mut first.description, guild_emojis);
+    resolve_field(&mut first.personality, guild_emojis);
+    resolve_field(&mut second.emoji, guild_emojis);
+    resolve_field(&mut second.system_prompt, guild_emojis);
+    resolve_field(&mut second.prompt, guild_emojis);
+    resolve_field(&mut second.scenario, guild_emojis);
+}
+
+/// Expands shortcodes in every text field of the character edit modals. The
+/// avatar is a URL and so is left untouched.
+#[expect(
+    clippy::module_name_repetitions,
+    reason = "resolves the edit modals, which live in this module; the suffix names what it acts on"
+)]
+pub fn resolve_edit_modals(
+    first: &mut EditCharacterModal,
+    second: &mut SecondEditCharacterModal,
+    guild_emojis: &[Emoji],
+) {
+    resolve_field(&mut first.name, guild_emojis);
+    resolve_field(&mut first.greeting, guild_emojis);
+    resolve_field(&mut first.nickname, guild_emojis);
+    resolve_field(&mut first.description, guild_emojis);
+    resolve_field(&mut first.personality, guild_emojis);
+    resolve_field(&mut second.emoji, guild_emojis);
+    resolve_field(&mut second.system_prompt, guild_emojis);
+    resolve_field(&mut second.prompt, guild_emojis);
+    resolve_field(&mut second.scenario, guild_emojis);
 }

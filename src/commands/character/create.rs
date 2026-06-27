@@ -5,10 +5,10 @@ use crate::{
     commands::{character::two_modals::prompt_two_modals, say_transient},
     models::{
         character::Character,
-        modals::{CreateCharacterModal, SecondCreateCharacterModal},
+        modals::{CreateCharacterModal, SecondCreateCharacterModal, resolve_create_modals},
     },
     phrases::created,
-    shortcodes::{guild_emojis, resolve_create_modals},
+    shortcodes::guild_emojis,
 };
 
 /// Skapar en ny gubbe.

@@ -7,13 +7,7 @@
 //! emoji become their `<:name:id>` wire form and unicode shortcodes become the
 //! literal emoji. Unrecognised runs are left untouched.
 
-use crate::{
-    ApplicationContext,
-    models::modals::{
-        CreateCharacterModal, EditCharacterModal, SecondCreateCharacterModal,
-        SecondEditCharacterModal,
-    },
-};
+use crate::ApplicationContext;
 use poise::serenity_prelude::Emoji;
 
 /// Returns whether `ch` may appear inside a shortcode name.
@@ -39,7 +33,7 @@ fn render_shortcode(name: &str, guild_emojis: &[Emoji]) -> Option<String> {
 
 /// Expands every `:shortcode:` run in `text` into its rendered emoji, leaving
 /// unrecognised runs untouched.
-fn resolve(text: &str, guild_emojis: &[Emoji]) -> String {
+pub fn resolve(text: &str, guild_emojis: &[Emoji]) -> String {
     let mut out = String::with_capacity(text.len());
     let mut name = String::new();
     let mut in_code = false;
@@ -82,13 +76,6 @@ fn resolve(text: &str, guild_emojis: &[Emoji]) -> String {
     out
 }
 
-/// Resolves shortcodes in an optional field in place, leaving `None` untouched.
-fn resolve_field(field: &mut Option<String>, guild_emojis: &[Emoji]) {
-    if let Some(value) = field {
-        *value = resolve(value, guild_emojis);
-    }
-}
-
 /// Returns whether `token` is a single custom-emoji markup token
 /// (`<:name:id>` or `<a:name:id>`).
 fn is_custom_emoji_token(token: &str) -> bool {
@@ -120,42 +107,6 @@ pub async fn guild_emojis(ctx: ApplicationContext<'_>) -> Vec<Emoji> {
             Vec::new()
         }
     }
-}
-
-/// Expands shortcodes in every text field of the character creation modals. The
-/// avatar is a URL and so is left untouched.
-pub fn resolve_create_modals(
-    first: &mut CreateCharacterModal,
-    second: &mut SecondCreateCharacterModal,
-    guild_emojis: &[Emoji],
-) {
-    first.name = resolve(&first.name, guild_emojis);
-    first.greeting = resolve(&first.greeting, guild_emojis);
-    resolve_field(&mut first.nickname, guild_emojis);
-    resolve_field(&mut first.description, guild_emojis);
-    resolve_field(&mut first.personality, guild_emojis);
-    resolve_field(&mut second.emoji, guild_emojis);
-    resolve_field(&mut second.system_prompt, guild_emojis);
-    resolve_field(&mut second.prompt, guild_emojis);
-    resolve_field(&mut second.scenario, guild_emojis);
-}
-
-/// Expands shortcodes in every text field of the character edit modals. The
-/// avatar is a URL and so is left untouched.
-pub fn resolve_edit_modals(
-    first: &mut EditCharacterModal,
-    second: &mut SecondEditCharacterModal,
-    guild_emojis: &[Emoji],
-) {
-    resolve_field(&mut first.name, guild_emojis);
-    resolve_field(&mut first.greeting, guild_emojis);
-    resolve_field(&mut first.nickname, guild_emojis);
-    resolve_field(&mut first.description, guild_emojis);
-    resolve_field(&mut first.personality, guild_emojis);
-    resolve_field(&mut second.emoji, guild_emojis);
-    resolve_field(&mut second.system_prompt, guild_emojis);
-    resolve_field(&mut second.prompt, guild_emojis);
-    resolve_field(&mut second.scenario, guild_emojis);
 }
 
 #[cfg(test)]
