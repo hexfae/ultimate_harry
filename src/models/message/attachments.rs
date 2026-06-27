@@ -284,16 +284,9 @@ impl Message {
     /// Merges in any encodings whose URL matches one of this message's attachments, skipping URLs
     /// that are already encoded.
     pub fn add_encoded_audio(&mut self, new: &[EncodedAudio]) {
-        for encoded in new {
-            let owned = self
-                .attachments
-                .iter()
-                .any(|url| url.as_str() == encoded.url.as_str());
-            let already = self.encoded_audio_for(&encoded.url).is_some();
-            if owned && !already {
-                self.encoded_audio.push(encoded.clone());
-            }
-        }
+        merge_owned(&self.attachments, &mut self.encoded_audio, new, |encoded| {
+            encoded.url.as_str()
+        });
     }
 
     /// The cached description for `url`, if one has been generated.
@@ -308,16 +301,9 @@ impl Message {
     /// Merges in any descriptions whose URL matches one of this message's attachments, skipping
     /// URLs that are already described.
     pub fn add_descriptions(&mut self, new: &[DescribedAttachment]) {
-        for description in new {
-            let owned = self
-                .attachments
-                .iter()
-                .any(|url| url.as_str() == description.url.as_str());
-            let already = self.description_for(&description.url).is_some();
-            if owned && !already {
-                self.described.push(description.clone());
-            }
-        }
+        merge_owned(&self.attachments, &mut self.described, new, |described| {
+            described.url.as_str()
+        });
     }
 
     /// The number of cached attachment descriptions, for tests.
@@ -325,6 +311,24 @@ impl Message {
     #[must_use]
     pub const fn described_count(&self) -> usize {
         self.described.len()
+    }
+}
+
+/// Merges each item from `new` into `target` when its URL (via `url_of`) belongs to one of
+/// `attachments` and is not already cached. Shared by the encoded-audio and description caches.
+fn merge_owned<T: Clone>(
+    attachments: &[String],
+    target: &mut Vec<T>,
+    new: &[T],
+    url_of: impl Fn(&T) -> &str,
+) {
+    for item in new {
+        let url = url_of(item);
+        let owned = attachments.iter().any(|attachment| attachment.as_str() == url);
+        let already = target.iter().any(|existing| url_of(existing) == url);
+        if owned && !already {
+            target.push(item.clone());
+        }
     }
 }
 
