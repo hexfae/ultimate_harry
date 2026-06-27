@@ -4,6 +4,7 @@ use crate::{
     AppResult, Context,
     commands::{autocomplete, first_character_or_notify},
     error::SendMessageSnafu,
+    phrases,
     traits::SayEphemeral as _,
 };
 use poise::serenity_prelude::all::Color;
@@ -47,14 +48,14 @@ pub async fn color(
     };
 
     let Some(parsed) = parse_color(&input) else {
-        ctx.say_ephemeral("Ogiltig färg. Använd en hexfärg som #ff0000.")
+        ctx.say_ephemeral("Det där var ingen färg jag känner igen. Ge mig en hexfärg, typ #ff0000.")
             .await
             .context(SendMessageSnafu)?;
         return Ok(());
     };
 
     db.set_character_color(character.id(), parsed).await?;
-    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
     Ok(())
 }
 

@@ -5,6 +5,7 @@ use crate::{
     database::Database,
     error::{SendMessageSnafu, SendResponseSnafu},
     models::{character::Character, history::History},
+    phrases,
 };
 use serenity::all::{
     ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
@@ -31,7 +32,8 @@ pub async fn pin(
         .context(SendMessageSnafu)?;
 
     let response = CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new().content(pin.link().to_string()),
+        CreateInteractionResponseMessage::new()
+            .content(format!("{}\n{}", phrases::pinned(), pin.link())),
     );
 
     interaction

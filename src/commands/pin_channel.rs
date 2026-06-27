@@ -1,6 +1,6 @@
 //! The bot's Discord slash command for setting the pin channel.
 
-use crate::{AppResult, Context, error::SendMessageSnafu, traits::SayEphemeral as _};
+use crate::{AppResult, Context, error::SendMessageSnafu, phrases, traits::SayEphemeral as _};
 use serenity::all::GuildChannel;
 use snafu::ResultExt as _;
 
@@ -13,6 +13,6 @@ pub async fn pin_channel(
     channel: GuildChannel,
 ) -> AppResult {
     ctx.data().db.upsert_pin_channel(channel.id).await?;
-    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
     Ok(())
 }

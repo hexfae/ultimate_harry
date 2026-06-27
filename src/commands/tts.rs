@@ -1,7 +1,8 @@
 //! The bot's Discord slash command for setting text-to-speech (`ElevenLabs`) settings.
 
 use crate::{
-    AppResult, Context, error::SendMessageSnafu, traits::SayEphemeral as _, tts::TtsOverrides,
+    AppResult, Context, error::SendMessageSnafu, phrases, traits::SayEphemeral as _,
+    tts::TtsOverrides,
 };
 use snafu::ResultExt as _;
 
@@ -13,7 +14,7 @@ pub async fn tts(
     #[description = "ElevenLabs API-nyckeln att använda"]
     api_key: Option<String>,
     #[rename = "standardröst"]
-    #[description = "Röst-ID:t för karaktärer utan egen röst"]
+    #[description = "ElevenLabs röst-ID för gubbar utan egen röst"]
     default_voice: Option<String>,
     #[rename = "röst-modell"]
     #[description = "ElevenLabs-modellen att använda"]
@@ -37,6 +38,6 @@ pub async fn tts(
     }
     tts_settings.apply_overrides(overrides);
     ctx.data().db.upsert_tts_settings(tts_settings).await?;
-    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
     Ok(())
 }

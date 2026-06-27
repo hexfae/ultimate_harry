@@ -1,6 +1,6 @@
 //! The bot's Discord slash command for setting users' names.
 
-use crate::{AppResult, Context, error::SendMessageSnafu, traits::SayEphemeral as _};
+use crate::{AppResult, Context, error::SendMessageSnafu, phrases, traits::SayEphemeral as _};
 use poise::serenity_prelude::UserId;
 use snafu::ResultExt as _;
 
@@ -18,6 +18,6 @@ pub async fn name(
     let user_id = user.unwrap_or_else(|| ctx.author().id);
     ctx.data().db.upsert_user_name(user_id, name).await?;
 
-    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
     Ok(())
 }

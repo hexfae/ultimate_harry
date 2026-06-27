@@ -1,7 +1,8 @@
 //! The bot's Discord slash command for setting various AI model settings.
 
 use crate::{
-    AppResult, Context, error::SendMessageSnafu, llm::ModelOverrides, traits::SayEphemeral as _,
+    AppResult, Context, error::SendMessageSnafu, llm::ModelOverrides, phrases,
+    traits::SayEphemeral as _,
 };
 use snafu::ResultExt as _;
 
@@ -41,7 +42,7 @@ pub async fn model(
     }
     model_settings.apply_overrides(overrides);
     ctx.data().db.upsert_model_settings(model_settings).await?;
-    ctx.say_ephemeral("Klart!")
+    ctx.say_ephemeral(phrases::done())
         .await
         .context(SendMessageSnafu)?;
     Ok(())

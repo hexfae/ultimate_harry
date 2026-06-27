@@ -4,11 +4,12 @@ use crate::{
     AppResult, Context,
     commands::{autocomplete, first_character_or_notify},
     error::SendMessageSnafu,
+    phrases,
     traits::SayEphemeral as _,
 };
 use snafu::ResultExt as _;
 
-/// Kopplar en `ElevenLabs`-röst till en gubbe.
+/// Kopplar en ElevenLabs-röst till en gubbe.
 #[poise::command(slash_command, rename = "röst")]
 pub async fn voice(
     ctx: Context<'_>,
@@ -34,6 +35,6 @@ pub async fn voice(
     };
 
     db.set_character_voice(character.id(), Some(new_voice)).await?;
-    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
     Ok(())
 }

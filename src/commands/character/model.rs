@@ -4,6 +4,7 @@ use crate::{
     AppResult, Context,
     commands::{autocomplete, first_character_or_notify},
     error::SendMessageSnafu,
+    phrases,
     traits::SayEphemeral as _,
 };
 use snafu::ResultExt as _;
@@ -49,7 +50,7 @@ pub async fn model(
     overrides.temperature = temperature.or(overrides.temperature);
     db.set_character_model_settings(character.id(), overrides)
         .await?;
-    ctx.say_ephemeral("Klart!")
+    ctx.say_ephemeral(phrases::done())
         .await
         .context(SendMessageSnafu)?;
     Ok(())

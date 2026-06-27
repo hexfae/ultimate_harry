@@ -4,6 +4,7 @@ use crate::{
     AppResult, Context,
     commands::autocomplete_from_names,
     error::{SendMessageSnafu, SendResponseSnafu},
+    phrases,
     read_aloud,
     traits::SayEphemeral as _,
     tts::{TtsError, TtsManager, TtsSettings, audio_filename, is_speakable},
@@ -59,7 +60,7 @@ pub async fn say(
     let db = &ctx.data().db;
     let settings = db.tts_settings().await;
     let Some(reading) = resolve_reading(&settings, &voice) else {
-        ctx.say_ephemeral(format!("Ingen röst med namnet {voice} hittades."))
+        ctx.say_ephemeral(phrases::no_voice(&voice))
             .await
             .context(SendMessageSnafu)?;
         return Ok(());

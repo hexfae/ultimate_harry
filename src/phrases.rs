@@ -84,6 +84,21 @@ pub fn click_me() -> &'static str {
     sample(CLICK_ME_PHRASES)
 }
 
+/// Returns a phrase confirming that an action completed.
+pub fn done() -> &'static str {
+    sample(DONE_PHRASES)
+}
+
+/// Returns a phrase for when no voice by the given name was found, with the name inserted.
+pub fn no_voice<N: Display>(name: N) -> String {
+    sample_name(NO_VOICE_PHRASES, name)
+}
+
+/// Returns a phrase prefacing a freshly pinned message.
+pub fn pinned() -> &'static str {
+    sample(PINNED_PHRASES)
+}
+
 /// Phrases for affirmative responses.
 const YES_PHRASES: &[&str] = &[
     "Ja",
@@ -91,7 +106,7 @@ const YES_PHRASES: &[&str] = &[
     "Visst",
     "Varför inte",
     "Absolut",
-    "Helst",
+    "Gärna",
     "Ja tack",
     "Jo tack",
     "Okej",
@@ -164,8 +179,10 @@ const EDITED_PHRASES: &[&str] = &[
     "Din perfekta varelse, {character}, är nu ännu mer perfekt.",
     "Wow, {character} är bättre än någonsin.",
     "Haha, den här nya {character} var bättre ändå!",
-    "Gud vad kreativ du är, snyggt jobbat med {character}!",
+    "Snyggt redigerat, {character} har aldrig sett bättre ut.",
     "Betyder det här att du gjorde ett misstag med {character} tidigare…?",
+    "{character} fick precis en liten ansiktslyftning.",
+    "Lite finjustering här och där, och {character} är som ny.",
 ];
 
 /// Phrases for character deletion.
@@ -218,7 +235,7 @@ const CLICK_BELOW_PHRASES: &[&str] = &[
     "Klicka på nedanstående knapp.",
     "Klicka inte på nedanstående knapp.",
     "Det gör ont för nedanstående knapp när du klickar på den. Gör det.",
-    "Är du säker att du vågar?",
+    "Vågar du verkligen klicka på nedanstående knapp?",
 ];
 
 /// Phrases for clicking me.
@@ -229,5 +246,35 @@ const CLICK_ME_PHRASES: &[&str] = &[
     "Klicka på mig nu!",
     "Det gör ont när du klickar på mig!",
     "Klicka inte på mig.",
-    "Är du säker att du vågar?",
+    "Är du säker på att du vågar?",
+];
+
+/// Phrases confirming that an action completed.
+const DONE_PHRASES: &[&str] = &[
+    "Klart!",
+    "Sådär ja.",
+    "Fixat.",
+    "Klart som korvspad.",
+    "Då var det gjort.",
+    "Där satt den.",
+];
+
+/// Phrases for when no voice is found, contains `{character}` placeholder.
+const NO_VOICE_PHRASES: &[&str] = &[
+    "Jag känner ingen röst som heter {character}. (ingen röst hittades)",
+    "{character}? Aldrig hört talas om. (ingen röst hittades)",
+    "Det finns ingen röst med det namnet. (ingen röst hittades)",
+    "Ingen röst heter så vad jag vet. (ingen röst hittades)",
+    "Pröva ett röstnamn som faktiskt finns. (ingen röst hittades)",
+    "Den rösten har jag då aldrig hört. (ingen röst hittades)",
+];
+
+/// Phrases prefacing a freshly pinned message link.
+const PINNED_PHRASES: &[&str] = &[
+    "Fäst för eftervärlden.",
+    "Den här sparar vi.",
+    "Upp på väggen med den.",
+    "Ett ögonblick värt att minnas.",
+    "Fäst och klart.",
+    "Den förtjänar en plats på väggen.",
 ];

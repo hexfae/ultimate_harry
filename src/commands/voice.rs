@@ -1,7 +1,7 @@
 //! The bot's Discord slash commands for managing the speak-aloud voice palette.
 
 use crate::{
-    AppResult, Context, commands::autocomplete_from_names, error::SendMessageSnafu,
+    AppResult, Context, commands::autocomplete_from_names, error::SendMessageSnafu, phrases,
     traits::SayEphemeral as _, tts::VoiceEntry,
 };
 use poise::serenity_prelude::CreateAutocompleteResponse;
@@ -19,7 +19,7 @@ pub async fn voice(_: Context<'_>) -> AppResult {
     Ok(())
 }
 
-/// Lägger till en röst i paletten.
+/// Skapar en röst i paletten.
 #[poise::command(slash_command, rename = "skapa")]
 pub async fn create(
     ctx: Context<'_>,
@@ -49,16 +49,16 @@ pub async fn create(
         model: model.filter(|value| !value.is_empty()),
     });
     db.upsert_tts_settings(settings).await?;
-    ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
     Ok(())
 }
 
-/// Tar bort en röst från paletten.
+/// Dödar en röst i paletten.
 #[poise::command(slash_command, rename = "döda")]
 pub async fn delete(
     ctx: Context<'_>,
     #[rename = "namn"]
-    #[description = "Namnet på rösten att ta bort"]
+    #[description = "Namnet på rösten att döda"]
     #[autocomplete = autocomplete_voice]
     name: String,
 ) -> AppResult {
@@ -66,21 +66,21 @@ pub async fn delete(
     let mut settings = db.tts_settings().await;
     if settings.remove_voice(&name) {
         db.upsert_tts_settings(settings).await?;
-        ctx.say_ephemeral("Klart!").await.context(SendMessageSnafu)?;
+        ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
     } else {
-        ctx.say_ephemeral(format!("Ingen röst med namnet {name} hittades."))
+        ctx.say_ephemeral(phrases::no_voice(&name))
             .await
             .context(SendMessageSnafu)?;
     }
     Ok(())
 }
 
-/// Listar rösterna i paletten.
+/// Visar rösterna i paletten.
 #[poise::command(slash_command, rename = "visa")]
 pub async fn view(ctx: Context<'_>) -> AppResult {
     let settings = ctx.data().db.tts_settings().await;
     let message = if settings.voices().is_empty() {
-        "Inga röster är konfigurerade.".to_owned()
+        "Det finns inga röster än. Tyst som i graven.".to_owned()
     } else {
         settings
             .voices()
