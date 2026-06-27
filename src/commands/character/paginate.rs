@@ -11,7 +11,7 @@ use crate::{
     commands::character::render::character_embed,
     commands::notify_no_character,
     components::emoji_button,
-    constants::{CANCEL, NEXT, PREVIOUS, TRANSIENT_LINGER},
+    constants::{CANCEL, CONFIRM, NEXT, PREVIOUS, TRANSIENT_LINGER},
     error::{DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
     events::interaction::{Interaction, InteractionKind},
     models::character::Character,
@@ -25,7 +25,7 @@ use poise::{
     serenity_prelude::{
         ButtonStyle, ComponentInteraction, ComponentInteractionCollector, CreateActionRow,
         CreateButton, CreateComponent, CreateInteractionResponse,
-        CreateInteractionResponseMessage,
+        CreateInteractionResponseMessage, ReactionType,
         small_fixed_array::{FixedArray, FixedString},
     },
 };
@@ -235,8 +235,8 @@ async fn send_initial_embed<'a>(
     .context(SendMessageSnafu)
 }
 
-/// Returns the action row for the confirm paginator: Confirm/Cancel followed by
-/// Previous/Next. `nav_disabled` greys out the Previous/Next buttons (used on
+/// Returns the action row for the confirm paginator: Previous/Next followed by
+/// Confirm/Cancel. `nav_disabled` greys out the Previous/Next buttons (used on
 /// single-page results).
 #[must_use]
 fn create_buttons(
@@ -245,10 +245,10 @@ fn create_buttons(
     nav_disabled: bool,
 ) -> Cow<'static, [CreateComponent<'static>]> {
     let buttons = vec![
-        emoji_button(InteractionKind::Confirm.custom_id(id), action_emoji),
-        emoji_button(InteractionKind::Cancel.custom_id(id), CANCEL),
         emoji_button(InteractionKind::Previous.custom_id(id), PREVIOUS).disabled(nav_disabled),
         emoji_button(InteractionKind::Next.custom_id(id), NEXT).disabled(nav_disabled),
+        emoji_button(InteractionKind::Confirm.custom_id(id), action_emoji),
+        emoji_button(InteractionKind::Cancel.custom_id(id), CANCEL),
     ];
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         buttons.into(),
@@ -312,9 +312,11 @@ fn confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
         vec![
             CreateButton::new(confirm_id)
                 .style(ButtonStyle::Secondary)
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(CONFIRM)))
                 .label(yes()),
             CreateButton::new(cancel_id)
                 .style(ButtonStyle::Secondary)
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(CANCEL)))
                 .label(no()),
         ]
         .into(),

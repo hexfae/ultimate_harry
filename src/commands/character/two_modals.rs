@@ -14,8 +14,8 @@ use alloc::borrow::Cow;
 use poise::{
     CreateReply, Modal, ReplyHandle, execute_modal, execute_modal_on_component_interaction,
     serenity_prelude::{
-        ComponentInteraction, ComponentInteractionCollector, CreateActionRow, CreateButton,
-        CreateComponent,
+        ButtonStyle, ComponentInteraction, ComponentInteractionCollector, CreateActionRow,
+        CreateButton, CreateComponent,
         small_fixed_array::{FixedArray, FixedString},
     },
 };
@@ -99,6 +99,11 @@ where
     I: Into<Cow<'a, str>>,
     L: Into<Cow<'a, str>>,
 {
-    let button = vec![CreateButton::new(custom_id).label(label)].into();
+    let button = vec![
+        CreateButton::new(custom_id)
+            .style(ButtonStyle::Secondary)
+            .label(label),
+    ]
+    .into();
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(button))]
 }

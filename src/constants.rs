@@ -4,6 +4,8 @@ use core::time::Duration;
 
 /// The emoji used for cancelling operations on characters.
 pub const CANCEL: &str = "❌";
+/// The emoji used for confirming a yes/no prompt.
+pub const CONFIRM: &str = "✅";
 /// The emoji used for navigating backward in chats/character pages.
 pub const PREVIOUS: &str = "◀";
 /// The emoji used for navigating forward in chats/character pages.

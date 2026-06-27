@@ -558,11 +558,17 @@ fn character_select_menu<'a>(
                 options: options
                     .iter()
                     .map(|option| {
-                        CreateSelectMenuOption::new(
-                            option.label().to_owned(),
+                        let mut menu_option = CreateSelectMenuOption::new(
+                            option.name().to_owned(),
                             option.id().to_owned(),
                         )
-                        .description(option.description().to_owned())
+                        .description(option.description().to_owned());
+                        if let Some(emoji) = option.emoji()
+                            && let Ok(reaction) = ReactionType::try_from(emoji.to_owned())
+                        {
+                            menu_option = menu_option.emoji(reaction);
+                        }
+                        menu_option
                     })
                     .collect(),
             },

@@ -163,8 +163,10 @@ pub struct Character {
     reason = "this is a projection of a Character, so the shared prefix is meaningful"
 )]
 pub struct CharacterOption {
-    /// The display label (emoji + name), as produced by the character's `Display`.
-    label: String,
+    /// The character's display name, shown as the option's label.
+    name: String,
+    /// The character's emoji, shown in the option's native emoji slot, if any.
+    emoji: Option<String>,
     /// The character's ID, used as the select option's value.
     id: String,
     /// A short blurb shown under the label in the hand-off menu.
@@ -172,10 +174,16 @@ pub struct CharacterOption {
 }
 
 impl CharacterOption {
-    /// Returns the option's display label.
+    /// Returns the option's display name.
     #[must_use]
-    pub fn label(&self) -> &str {
-        &self.label
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the option's emoji, shown in the native emoji slot, if any.
+    #[must_use]
+    pub fn emoji(&self) -> Option<&str> {
+        self.emoji.as_deref()
     }
 
     /// Returns the option's character ID.
@@ -339,7 +347,8 @@ impl Character {
             .or_else(|| self.scenario())
             .unwrap_or_else(|| self.greeting());
         CharacterOption {
-            label: self.to_string(),
+            name: self.name().to_owned(),
+            emoji: self.emoji().map(ToOwned::to_owned),
             id: self.id.clone(),
             description: blurb.chars().take(100).collect(),
         }
