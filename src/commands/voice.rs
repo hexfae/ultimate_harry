@@ -1,7 +1,10 @@
 //! The bot's Discord slash commands for managing the speak-aloud voice palette.
 
-use crate::{AppResult, Context, error::SendMessageSnafu, traits::SayEphemeral as _, tts::VoiceEntry};
-use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse};
+use crate::{
+    AppResult, Context, commands::autocomplete_from_names, error::SendMessageSnafu,
+    traits::SayEphemeral as _, tts::VoiceEntry,
+};
+use poise::serenity_prelude::CreateAutocompleteResponse;
 use snafu::ResultExt as _;
 
 /// Hanterar röster för uppläsning.
@@ -104,11 +107,11 @@ pub async fn view(ctx: Context<'_>) -> AppResult {
 async fn autocomplete_voice<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {
     let settings = ctx.data().db.tts_settings().await;
     let lowered = partial.to_lowercase();
-    let choices = settings
+    let names = settings
         .voices()
         .iter()
         .filter(|voice| voice.name.to_lowercase().contains(&lowered))
-        .map(|voice| AutocompleteChoice::new(voice.name.clone(), voice.name.clone()))
-        .collect::<Vec<AutocompleteChoice<'_>>>();
-    CreateAutocompleteResponse::new().set_choices(choices)
+        .map(|voice| voice.name.clone())
+        .collect::<Vec<String>>();
+    autocomplete_from_names(names)
 }

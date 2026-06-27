@@ -122,6 +122,16 @@ fn choices_from<'a>(characters: Vec<Character>) -> CreateAutocompleteResponse<'a
     CreateAutocompleteResponse::new().set_choices(character_names)
 }
 
+/// Builds an autocomplete response from the given names, using each as both the
+/// displayed label and the submitted value.
+pub fn autocomplete_from_names<'a>(names: Vec<String>) -> CreateAutocompleteResponse<'a> {
+    let choices = names
+        .into_iter()
+        .map(|name| AutocompleteChoice::new(name.clone(), name))
+        .collect::<Vec<AutocompleteChoice<'_>>>();
+    CreateAutocompleteResponse::new().set_choices(choices)
+}
+
 /// Builds an autocomplete response from a similarity-ranked character query,
 /// swallowing a ranking failure into an empty list (logged) so the picker stays
 /// responsive. `what` names the queried set for the warning.

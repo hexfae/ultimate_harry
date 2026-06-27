@@ -2,6 +2,7 @@
 
 use crate::{
     AppResult, Context,
+    commands::autocomplete_from_names,
     error::{SendMessageSnafu, SendResponseSnafu},
     read_aloud,
     traits::SayEphemeral as _,
@@ -9,7 +10,7 @@ use crate::{
 };
 use poise::{
     CreateReply,
-    serenity_prelude::{AutocompleteChoice, CreateAttachment, CreateAutocompleteResponse},
+    serenity_prelude::{CreateAttachment, CreateAutocompleteResponse},
 };
 use snafu::ResultExt as _;
 
@@ -138,11 +139,7 @@ async fn autocomplete_reading_voice<'a>(
     partial: &str,
 ) -> CreateAutocompleteResponse<'a> {
     let settings = ctx.data().db.tts_settings().await;
-    let choices = reading_candidates(&settings, partial)
-        .into_iter()
-        .map(|name| AutocompleteChoice::new(name.clone(), name))
-        .collect::<Vec<AutocompleteChoice<'_>>>();
-    CreateAutocompleteResponse::new().set_choices(choices)
+    autocomplete_from_names(reading_candidates(&settings, partial))
 }
 
 /// Whether the user is a member of at least one of the bot's guilds, given the
