@@ -142,18 +142,12 @@ impl History {
     ) -> Vec<CreateComponent<'a>> {
         let (has_previous, has_edit) = (false, false);
 
-        let footer = {
-            let pages = format!(
-                "-# {}/{} | tar {:.1}s | 0/{CHARACTER_LIMIT}",
-                self.current.saturating_add(1),
-                self.choices.len(),
-                elapsed.as_secs_f32(),
-            );
-            vec![CreateContainerComponent::TextDisplay(
-                CreateTextDisplay::new(pages),
-            )]
-            .into()
-        };
+        let footer = text_component(format!(
+            "-# {}/{} | tar {:.1}s | 0/{CHARACTER_LIMIT}",
+            self.current.saturating_add(1),
+            self.choices.len(),
+            elapsed.as_secs_f32(),
+        ));
 
         let title = vec![character_title_section(character, "…")].into();
 
@@ -169,10 +163,7 @@ impl History {
             voices,
         );
 
-        vec![CreateComponent::Container(with_accent(
-            CreateContainer::new([title, components, footer].concat()),
-            character,
-        ))]
+        vec![card(title, components, footer, character)]
     }
 
     /// Converts the history into a Components V2 reply with the chosen message
@@ -355,13 +346,8 @@ impl History {
     ) -> Vec<CreateComponent<'a>> {
         let chosen = self.chosen_message();
         let content = chosen.chosen_revision().head().content();
-        let footer = {
-            let footer = self.footer_text(character, content.chars().count(), editor_name);
-            vec![CreateContainerComponent::TextDisplay(
-                CreateTextDisplay::new(footer),
-            )]
-            .into()
-        };
+        let footer =
+            text_component(self.footer_text(character, content.chars().count(), editor_name));
 
         let components = create_buttons(
             id,
@@ -376,14 +362,8 @@ impl History {
         );
 
         if chosen.is_error() {
-            let heading = vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-                ERROR_HEADING,
-            ))]
-            .into();
-            let body = vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-                content.to_owned(),
-            ))]
-            .into();
+            let heading = text_component(ERROR_HEADING);
+            let body = text_component(content.to_owned());
             return vec![CreateComponent::Container(
                 CreateContainer::new([heading, body, components, footer].concat())
                     .accent_colour(ERROR_COLOUR),
@@ -393,19 +373,12 @@ impl History {
         // discord rejects a whitespace-only text display, so an empty choice
         // renders a placeholder: the skip-greeting hint or the stalled "…"
         let text = self.body_text(content);
-
-        let container = with_accent(
-            CreateContainer::new(
-                [
-                    title_and_body_lines(character, text).into(),
-                    components,
-                    footer,
-                ]
-                .concat(),
-            ),
+        vec![card(
+            title_and_body_lines(character, text).into(),
+            components,
+            footer,
             character,
-        );
-        vec![CreateComponent::Container(container)]
+        )]
     }
 }
 
@@ -426,6 +399,32 @@ fn as_message_edit(reply: CreateReply<'_>) -> EditMessage<'_> {
     reply
         .to_prefix_edit(EditMessage::new())
         .allowed_mentions(CreateAllowedMentions::new())
+}
+
+/// Wraps `text` as a single text-display container component list, ready to
+/// `concat` into a container (the footer, error heading, and error body all share
+/// this one-line shape).
+fn text_component<'a, T: Into<Cow<'a, str>>>(
+    text: T,
+) -> Cow<'a, [CreateContainerComponent<'a>]> {
+    vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
+        text,
+    ))]
+    .into()
+}
+
+/// Assembles the success-path Components V2 card from its `title`, button `components`,
+/// and `footer` sections, tinted with the character's accent colour.
+fn card<'a>(
+    title: Cow<'a, [CreateContainerComponent<'a>]>,
+    components: Cow<'a, [CreateContainerComponent<'a>]>,
+    footer: Cow<'a, [CreateContainerComponent<'a>]>,
+    character: &Character,
+) -> CreateComponent<'a> {
+    CreateComponent::Container(with_accent(
+        CreateContainer::new([title, components, footer].concat()),
+        character,
+    ))
 }
 
 /// Tints `container` with the character's accent colour, or leaves it untinted
