@@ -16,30 +16,30 @@ path = "src/main.rs"
 [dependencies]
 poise = { git = "https://github.com/serenity-rs/poise.git", branch = "serenity-next" }
 serenity = { git = "https://github.com/serenity-rs/serenity.git", branch = "next" }
-tokio = { version = "1.50.0", features = ["rt-multi-thread", "macros", "signal", "time"] }
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "signal", "time"] }
 tokio-util = { version = "0.7.18", features = ["rt"] }
 strsim = "0.11.1"
 miette = { version = "7.6.0", features = ["fancy"] }
-snafu = "0.9.0"
+snafu = "0.9.1"
 serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-jiff = { version = "0.2.23", features = ["serde", "tzdb-bundle-always"] }
+serde_json = "1.0.150"
+jiff = { version = "0.2.31", features = ["serde", "tzdb-bundle-always"] }
 ulid = { version = "1.2.1", features = ["serde"] }
 nonempty = { version = "0.12.0", features = ["serialize"] }
-bon = "3.9.1"
+bon = "3.9.3"
 nanorand = "0.8.0"
-rustls = { version = "0.23.37", features = ["aws-lc-rs"] }
+rustls = { version = "0.23.41", features = ["aws-lc-rs"] }
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
 url = "2.5.8"
-reqwest = { version = "0.13.2", default-features = false, features = ["json"] }
-rig-core = "0.33.0"
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
+rig = { package = "rig-core", version = "0.39.0" }
 base64 = "0.22.1"
-emojis = "0.6.4"
+emojis = "0.9.0"
 
 [dev-dependencies]
 # test-util enables tokio's paused virtual clock so timing tests skip real sleeps
-tokio = { version = "1.50.0", features = ["test-util"] }
+tokio = { version = "1.52.3", features = ["test-util"] }
 
 [profile.release]
 lto = true

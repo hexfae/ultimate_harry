@@ -118,9 +118,9 @@ impl Message {
                 },
                 Role::Assistant => RigMessage::Assistant {
                     id: None,
-                    content: OneOrMany::one(AssistantContent::Text(Text {
-                        text: part.content.clone(),
-                    })),
+                    content: OneOrMany::one(AssistantContent::Text(Text::new(
+                        part.content.clone(),
+                    ))),
                 },
                 Role::User => {
                     let renders = if Some(index) == last_user {

@@ -117,7 +117,7 @@ pub async fn character_embed<F: Into<String>>(
         .footer(CreateEmbedFooter::new(footer_text.into()));
 
     if let Some(avatar) = character.avatar() {
-        embed = embed.thumbnail(avatar.to_owned());
+        embed = embed.thumbnail(avatar.to_owned(), None);
     }
     if let Some(color) = character.color() {
         embed = embed.color(color);
