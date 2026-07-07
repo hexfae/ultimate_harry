@@ -17,7 +17,7 @@ use serenity::all::{
 };
 
 use crate::{
-    components::emoji_button,
+    components::{emoji_button, reaction_from},
     constants::{
         CHARACTER_LIMIT, CONTINUE, EDIT, ERROR_COLOUR, ERROR_HEADING, NEXT, PIN, PREVIOUS, REDO,
         SPEAK, STOP, UNDO,
@@ -558,15 +558,21 @@ fn character_select_menu<'a>(
                 options: options
                     .iter()
                     .map(|option| {
-                        let mut menu_option = CreateSelectMenuOption::new(
-                            option.name().to_owned(),
-                            option.id().to_owned(),
-                        )
-                        .description(option.description().to_owned());
-                        if let Some(emoji) = option.emoji()
-                            && let Ok(reaction) = ReactionType::try_from(emoji.to_owned())
-                        {
-                            menu_option = menu_option.emoji(reaction);
+                        let reaction = option.emoji().and_then(reaction_from);
+                        // a real emoji goes in the native slot; free-text in the
+                        // "emoji" field is prepended to the label instead, since
+                        // Discord rejects non-emoji in the emoji slot.
+                        let label = match (option.emoji(), &reaction) {
+                            (Some(text), None) => {
+                                format!("{text} {}", option.name()).chars().take(100).collect()
+                            }
+                            _ => option.name().to_owned(),
+                        };
+                        let mut menu_option =
+                            CreateSelectMenuOption::new(label, option.id().to_owned())
+                                .description(option.description().to_owned());
+                        if let Some(emoji) = reaction {
+                            menu_option = menu_option.emoji(emoji);
                         }
                         menu_option
                     })
@@ -613,7 +619,7 @@ fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
     options.extend(voices.iter().map(|voice| {
         let mut option = CreateSelectMenuOption::new(voice.name.clone(), voice.voice_id.clone())
             .description(voice.description.chars().take(100).collect::<String>());
-        if let Ok(emoji) = ReactionType::try_from(voice.emoji.clone()) {
+        if let Some(emoji) = reaction_from(&voice.emoji) {
             option = option.emoji(emoji);
         }
         option
