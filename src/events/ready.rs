@@ -29,9 +29,15 @@ pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> AppResult {
         .await
         .context(RegisterCommandSnafu)?;
     for guild in &data_about_bot.guilds {
-        register_in_guild(&ctx_clone.http, &guild_commands, guild.id)
-            .await
-            .context(RegisterCommandSnafu)?;
+        // also register the global (user-installable) commands per guild, so
+        // they show up instantly instead of only after global propagation
+        register_in_guild(
+            &ctx_clone.http,
+            guild_commands.iter().chain(&global_commands),
+            guild.id,
+        )
+        .await
+        .context(RegisterCommandSnafu)?;
     }
     tokio::spawn(async move {
         let start = Instant::now();
