@@ -462,6 +462,35 @@ impl Database {
         .await
     }
 
+    /// Appends an example-message pair (an optional user line and the character's
+    /// response) to a character. Returns the updated character, or `Ok(None)` if the
+    /// character is missing.
+    pub async fn add_character_example(
+        &self,
+        id: &str,
+        user: Option<String>,
+        response: String,
+    ) -> Result<Option<Character>, DatabaseError> {
+        self.mutate_character(id, UpdateSnafu, |character| {
+            character.add_example_message(user, response);
+        })
+        .await
+    }
+
+    /// Removes the example-message pair at `index` (zero-based) from a character.
+    /// Returns the updated character, or `Ok(None)` if the character is missing; an
+    /// out-of-range index leaves the examples untouched.
+    pub async fn remove_character_example(
+        &self,
+        id: &str,
+        index: usize,
+    ) -> Result<Option<Character>, DatabaseError> {
+        self.mutate_character(id, UpdateSnafu, |character| {
+            character.remove_example_message(index);
+        })
+        .await
+    }
+
     /// Records a character spawn (a new conversation) for the given user.
     ///
     /// The stats land on the character's latest version (walking the version

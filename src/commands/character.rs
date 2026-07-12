@@ -5,6 +5,7 @@ pub mod color;
 pub mod create;
 pub mod delete;
 pub mod edit;
+pub mod example;
 pub mod model;
 pub mod paginate;
 pub mod render;
@@ -19,6 +20,7 @@ use color::color;
 use create::create;
 use delete::delete;
 use edit::edit;
+use example::example;
 use model::model;
 use restore::restore;
 use view::view;
@@ -27,7 +29,10 @@ use voice::voice;
 /// Hanterar gubbar.
 #[poise::command(
     slash_command,
-    subcommands("create", "clone", "color", "edit", "view", "delete", "model", "restore", "voice"),
+    subcommands(
+        "create", "clone", "color", "edit", "view", "delete", "model", "restore", "voice",
+        "example"
+    ),
     subcommand_required,
     rename = "gubbe"
 )]

@@ -140,6 +140,27 @@ pub struct SecondEditCharacterModal {
     pub scenario: Option<String>,
 }
 
+/// The modal form for adding an example-message pair to a character.
+///
+/// Two paragraph fields: an optional user line and the character's required
+/// response to it. Kept separate from the create/edit forms, which are already at
+/// Discord's five-field modal limit, so a pair could not be squeezed in there.
+#[derive(Debug, Modal)]
+#[name = "Nytt exempelmeddelande"]
+pub struct ExampleMessageModal {
+    /// The user's line the character responds to, if any. Left blank for an
+    /// assistant-only example (a bare sample of how the character talks).
+    #[paragraph]
+    #[name = "Användare"]
+    #[placeholder = "Vad användaren säger (lämna tomt för ett exempel utan användarrad)."]
+    pub user: Option<String>,
+    /// The character's response, the actual example of how the character speaks.
+    #[paragraph]
+    #[name = "Svar"]
+    #[placeholder = "Hur gubben svarar. Detta är exemplet på hur gubben ska prata."]
+    pub response: String,
+}
+
 /// The modal form for editing a message.
 ///
 /// Contains a single text field for the new message content.

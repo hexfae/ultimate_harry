@@ -242,6 +242,23 @@ impl Character {
         self.example_messages.as_slice()
     }
 
+    /// Appends an example-message pair: an optional user line and the character's response.
+    pub fn add_example_message(&mut self, user: Option<String>, response: String) {
+        self.example_messages.push((user, response));
+    }
+
+    /// Removes the example-message pair at `index` (zero-based), returning whether one existed.
+    ///
+    /// Bounds-checked so an out-of-range index is a no-op returning `false` rather than a panic.
+    pub fn remove_example_message(&mut self, index: usize) -> bool {
+        if index < self.example_messages.len() {
+            self.example_messages.remove(index);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Returns the character's avatar URL.
     #[must_use]
     pub fn avatar(&self) -> Option<&str> {
@@ -847,6 +864,60 @@ mod tests {
             head.voice(),
             Some("old-voice"),
             "a rollback restores the older version's linked voice"
+        );
+    }
+
+    /// Example pairs are appended in order, and a removed pair is dropped while the
+    /// rest keep their order.
+    #[test]
+    fn example_messages_are_added_and_removed_in_order() {
+        let mut character = basic_character("id", "Harry");
+        assert!(
+            character.example_messages().is_empty(),
+            "a fresh character has no example messages"
+        );
+
+        character.add_example_message(Some("hej".to_owned()), "hallå".to_owned());
+        character.add_example_message(None, "ensamt svar".to_owned());
+        character.add_example_message(Some("då".to_owned()), "då då".to_owned());
+        assert_eq!(
+            character.example_messages(),
+            [
+                (Some("hej".to_owned()), "hallå".to_owned()),
+                (None, "ensamt svar".to_owned()),
+                (Some("då".to_owned()), "då då".to_owned()),
+            ],
+            "pairs are appended in order, keeping an assistant-only pair's None user line"
+        );
+
+        assert!(
+            character.remove_example_message(1),
+            "removing an in-range pair reports success"
+        );
+        assert_eq!(
+            character.example_messages(),
+            [
+                (Some("hej".to_owned()), "hallå".to_owned()),
+                (Some("då".to_owned()), "då då".to_owned()),
+            ],
+            "the middle pair is dropped and the rest keep their order"
+        );
+    }
+
+    /// Removing an out-of-range example index is a no-op that reports failure
+    /// rather than panicking.
+    #[test]
+    fn removing_an_out_of_range_example_is_a_no_op() {
+        let mut character = basic_character("id", "Harry");
+        character.add_example_message(None, "svar".to_owned());
+        assert!(
+            !character.remove_example_message(5),
+            "an out-of-range index reports failure"
+        );
+        assert_eq!(
+            character.example_messages().len(),
+            1,
+            "the examples are left untouched"
         );
     }
 
