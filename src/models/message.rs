@@ -6,7 +6,6 @@
 
 use bon::Builder;
 use core::time::Duration;
-use jiff::Zoned;
 use nonempty::NonEmpty;
 use serde::{Deserialize, Serialize};
 use serenity::all::{Message as DiscordMessage, MessageId, UserId};
@@ -43,9 +42,6 @@ pub struct Message {
     /// ```
     #[builder(into)]
     parts: Parts,
-    /// The time this message was created.
-    #[builder(default = Zoned::now())]
-    created: Zoned,
     /// If Some, the time it took to generate this message.
     elapsed: Option<Duration>,
     /// Previous revisions of this message, created when edited.
@@ -98,9 +94,6 @@ pub struct Part {
 /// A revision of a message, created when the message is edited.
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct Revision {
-    /// The time this revision was created.
-    #[builder(default = Zoned::now())]
-    created: Zoned,
     /// The parts of this revision.
     #[builder(into)]
     parts: Parts,
