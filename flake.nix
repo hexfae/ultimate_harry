@@ -46,6 +46,7 @@
         };
       in {
         packages.default = craneLib.buildPackage commonArgs;
+        checks.fmt = craneLib.cargoFmt {inherit (commonArgs) src;};
         devShells.default = pkgs.mkShell {
           inherit (commonArgs) buildInputs nativeBuildInputs;
           packages = [pkgs.cargo-mutants];
