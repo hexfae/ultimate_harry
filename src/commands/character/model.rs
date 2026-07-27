@@ -2,7 +2,7 @@
 
 use crate::{
     AppResult, Context,
-    commands::{autocomplete, first_character_or_notify},
+    commands::{autocomplete, autocomplete_model, first_character_or_notify},
     error::SendMessageSnafu,
     phrases,
     traits::SayEphemeral as _,
@@ -22,6 +22,7 @@ pub async fn model(
     name: String,
     #[rename = "modell"]
     #[description = "Modellen att använda"]
+    #[autocomplete = autocomplete_model]
     model: Option<String>,
     #[rename = "temperatur"]
     #[description = "Temperaturen (högre = mer slumpmässig)"]

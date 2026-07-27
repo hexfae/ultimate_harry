@@ -16,7 +16,7 @@ use rig::{
 use serenity::futures::Stream;
 use snafu::{ResultExt as _, Snafu};
 
-pub use completions::{VoiceChoice, fetch_audio_base64};
+pub use completions::{VoiceChoice, fetch_audio_base64, matching_model_ids, model_catalog};
 pub use settings::{CharacterModelSettings, ModelOverrides, ModelSettings};
 
 /// A streamed reply from the AI model, as returned by

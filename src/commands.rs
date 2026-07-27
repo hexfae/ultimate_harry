@@ -35,6 +35,7 @@ use crate::{
     constants::TRANSIENT_LINGER,
     database::DatabaseError,
     error::{AppError, DeleteMessageSnafu, SendMessageSnafu},
+    llm::{matching_model_ids, model_catalog},
     models::character::Character,
     phrases::no_character,
     shortcodes::strip_custom_emoji,
@@ -190,6 +191,50 @@ fn autocomplete_from<'a>(
     choices_from(characters)
 }
 
+/// Builds a model-id autocomplete response from the `OpenRouter` catalog,
+/// optionally restricted to models accepting `modality` as input, swallowing a
+/// catalog fetch failure into an empty list (logged) so the picker stays responsive.
+async fn autocomplete_models<'a>(
+    partial: &str,
+    modality: Option<&str>,
+) -> CreateAutocompleteResponse<'a> {
+    let catalog = match model_catalog().await {
+        Ok(catalog) => catalog,
+        Err(why) => {
+            warn!("failed to fetch the model catalog for autocomplete, returning none");
+            report_error(why);
+            Vec::new()
+        }
+    };
+    autocomplete_from_names(matching_model_ids(&catalog, partial, modality))
+}
+
+/// Returns an autocomplete response of `OpenRouter` model ids matching the input.
+pub async fn autocomplete_model<'a>(
+    _ctx: Context<'_>,
+    partial: &str,
+) -> CreateAutocompleteResponse<'a> {
+    autocomplete_models(partial, None).await
+}
+
+/// Returns an autocomplete response of vision-capable (image input) `OpenRouter`
+/// model ids matching the input.
+pub async fn autocomplete_vision_model<'a>(
+    _ctx: Context<'_>,
+    partial: &str,
+) -> CreateAutocompleteResponse<'a> {
+    autocomplete_models(partial, Some("image")).await
+}
+
+/// Returns an autocomplete response of audio-capable `OpenRouter` model ids
+/// matching the input.
+pub async fn autocomplete_audio_model<'a>(
+    _ctx: Context<'_>,
+    partial: &str,
+) -> CreateAutocompleteResponse<'a> {
+    autocomplete_models(partial, Some("audio")).await
+}
+
 /// Returns an auto completion response from characters found in the database, sorted by similarity to the input.
 pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {
     autocomplete_from(
@@ -218,7 +263,48 @@ pub async fn autocomplete_deleted<'a>(
 #[cfg(test)]
 mod tests {
     use super::{is_user_installable, partitioned_commands};
-    use crate::commands::{model, say};
+    use crate::app_state::AppState;
+    use crate::commands::{character, model, say, tts};
+    use crate::error::AppError;
+
+    /// Whether `command` has a parameter named `parameter` with an autocomplete callback.
+    fn has_autocomplete(command: &poise::Command<AppState, AppError>, parameter: &str) -> bool {
+        command
+            .parameters
+            .iter()
+            .find(|param| param.name == parameter)
+            .is_some_and(|param| param.autocomplete_callback.is_some())
+    }
+
+    /// Every `OpenRouter` model-id parameter offers model autocomplete.
+    #[test]
+    fn model_id_parameters_offer_autocomplete() {
+        let global = model();
+        assert!(
+            has_autocomplete(&global, "modell"),
+            "/modell's modell parameter offers model autocomplete"
+        );
+        assert!(
+            has_autocomplete(&global, "syn-modell"),
+            "/modell's syn-modell parameter offers model autocomplete"
+        );
+        assert!(
+            has_autocomplete(&global, "ljud-modell"),
+            "/modell's ljud-modell parameter offers model autocomplete"
+        );
+        assert!(
+            has_autocomplete(&tts(), "tagg-modell"),
+            "/tal's tagg-modell parameter offers model autocomplete"
+        );
+        let character_model = character()
+            .subcommands
+            .into_iter()
+            .find(|subcommand| subcommand.name == "modell");
+        assert!(
+            character_model.is_some_and(|subcommand| has_autocomplete(&subcommand, "modell")),
+            "/gubbe modell's modell parameter offers model autocomplete"
+        );
+    }
 
     /// `/säg` is user-installable so it can be invoked in other servers and DMs.
     #[test]
