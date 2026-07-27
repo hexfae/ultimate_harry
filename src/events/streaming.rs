@@ -436,7 +436,7 @@ async fn stream_into<S: ReplySink + Send>(
                         Err(why) => {
                             error!("the reply stream errored, giving up");
                             report_error(why);
-                            if total.is_empty() {
+                            if total.trim().is_empty() {
                                 total += ERROR_MESSAGE;
                                 complete = false;
                             }
@@ -460,7 +460,7 @@ async fn stream_into<S: ReplySink + Send>(
                     }
                 }
                 _ = interval.tick() => {
-                    if total.is_empty() {
+                    if total.trim().is_empty() {
                         if start.elapsed() >= RESPONSE_TIMEOUT {
                             error!("no first token within the response timeout, giving up");
                             total += TIMEOUT_MESSAGE;
@@ -479,9 +479,10 @@ async fn stream_into<S: ReplySink + Send>(
             }
         }
 
-        // the stream ended: keep a non-empty reply, otherwise retry until we
-        // run out of attempts.
-        if !total.is_empty() {
+        // the stream ended: keep a reply with actual content, otherwise retry
+        // until we run out of attempts. whitespace alone counts as empty, since
+        // it renders as nothing.
+        if !total.trim().is_empty() {
             break 'attempts;
         }
         if attempt >= MAX_ATTEMPTS {
@@ -493,8 +494,10 @@ async fn stream_into<S: ReplySink + Send>(
         debug!("llm returned an empty completion, retrying (attempt {attempt})");
     }
 
+    // discord rejects a text display that holds only whitespace, so the
+    // surrounding blanks never reach the rendered reply
     Ok(Reply {
-        text: total,
+        text: total.trim().to_owned(),
         output_tokens,
         complete,
     })
