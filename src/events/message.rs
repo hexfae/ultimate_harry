@@ -7,7 +7,8 @@ use crate::{
     AppResult,
     cancellation::Cancellations,
     database::Database,
-    error::SendMessageSnafu,
+    error::{AppError, SendMessageSnafu},
+    error_display::error_message,
     events::lookup::history_and_character_of_replied_to,
     events::streaming::{MessageSink, report_reply_failure, stream_and_finalize},
     models::{
@@ -17,7 +18,7 @@ use crate::{
     util::report_error,
 };
 use poise::serenity_prelude::{Context, Message};
-use serenity::all::ReactionType;
+use serenity::all::{CreateAllowedMentions, ReactionType};
 use snafu::ResultExt as _;
 use alloc::collections::BTreeMap;
 use tracing::warn;
@@ -34,25 +35,16 @@ pub async fn message(
         return Ok(());
     }
 
-    let Some((mut history, character)) =
-        history_and_character_of_replied_to(user_message, db).await?
-    else {
+    let begun = match begin_reply(ctx, user_message, db).await {
+        Ok(begun) => begun,
+        Err(why) => {
+            report_setup_failure(ctx, user_message, &why).await;
+            return Err(why);
+        }
+    };
+    let Some((mut history, character, options, mut bot_message)) = begun else {
         return Ok(());
     };
-
-    let author = db.substitute_name(&user_message.author).await;
-    history.begin_new_turn((user_message, author));
-
-    let options = db.character_menu_options().await?;
-
-    let placeholder_message =
-        history.to_placeholder_message(&character, user_message, db, &options).await;
-
-    let mut bot_message = user_message
-        .channel_id
-        .send_message(&ctx.http, placeholder_message)
-        .await
-        .context(SendMessageSnafu)?;
 
     // the placeholder is now live, so a later failure must replace it with an
     // error notice rather than leaving the user staring at a frozen placeholder.
@@ -64,6 +56,55 @@ pub async fn message(
     }
 
     Ok(())
+}
+
+/// Resolves the conversation the user replied to and posts the placeholder the
+/// reply will stream into, or `None` if the message is not a character reply.
+async fn begin_reply(
+    ctx: &Context,
+    user_message: &Message,
+    db: &Database,
+) -> AppResult<Option<(History, Character, Vec<CharacterOption>, Message)>> {
+    let Some((mut history, character)) =
+        history_and_character_of_replied_to(user_message, db).await?
+    else {
+        return Ok(None);
+    };
+
+    let author = db.substitute_name(&user_message.author).await;
+    history.begin_new_turn((user_message, author));
+
+    let options = db.character_menu_options().await?;
+
+    let placeholder_message = history
+        .to_placeholder_message(&character, user_message, db, &options)
+        .await;
+
+    let bot_message = user_message
+        .channel_id
+        .send_message(&ctx.http, placeholder_message)
+        .await
+        .context(SendMessageSnafu)?;
+
+    Ok(Some((history, character, options, bot_message)))
+}
+
+/// Shows the user the red error notice for a failure that happened before the
+/// placeholder went live, so a reply never fails silently.
+async fn report_setup_failure(ctx: &Context, user_message: &Message, why: &AppError) {
+    let notice = error_message(why.user_message())
+        .reference_message(user_message)
+        .allowed_mentions(CreateAllowedMentions::new());
+    if let Err(report_why) = user_message
+        .channel_id
+        .send_message(&ctx.http, notice)
+        .await
+    {
+        warn!(
+            message_id = %user_message.id,
+            "failed to show the error notice: {report_why}"
+        );
+    }
 }
 
 /// Streams the character's reply into the already-posted placeholder message.

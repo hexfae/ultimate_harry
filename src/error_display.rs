@@ -9,8 +9,8 @@
 use poise::CreateReply;
 use serenity::all::{
     CreateComponent, CreateContainer, CreateContainerComponent, CreateInteractionResponse,
-    CreateInteractionResponseFollowup, CreateInteractionResponseMessage, CreateTextDisplay,
-    EditMessage, MessageFlags,
+    CreateInteractionResponseFollowup, CreateInteractionResponseMessage, CreateMessage,
+    CreateTextDisplay, EditMessage, MessageFlags,
 };
 
 use crate::constants::{ERROR_COLOUR, ERROR_HEADING};
@@ -29,6 +29,14 @@ fn error_components(message: String) -> Vec<CreateComponent<'static>> {
 /// Builds a message edit that replaces an in-flight reply with the error container.
 pub fn error_message_edit(message: String) -> EditMessage<'static> {
     EditMessage::new()
+        .flags(MessageFlags::IS_COMPONENTS_V2)
+        .components(error_components(message))
+}
+
+/// Builds a channel message showing the error container, for a failure that
+/// happens before there is an in-flight reply to edit.
+pub fn error_message(message: String) -> CreateMessage<'static> {
+    CreateMessage::new()
         .flags(MessageFlags::IS_COMPONENTS_V2)
         .components(error_components(message))
 }
