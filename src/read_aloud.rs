@@ -94,7 +94,7 @@ async fn assign_turns(
 ) -> Option<Vec<DialogueTurn>> {
     let model = settings
         .tag_model
-        .clone()
+        .as_deref()
         .filter(|model| !model.is_empty())?;
     let mut choices: Vec<VoiceChoice> = settings
         .voices()
@@ -117,7 +117,7 @@ async fn assign_turns(
 
     let llm = LlmManager::new(db.model_settings().await);
     let add_tags = settings.tag_model_if_enabled().is_some();
-    match llm.assign_voices(text, &model, &choices, add_tags).await {
+    match llm.assign_voices(text, model, &choices, add_tags).await {
         Ok(turns) => Some(enforce_allowed_voices(turns, &allowed, fallback)),
         Err(why) => {
             warn!("voice assignment failed, speaking a single voice");
