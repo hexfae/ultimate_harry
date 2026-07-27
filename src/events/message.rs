@@ -7,10 +7,9 @@ use crate::{
     AppResult,
     cancellation::Cancellations,
     database::Database,
-    error::{AppError, EditMessageSnafu, SendMessageSnafu},
-    error_display::error_message_edit,
+    error::SendMessageSnafu,
     events::lookup::history_and_character_of_replied_to,
-    events::streaming::{MessageSink, stream_and_finalize},
+    events::streaming::{MessageSink, report_reply_failure, stream_and_finalize},
     models::{
         character::{Character, CharacterOption},
         history::History,
@@ -86,19 +85,6 @@ async fn reply_into(
         options,
     };
     stream_and_finalize(None, cancellations, sink).await
-}
-
-/// Replaces the in-flight placeholder with the error notice when a reply fails
-/// after the placeholder was posted, logging if even the notice cannot be shown.
-async fn report_reply_failure(ctx: &Context, bot_message: &mut Message, why: &AppError) {
-    let edit = error_message_edit(why.user_message());
-    if let Err(report_why) = bot_message.edit(ctx, edit).await.context(EditMessageSnafu) {
-        warn!(
-            message_id = %bot_message.id,
-            "failed to show the error notice"
-        );
-        report_error(report_why);
-    }
 }
 
 /// Checks the mentions/replied to message of the new message, and reacts with the corresponding user emoji.
