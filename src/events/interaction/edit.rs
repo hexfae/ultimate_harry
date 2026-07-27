@@ -36,13 +36,14 @@ pub async fn edit(
     history.edit_content(character.name(), modal.content, Some(interaction.user.id));
 
     let options = db.character_menu_options().await?;
+    let voices = db.voice_options().await;
 
     // persist the edit before rendering it, so a save failure surfaces as an error
     // rather than showing an edit that was never stored.
     db.upsert_history(history.clone()).await?;
 
     let response = history
-        .to_edit_interaction(&character, id, db, &options)
+        .to_edit_interaction(&character, id, db, &options, &voices)
         .await;
     interaction
         .edit_response(&ctx.http, response)

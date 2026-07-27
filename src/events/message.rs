@@ -15,6 +15,7 @@ use crate::{
         character::{Character, CharacterOption},
         history::History,
     },
+    tts::VoiceEntry,
     util::report_error,
 };
 use alloc::collections::BTreeMap;
@@ -42,7 +43,7 @@ pub async fn message(
             return Err(why);
         }
     };
-    let Some((mut history, character, options, mut bot_message)) = begun else {
+    let Some((mut history, character, menus, mut bot_message)) = begun else {
         return Ok(());
     };
 
@@ -55,7 +56,7 @@ pub async fn message(
         &character,
         &mut history,
         &mut bot_message,
-        &options,
+        &menus,
     )
     .await
     {
@@ -72,7 +73,7 @@ async fn begin_reply(
     ctx: &Context,
     user_message: &Message,
     db: &Database,
-) -> AppResult<Option<(History, Character, Vec<CharacterOption>, Message)>> {
+) -> AppResult<Option<(History, Character, Menus, Message)>> {
     let Some((mut history, character)) =
         history_and_character_of_replied_to(user_message, db).await?
     else {
@@ -82,11 +83,13 @@ async fn begin_reply(
     let author = db.substitute_name(&user_message.author).await;
     history.begin_new_turn((user_message, author));
 
-    let options = db.character_menu_options().await?;
+    let menus = Menus {
+        options: db.character_menu_options().await?,
+        voices: db.voice_options().await,
+    };
 
-    let placeholder_message = history
-        .to_placeholder_message(&character, user_message, db, &options)
-        .await;
+    let placeholder_message =
+        history.to_placeholder_message(&character, user_message, &menus.options, &menus.voices);
 
     let bot_message = user_message
         .channel_id
@@ -94,7 +97,16 @@ async fn begin_reply(
         .await
         .context(SendMessageSnafu)?;
 
-    Ok(Some((history, character, options, bot_message)))
+    Ok(Some((history, character, menus, bot_message)))
+}
+
+/// The select-menu data a streaming reply re-renders on every tick: the hand-off
+/// character options and the read-aloud voice palette, both read once up front.
+struct Menus {
+    /// The hand-off select-menu options.
+    options: Vec<CharacterOption>,
+    /// The read-aloud voice palette.
+    voices: Vec<VoiceEntry>,
 }
 
 /// Shows the user the red error notice for a failure that happened before the
@@ -123,7 +135,7 @@ async fn reply_into(
     character: &Character,
     history: &mut History,
     bot_message: &mut Message,
-    options: &[CharacterOption],
+    menus: &Menus,
 ) -> AppResult {
     let sink = MessageSink {
         ctx,
@@ -131,7 +143,8 @@ async fn reply_into(
         character,
         message: bot_message,
         db,
-        options,
+        options: &menus.options,
+        voices: &menus.voices,
     };
     stream_and_finalize(None, cancellations, sink).await
 }

@@ -24,12 +24,15 @@ pub async fn swipe<Mutate: FnOnce(&mut History)>(
     mutate(&mut history);
 
     let options = db.character_menu_options().await?;
+    let voices = db.voice_options().await;
 
     // persist the moved cursor before rendering it, so a save failure surfaces as
     // an error rather than showing a swipe that was never stored.
     db.upsert_history(history.clone()).await?;
 
-    let response = history.to_interaction(&character, id, db, &options).await;
+    let response = history
+        .to_interaction(&character, id, db, &options, &voices)
+        .await;
     interaction
         .create_response(&ctx.http, response)
         .await

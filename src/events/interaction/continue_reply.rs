@@ -31,9 +31,12 @@ pub async fn continue_reply(
 ) -> AppResult {
     let seed = history.chosen_content().to_owned();
     let options = db.character_menu_options().await?;
+    let voices = db.voice_options().await;
     history.set_finished(false);
 
-    let response = history.to_interaction(&character, id, db, &options).await;
+    let response = history
+        .to_interaction(&character, id, db, &options, &voices)
+        .await;
     interaction
         .create_response(&ctx.http, response)
         .await
@@ -48,6 +51,7 @@ pub async fn continue_reply(
             id,
             db,
             options: &options,
+            voices: &voices,
         },
         seed,
     };

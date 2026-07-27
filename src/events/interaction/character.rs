@@ -49,10 +49,10 @@ pub async fn character(
         .context(SendResponseSnafu)?;
 
     let options = db.character_menu_options().await?;
+    let voices = db.voice_options().await;
 
-    let placeholder = history
-        .to_placeholder_message(&new_character, &interaction.message, db, &options)
-        .await;
+    let placeholder =
+        history.to_placeholder_message(&new_character, &interaction.message, &options, &voices);
 
     let mut response_message = interaction
         .message
@@ -71,6 +71,7 @@ pub async fn character(
             message: &mut response_message,
             db,
             options: &options,
+            voices: &voices,
         };
         stream_and_finalize(Some(prompt), cancellations, sink).await
     };

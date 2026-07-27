@@ -205,6 +205,9 @@ impl Database {
     /// Returns the configured voice palette for the reply's voice dropdown.
     ///
     /// Empty when no voices are configured, in which case the dropdown is hidden.
+    /// Like [`character_menu_options`](Self::character_menu_options), it is read
+    /// once per reply and threaded into the renderer, rather than re-read on every
+    /// streaming tick.
     pub async fn voice_options(&self) -> Vec<VoiceEntry> {
         self.tts_settings().await.voices
     }
