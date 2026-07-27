@@ -40,7 +40,7 @@ pub async fn character(
 
     history.begin_handoff(
         new_character.id().to_owned(),
-        Message::new_user("System", format!("Svara nu som {new_character}.")),
+        Message::new_user(format!("Svara nu som {new_character}.")),
     );
 
     interaction

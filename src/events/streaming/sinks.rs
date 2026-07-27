@@ -68,7 +68,7 @@ impl ReplySink for MessageSink<'_> {
     }
 
     fn store_choice(&mut self, text: String, elapsed: Duration) {
-        self.history.set_choices((self.character, text, elapsed));
+        self.history.set_choices((text, elapsed));
     }
 
     fn before_persist(&mut self) {
@@ -147,8 +147,7 @@ impl ReplySink for InteractionSink<'_> {
     }
 
     fn store_choice(&mut self, text: String, elapsed: Duration) {
-        self.history
-            .update_current_choice((self.character, text, elapsed));
+        self.history.update_current_choice((text, elapsed));
     }
 
     async fn persist(&mut self, counts: (u32, u32), complete: bool) -> AppResult {
@@ -192,10 +191,7 @@ impl ReplySink for ContinueSink<'_> {
         // give the model the reply so far as the last assistant turn, so it
         // continues that text rather than starting a fresh reply
         if !self.seed.is_empty() {
-            context.push(ChatMessage::new_assistant(
-                self.seed.clone(),
-                self.inner.character,
-            ));
+            context.push(ChatMessage::new_assistant(self.seed.clone()));
         }
         Ok((requester, context, mode))
     }

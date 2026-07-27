@@ -504,12 +504,11 @@ mod tests {
     };
     use crate::AppResult;
     use crate::llm::{LlmManager, ModelSettings};
-    use crate::models::character::Character;
     use crate::models::history::History;
     use crate::models::message::{AttachmentMode, Message};
     use core::time::Duration;
     use nonempty::NonEmpty;
-    use serenity::all::{MessageId, UserId};
+    use serenity::all::MessageId;
 
     /// The side effects the finalize path is expected to drive, captured so the
     /// test can assert them after the sink is consumed.
@@ -530,8 +529,6 @@ mod tests {
     struct TestSink<'a> {
         /// The conversation being finalized.
         history: &'a mut History,
-        /// The character producing the reply.
-        character: Character,
         /// Where the driven side effects are recorded.
         records: &'a mut Records,
         /// Whether a failed reply is kept rather than marked an error (a continuation).
@@ -561,7 +558,7 @@ mod tests {
 
         fn store_choice(&mut self, text: String, elapsed: Duration) {
             self.records.stored_text = Some(text.clone());
-            self.history.set_choices((&self.character, text, elapsed));
+            self.history.set_choices((text, elapsed));
         }
 
         fn before_persist(&mut self) {
@@ -591,16 +588,6 @@ mod tests {
             .choices(NonEmpty::new(Message::new_system("placeholder")))
             .current(0_usize)
             .previous(Vec::new())
-            .build()
-    }
-
-    /// A minimal character for the finalize path.
-    fn test_character() -> Character {
-        Character::builder()
-            .id("character-id".to_owned())
-            .name("Harry")
-            .greeting("hej")
-            .creator(UserId::new(1))
             .build()
     }
 
@@ -638,7 +625,6 @@ mod tests {
         let mut records = Records::default();
         let sink = TestSink {
             history: &mut history,
-            character: test_character(),
             records: &mut records,
             keep_on_failure: false,
         };
@@ -680,7 +666,6 @@ mod tests {
         let mut records = Records::default();
         let sink = TestSink {
             history: &mut history,
-            character: test_character(),
             records: &mut records,
             keep_on_failure: false,
         };
@@ -716,7 +701,6 @@ mod tests {
         let mut records = Records::default();
         let sink = TestSink {
             history: &mut history,
-            character: test_character(),
             records: &mut records,
             keep_on_failure: false,
         };
@@ -799,7 +783,6 @@ mod tests {
         let mut records = Records::default();
         let sink = TestSink {
             history: &mut history,
-            character: test_character(),
             records: &mut records,
             keep_on_failure: true,
         };
@@ -839,7 +822,6 @@ mod tests {
         let mut records = Records::default();
         let sink = TestSink {
             history: &mut history,
-            character: test_character(),
             records: &mut records,
             keep_on_failure: false,
         };

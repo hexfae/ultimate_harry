@@ -103,14 +103,13 @@ pub struct StoredHistory {
 /// A log of messages between the user and a character.
 impl History {
     /// Edits the content of the current choice message.
-    pub fn edit_content<A, C, E>(&mut self, author: A, content: C, editor: Option<E>)
+    pub fn edit_content<C, E>(&mut self, content: C, editor: Option<E>)
     where
-        A: Into<String>,
         C: Into<String>,
         E: Into<UserId>,
     {
         if let Some(choice) = self.choices.get_mut(self.current) {
-            choice.edit(author, content, editor);
+            choice.edit(content, editor);
         }
     }
 
@@ -371,8 +370,8 @@ impl History {
 /// can swipe to start the conversation with their own message first, leaving the character unprimed.
 impl From<(&Character, MessageId)> for History {
     fn from((character, id): (&Character, MessageId)) -> Self {
-        let greeting = Message::new_assistant(character.greeting(), character);
-        let skip_greeting = Message::new_assistant("", character);
+        let greeting = Message::new_assistant(character.greeting());
+        let skip_greeting = Message::new_assistant("");
         let choices = NonEmpty {
             head: greeting,
             tail: vec![skip_greeting],
@@ -404,7 +403,7 @@ mod tests {
     fn apply_descriptions_reaches_context_messages() {
         let user = Message::builder()
             .id(MessageId::new(5))
-            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .parts(("Alice: hi".to_owned(), Role::User))
             .attachments(vec!["https://cdn/x.png".to_owned()])
             .build();
         let mut history = History::builder()
@@ -435,12 +434,12 @@ mod tests {
     fn apply_descriptions_only_reaches_owning_messages() {
         let owner = Message::builder()
             .id(MessageId::new(5))
-            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .parts(("Alice: hi".to_owned(), Role::User))
             .attachments(vec!["https://cdn/x.png".to_owned()])
             .build();
         let other = Message::builder()
             .id(MessageId::new(6))
-            .parts(("Bob".to_owned(), "Bob: yo".to_owned(), Role::User))
+            .parts(("Bob: yo".to_owned(), Role::User))
             .attachments(vec!["https://cdn/y.png".to_owned()])
             .build();
         let mut history = History::builder()
@@ -506,7 +505,7 @@ mod tests {
 
     /// Builds a history whose single choice is an assistant reply with the given content.
     fn history_with_reply(content: &str) -> History {
-        let reply = Message::new_assistant(content, &character());
+        let reply = Message::new_assistant(content);
         History::builder()
             .id(MessageId::new(1))
             .character("character-id")
@@ -530,7 +529,7 @@ mod tests {
     #[test]
     fn edit_modal_default_follows_edits_and_undo() {
         let mut history = history_with_reply("original");
-        history.edit_content("Harry", "edited", None::<UserId>);
+        history.edit_content("edited", None::<UserId>);
         assert_eq!(
             history.edit_modal_default().content,
             "edited",
@@ -549,7 +548,7 @@ mod tests {
     fn editing_with_the_prefilled_default_round_trips() {
         let mut history = history_with_reply("keep me");
         let default = history.edit_modal_default().content;
-        history.edit_content("Harry", default, None::<UserId>);
+        history.edit_content(default, None::<UserId>);
         assert_eq!(
             history.chosen_content(),
             "keep me",
@@ -757,7 +756,7 @@ mod tests {
     #[test]
     fn edit_content_records_the_editor_and_clears_on_undo() {
         let mut history = history_with_reply("original");
-        history.edit_content("Harry", "edited", Some(UserId::new(7)));
+        history.edit_content("edited", Some(UserId::new(7)));
         assert_eq!(
             history.chosen_message().current_editor(),
             Some(UserId::new(7)),
@@ -811,7 +810,7 @@ mod tests {
         // a third choice makes the chosen index (1) distinct from the last index (2),
         // so this round-trip would catch a hydrate that clamped to the last choice
         let choice_three = Message::new_system("choice three");
-        let previous_one = Message::new_user("Alice", "hello");
+        let previous_one = Message::new_user("hello");
         let previous_ids = vec![previous_one.id().to_owned()];
 
         let mut choices = NonEmpty::new(choice_one);
@@ -985,7 +984,7 @@ mod tests {
             "the history starts on a non-first choice to prove the reset"
         );
         let chosen_id = history.chosen_message().id().to_owned();
-        let user = Message::new_user("Alice", "hello");
+        let user = Message::new_user("hello");
         let user_id = user.id().to_owned();
 
         history.begin_new_turn(user);
@@ -1019,7 +1018,7 @@ mod tests {
         let mut history = history_with_choices(3);
         history.previous();
         let chosen_id = history.chosen_message().id().to_owned();
-        let system = Message::new_user("System", "Svara nu som X.");
+        let system = Message::new_user("Svara nu som X.");
         let system_id = system.id().to_owned();
 
         history.begin_handoff("new-character-id".to_owned(), system);
@@ -1079,7 +1078,7 @@ mod tests {
         let character = character();
         let mut history = History::from((&character, MessageId::new(1)));
         let greeting_id = history.chosen_message().id().to_owned();
-        let user = Message::new_user("Alice", "hello");
+        let user = Message::new_user("hello");
         let user_id = user.id().to_owned();
 
         history.begin_new_turn(user);
@@ -1097,7 +1096,7 @@ mod tests {
     fn skipping_the_greeting_omits_it_from_context() {
         let character = character();
         let mut history = History::from((&character, MessageId::new(1)));
-        let user = Message::new_user("Alice", "hello");
+        let user = Message::new_user("hello");
         let user_id = user.id().to_owned();
 
         history.previous();

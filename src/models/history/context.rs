@@ -41,7 +41,7 @@ fn scaffolding(character: &Character) -> Vec<Message> {
 
     if let Some(personality) = character.personality() {
         messages.push(Message::new_system(BEGIN_PERSONALITY));
-        messages.push(Message::new_assistant(personality, character));
+        messages.push(Message::new_assistant(personality));
     }
 
     if let Some(prompt) = character.prompt() {
@@ -60,9 +60,9 @@ fn scaffolding(character: &Character) -> Vec<Message> {
         messages.push(Message::new_system(BEGIN_EXAMPLE_MESSAGES));
         for (user_message, assistant_message) in character.example_messages() {
             if let Some(content) = user_message {
-                messages.push(Message::new_user("Användaren", content));
+                messages.push(Message::new_user(content));
             }
-            messages.push(Message::new_assistant(assistant_message, character));
+            messages.push(Message::new_assistant(assistant_message));
             messages.push(Message::new_system(EXAMPLE_MESSAGE_SEPARATOR));
         }
     }
@@ -119,8 +119,8 @@ mod tests {
     #[test]
     fn build_context_prepends_scaffolding_to_previous() {
         let character = character();
-        let first = Message::new_user("Alice", "hello");
-        let second = Message::new_assistant("hi there", &character);
+        let first = Message::new_user("hello");
+        let second = Message::new_assistant("hi there");
         let first_id = first.id().to_owned();
         let second_id = second.id().to_owned();
         let history = History::builder()
@@ -164,7 +164,7 @@ mod tests {
             .id(MessageId::new(1))
             .character("id")
             .choices(NonEmpty::new(Message::new_system("greeting")))
-            .previous(vec![Message::new_user("Alice", "hello")])
+            .previous(vec![Message::new_user("hello")])
             .build();
 
         let context = history.build_context(&character);

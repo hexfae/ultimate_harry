@@ -682,12 +682,8 @@ mod tests {
     }
 
     /// Builds a reply that reports `seconds` of generation time.
-    fn timed_choice(character: &Character, content: &str, seconds: f64) -> Message {
-        Message::from((
-            character,
-            content.to_owned(),
-            Duration::from_secs_f64(seconds),
-        ))
+    fn timed_choice(content: &str, seconds: f64) -> Message {
+        Message::from((content.to_owned(), Duration::from_secs_f64(seconds)))
     }
 
     /// A finished, timed reply shows the page counter, "tog" timing, and length.
@@ -697,7 +693,7 @@ mod tests {
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(&character, "hello", 2.0)))
+            .choices(NonEmpty::new(timed_choice("hello", 2.0)))
             .build();
         assert_eq!(
             history.footer_text(&character, 5, None),
@@ -713,7 +709,7 @@ mod tests {
         let mut history = History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(&character, "hello", 2.0)))
+            .choices(NonEmpty::new(timed_choice("hello", 2.0)))
             .build();
         history.set_finished(false);
         assert_eq!(
@@ -727,8 +723,8 @@ mod tests {
     #[test]
     fn footer_shows_editor_and_revision_for_an_edit() {
         let character = character();
-        let mut choice = timed_choice(&character, "hello", 2.0);
-        choice.edit("Bob", "hello there", Some(UserId::new(7)));
+        let mut choice = timed_choice("hello", 2.0);
+        choice.edit("hello there", Some(UserId::new(7)));
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
@@ -745,8 +741,8 @@ mod tests {
     #[test]
     fn footer_page_counter_tracks_the_chosen_choice() {
         let character = character();
-        let mut choices = NonEmpty::new(timed_choice(&character, "a", 1.0));
-        choices.push(timed_choice(&character, "b", 1.0));
+        let mut choices = NonEmpty::new(timed_choice("a", 1.0));
+        choices.push(timed_choice("b", 1.0));
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
@@ -776,7 +772,7 @@ mod tests {
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(&character, "hello", 2.0)))
+            .choices(NonEmpty::new(timed_choice("hello", 2.0)))
             .build();
         assert_eq!(
             history.footer_text(&character, 5, None),
@@ -788,11 +784,10 @@ mod tests {
     /// A reply with content renders that content as its body.
     #[test]
     fn body_text_uses_the_content_when_present() {
-        let character = character();
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(&character, "hello", 1.0)))
+            .choices(NonEmpty::new(timed_choice("hello", 1.0)))
             .build();
         assert_eq!(
             history.body_text("hello"),
@@ -805,11 +800,10 @@ mod tests {
     /// shown with the hint explaining what selecting it does.
     #[test]
     fn body_text_shows_skip_greeting_hint_without_prior_turns() {
-        let character = character();
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(&character, "", 0.0)))
+            .choices(NonEmpty::new(timed_choice("", 0.0)))
             .build();
         assert_eq!(
             history.body_text(""),
@@ -822,12 +816,11 @@ mod tests {
     /// placeholder rather than a text display Discord rejects.
     #[test]
     fn body_text_treats_whitespace_as_empty() {
-        let character = character();
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(&character, " \n ", 0.0)))
-            .previous(vec![Message::new_user("Bob", "hej")])
+            .choices(NonEmpty::new(timed_choice(" \n ", 0.0)))
+            .previous(vec![Message::new_user("hej")])
             .build();
         assert_eq!(
             history.body_text(" \n "),
@@ -862,7 +855,7 @@ mod tests {
         let mut history = History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(&character, "trasigt svar", 1.0)))
+            .choices(NonEmpty::new(timed_choice("trasigt svar", 1.0)))
             .build();
         history.set_current_choice_error();
         let container = history.render_components(&character, 1, None, true, &[], &[]);
@@ -892,7 +885,7 @@ mod tests {
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(&character, "hej", 1.0)))
+            .choices(NonEmpty::new(timed_choice("hej", 1.0)))
             .build();
         let container = history.render_components(&character, 1, None, true, &[], &[]);
         let json = serde_json::to_string(&container).unwrap_or_default();
@@ -912,7 +905,7 @@ mod tests {
         let value: u32 = 0x00ab_cdef;
         let mut character = character();
         character.set_color(Color::new(value));
-        let history = finished_reply(&character, "hej");
+        let history = finished_reply("hej");
         let container = history.render_components(&character, 1, None, true, &[], &[]);
         let json = serde_json::to_string(&container).unwrap_or_default();
         assert!(
@@ -925,7 +918,7 @@ mod tests {
     #[test]
     fn render_components_omits_the_accent_colour_when_unset() {
         let character = character();
-        let history = finished_reply(&character, "hej");
+        let history = finished_reply("hej");
         let container = history.render_components(&character, 1, None, true, &[], &[]);
         let json = serde_json::to_string(&container).unwrap_or_default();
         assert!(
@@ -941,7 +934,7 @@ mod tests {
         let value: u32 = 0x00ab_cdef;
         let mut character = character();
         character.set_color(Color::new(value));
-        let history = finished_reply(&character, "hej");
+        let history = finished_reply("hej");
         let container =
             history.placeholder_components(&character, 1, Duration::ZERO, true, &[], &[]);
         let json = serde_json::to_string(&container).unwrap_or_default();
@@ -955,7 +948,7 @@ mod tests {
     #[test]
     fn placeholder_omits_the_accent_colour_when_unset() {
         let character = character();
-        let history = finished_reply(&character, "hej");
+        let history = finished_reply("hej");
         let container =
             history.placeholder_components(&character, 1, Duration::ZERO, false, &[], &[]);
         let json = serde_json::to_string(&container).unwrap_or_default();
@@ -966,11 +959,11 @@ mod tests {
     }
 
     /// Builds a finished single-reply history with the given content.
-    fn finished_reply(character: &Character, content: &str) -> History {
+    fn finished_reply(content: &str) -> History {
         History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(character, content, 1.0)))
+            .choices(NonEmpty::new(timed_choice(content, 1.0)))
             .build()
     }
 
@@ -1011,7 +1004,7 @@ mod tests {
     #[test]
     fn continue_button_enabled_on_a_finished_reply() {
         let character = character();
-        let history = finished_reply(&character, "hej");
+        let history = finished_reply("hej");
         assert_eq!(
             button_disabled(&history, &character, "1cont"),
             Some(false),
@@ -1029,7 +1022,7 @@ mod tests {
     #[test]
     fn continue_button_disabled_during_the_reveal_delay() {
         let character = character();
-        let mut history = finished_reply(&character, "hej");
+        let mut history = finished_reply("hej");
         history.set_show_continue(false);
         assert_eq!(
             button_disabled(&history, &character, "1cont"),
@@ -1048,7 +1041,7 @@ mod tests {
     #[test]
     fn continue_button_disabled_at_the_character_limit() {
         let character = character();
-        let history = finished_reply(&character, &"x".repeat(CHARACTER_LIMIT));
+        let history = finished_reply(&"x".repeat(CHARACTER_LIMIT));
         assert_eq!(
             button_disabled(&history, &character, "1cont"),
             Some(true),
@@ -1065,7 +1058,7 @@ mod tests {
     #[test]
     fn stop_button_shown_while_streaming() {
         let character = character();
-        let mut history = finished_reply(&character, "hej");
+        let mut history = finished_reply("hej");
         history.set_finished(false);
         assert_eq!(
             button_disabled(&history, &character, "1stop"),
@@ -1084,7 +1077,7 @@ mod tests {
     #[test]
     fn continue_button_disabled_on_an_error_reply() {
         let character = character();
-        let mut history = finished_reply(&character, "trasigt");
+        let mut history = finished_reply("trasigt");
         history.set_current_choice_error();
         assert_eq!(
             button_disabled(&history, &character, "1cont"),
@@ -1119,7 +1112,7 @@ mod tests {
     #[test]
     fn handoff_dropdown_disabled_while_streaming() {
         let character = character();
-        let mut history = finished_reply(&character, "hej");
+        let mut history = finished_reply("hej");
         history.set_finished(false);
         assert_eq!(
             select_disabled(&history, &character, "1char"),
@@ -1132,7 +1125,7 @@ mod tests {
     #[test]
     fn handoff_dropdown_enabled_when_finished() {
         let character = character();
-        let history = finished_reply(&character, "hej");
+        let history = finished_reply("hej");
         assert_eq!(
             select_disabled(&history, &character, "1char"),
             Some(false),
@@ -1146,7 +1139,7 @@ mod tests {
     #[test]
     fn pending_render_disables_every_control() {
         let character = character();
-        let history = finished_reply(&character, "hej");
+        let history = finished_reply("hej");
         let options = [character.to_menu_option()];
         let value = serde_json::to_value(history.render_components(
             &character,
@@ -1172,12 +1165,11 @@ mod tests {
     /// token, shown as the "…" placeholder rather than the skip-greeting hint.
     #[test]
     fn body_text_shows_ellipsis_for_a_stopped_reply() {
-        let character = character();
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
-            .choices(NonEmpty::new(timed_choice(&character, "", 0.0)))
-            .previous(vec![Message::new_user("Bob", "hej")])
+            .choices(NonEmpty::new(timed_choice("", 0.0)))
+            .previous(vec![Message::new_user("hej")])
             .build();
         assert_eq!(
             history.body_text(""),

@@ -1311,7 +1311,7 @@ mod tests {
             .character("character-id")
             .choices(choices)
             .current(1_usize)
-            .previous(vec![Message::new_user("Alice", "hello")])
+            .previous(vec![Message::new_user("hello")])
             .build();
         assert!(
             db.upsert_history(history).await.is_ok(),

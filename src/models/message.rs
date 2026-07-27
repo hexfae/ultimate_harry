@@ -12,8 +12,6 @@ use serenity::all::{Message as DiscordMessage, MessageId, UserId};
 use tracing::warn;
 use ulid::Ulid;
 
-use crate::models::character::Character;
-
 mod attachments;
 
 pub use attachments::{
@@ -80,11 +78,9 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Parts(NonEmpty<Part>);
 
-/// A part of a message, containing the name of the speaker, the content, and the role.
+/// A part of a message, containing the content and the role.
 #[derive(Debug, Default, Clone, Serialize, Deserialize, Builder)]
 pub struct Part {
-    /// The name of the speaker in this part.
-    name: String,
     /// The content of this part.
     content: String,
     /// The role of this part (User, Assistant, or System).
@@ -124,23 +120,17 @@ impl Message {
     /// Creates a new assistant message.
     ///
     /// Unsplit on newlines.
-    pub fn new_assistant<C: Into<String>>(content: C, character: &Character) -> Self {
+    pub fn new_assistant<C: Into<String>>(content: C) -> Self {
         Self::builder()
-            .parts((character.name().to_owned(), content.into(), Role::Assistant))
+            .parts((content.into(), Role::Assistant))
             .build()
     }
 
     /// Creates a new user message.
     ///
     /// Unsplit on newlines.
-    pub fn new_user<A, C>(author: A, content: C) -> Self
-    where
-        A: Into<String>,
-        C: Into<String>,
-    {
-        Self::builder()
-            .parts((author.into(), content.into(), Role::User))
-            .build()
+    pub fn new_user<C: Into<String>>(content: C) -> Self {
+        Self::builder().parts((content.into(), Role::User)).build()
     }
 
     /// Creates a new system message.
@@ -148,7 +138,7 @@ impl Message {
     /// Unsplit on newlines.
     pub fn new_system<C: Into<String>>(content: C) -> Self {
         Self::builder()
-            .parts(("System".to_owned(), content.into(), Role::System))
+            .parts((content.into(), Role::System))
             .build()
     }
 
@@ -156,15 +146,14 @@ impl Message {
     ///
     /// The new content is appended as a fresh revision and the cursor moves to it; revision 0
     /// (the original content) is left untouched, so an undo can return to it.
-    pub fn edit<A, C, E>(&mut self, author: A, content: C, editor: Option<E>)
+    pub fn edit<C, E>(&mut self, content: C, editor: Option<E>)
     where
-        A: Into<String>,
         C: Into<String>,
         E: Into<UserId>,
     {
         self.revisions.push(
             Revision::builder()
-                .parts((author.into(), content.into(), Role::Assistant))
+                .parts((content.into(), Role::Assistant))
                 .maybe_editor(editor)
                 .build(),
         );
@@ -262,10 +251,10 @@ impl Part {
     }
 }
 
-impl From<(&Character, String, Duration)> for Message {
-    fn from((character, response, time_taken): (&Character, String, Duration)) -> Self {
+impl From<(String, Duration)> for Message {
+    fn from((response, time_taken): (String, Duration)) -> Self {
         Self::builder()
-            .parts((character.name().to_owned(), response, Role::Assistant))
+            .parts((response, Role::Assistant))
             .elapsed(time_taken)
             .build()
     }
@@ -279,9 +268,9 @@ fn parts_from_lines(text: &str, author: &str, from_bot: bool) -> Vec<Part> {
     text.lines()
         .map(|line| {
             let (name, content) = if let Some((name, _)) = line.split_once(": ") {
-                (name.to_owned(), line.to_owned())
+                (name, line.to_owned())
             } else {
-                (author.to_owned(), format!("{author}: {line}"))
+                (author, format!("{author}: {line}"))
             };
             let role = if from_bot || name.eq_ignore_ascii_case("ai") {
                 Role::Assistant
@@ -290,11 +279,7 @@ fn parts_from_lines(text: &str, author: &str, from_bot: bool) -> Vec<Part> {
             } else {
                 Role::User
             };
-            Part::builder()
-                .name(name)
-                .content(content)
-                .role(role)
-                .build()
+            Part::builder().content(content).role(role).build()
         })
         .collect()
 }
@@ -329,14 +314,10 @@ impl From<Vec<Part>> for Parts {
     }
 }
 
-impl From<(String, String, Role)> for Parts {
-    fn from((name, content, role): (String, String, Role)) -> Self {
+impl From<(String, Role)> for Parts {
+    fn from((content, role): (String, Role)) -> Self {
         Self(NonEmpty::new(
-            Part::builder()
-                .name(name)
-                .content(content)
-                .role(role)
-                .build(),
+            Part::builder().content(content).role(role).build(),
         ))
     }
 }
@@ -349,8 +330,8 @@ mod tests {
     /// Builds a system message edited twice, leaving two revisions on top of the original.
     fn message_with_two_edits() -> Message {
         let mut message = Message::new_system("original");
-        message.edit("Bot", "first", None::<u64>);
-        message.edit("Bot", "second", None::<u64>);
+        message.edit("first", None::<u64>);
+        message.edit("second", None::<u64>);
         message
     }
 
@@ -437,7 +418,7 @@ mod tests {
     /// A single-part conversion keeps the content, while an empty list falls back to a blank part.
     #[test]
     fn parts_conversions_preserve_content_or_blank() {
-        let single: Parts = ("Alice".to_owned(), "hi".to_owned(), Role::User).into();
+        let single: Parts = ("hi".to_owned(), Role::User).into();
         assert_eq!(
             single.head().content(),
             "hi",
@@ -458,11 +439,6 @@ mod tests {
         assert_eq!(parts.len(), 3, "one part per line");
 
         let first = parts.first();
-        assert_eq!(
-            first.map(|part| part.name.as_str()),
-            Some("system"),
-            "the prefix becomes the name"
-        );
         assert_eq!(
             first.map(|part| part.content.as_str()),
             Some("system: be terse"),
@@ -489,11 +465,6 @@ mod tests {
         assert_eq!(parts.len(), 1, "a single line yields a single part");
 
         let first = parts.first();
-        assert_eq!(
-            first.map(|part| part.name.as_str()),
-            Some("Bob"),
-            "the author becomes the name"
-        );
         assert_eq!(
             first.map(|part| part.content.as_str()),
             Some("Bob: hello"),
@@ -524,11 +495,6 @@ mod tests {
         assert_eq!(parts.len(), 1, "a single line yields a single part");
 
         let first = parts.first();
-        assert_eq!(
-            first.map(|part| part.name.as_str()),
-            Some("I said"),
-            "the text before the first colon-space becomes the name"
-        );
         assert_eq!(
             first.map(|part| part.content.as_str()),
             Some("I said: hi"),
