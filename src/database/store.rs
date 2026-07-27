@@ -5,9 +5,12 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use snafu::{ResultExt as _, Snafu};
 use std::ffi::OsStr;
+use std::fs::Permissions;
 use std::io::{self, ErrorKind};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 use tokio::fs;
+use tokio::io::AsyncWriteExt as _;
 use tokio::sync::Mutex;
 use tracing::error;
 
@@ -73,9 +76,14 @@ pub(super) fn is_safe_id(id: &str) -> bool {
     !id.is_empty() && !id.contains(['/', '\\']) && !id.contains("..")
 }
 
+/// The owner-only file mode every record is written with, so the config files holding the
+/// `OpenRouter` and `ElevenLabs` API keys are not readable by other users on the host.
+const RECORD_MODE: u32 = 0o600;
+
 /// Serializes `value` to pretty JSON and writes it to `path` atomically (write to a temp file,
 /// then rename over the target), so a crash mid-write never leaves a partial file. `write_lock`
-/// serializes concurrent writes so two saves cannot interleave their temp-file renames.
+/// serializes concurrent writes so two saves cannot interleave their temp-file renames. The temp
+/// file is created with [`RECORD_MODE`] and the rename carries that mode onto the target.
 pub(super) async fn write_json<T: Serialize + Sync>(
     write_lock: &Mutex<()>,
     path: &Path,
@@ -87,7 +95,22 @@ pub(super) async fn write_json<T: Serialize + Sync>(
         fs::create_dir_all(parent).await.context(IoSnafu)?;
     }
     let temp = path.with_extension("json.tmp");
-    fs::write(&temp, &bytes).await.context(IoSnafu)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(RECORD_MODE)
+        .open(&temp)
+        .await
+        .context(IoSnafu)?;
+    // a temp file left behind by a crashed write keeps its old mode, since `mode` only applies to
+    // a freshly created file
+    fs::set_permissions(&temp, Permissions::from_mode(RECORD_MODE))
+        .await
+        .context(IoSnafu)?;
+    file.write_all(&bytes).await.context(IoSnafu)?;
+    file.flush().await.context(IoSnafu)?;
+    drop(file);
     fs::rename(&temp, path).await.context(IoSnafu)?;
     Ok(())
 }
@@ -122,5 +145,72 @@ impl StoreError {
     #[must_use]
     pub const fn retryable(&self) -> bool {
         matches!(self, Self::Io { .. })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RECORD_MODE, write_json};
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::path::{Path, PathBuf};
+    use std::{env, process};
+    use tokio::fs;
+    use tokio::sync::Mutex;
+
+    /// A unique path under the temp dir for a test record, named after `label`.
+    fn temp_record(label: &str) -> PathBuf {
+        let pid = process::id();
+        env::temp_dir().join(format!("harry-store-{pid}-{label}.json"))
+    }
+
+    /// The permission bits of `path`, or `None` if it cannot be inspected.
+    async fn mode_of(path: &Path) -> Option<u32> {
+        let metadata = fs::metadata(path).await.ok()?;
+        Some(metadata.permissions().mode() & 0o777)
+    }
+
+    /// A written record is owner-only, so the config files holding the API keys are
+    /// not readable by other users on the host.
+    #[tokio::test]
+    async fn write_json_writes_owner_only_records() {
+        let path = temp_record("fresh");
+        let written = write_json(&Mutex::new(()), &path, &"secret-key").await;
+        assert!(written.is_ok(), "writing a record should succeed");
+
+        assert_eq!(
+            mode_of(&path).await,
+            Some(RECORD_MODE),
+            "a record is readable only by its owner"
+        );
+        drop(fs::remove_file(&path).await);
+    }
+
+    /// A temp file left behind by a crashed write is not created afresh, so its mode is
+    /// reset explicitly rather than carried onto the renamed record.
+    #[tokio::test]
+    async fn write_json_tightens_a_leftover_temp_file() {
+        let path = temp_record("stale");
+        let temp = path.with_extension("json.tmp");
+        assert!(
+            fs::write(&temp, b"leftover").await.is_ok(),
+            "seeding a leftover temp file should succeed"
+        );
+        assert!(
+            fs::set_permissions(&temp, Permissions::from_mode(0o644))
+                .await
+                .is_ok(),
+            "loosening the leftover temp file should succeed"
+        );
+
+        let written = write_json(&Mutex::new(()), &path, &"secret-key").await;
+        assert!(written.is_ok(), "writing a record should succeed");
+
+        assert_eq!(
+            mode_of(&path).await,
+            Some(RECORD_MODE),
+            "the loose mode of the leftover temp file does not survive the write"
+        );
+        drop(fs::remove_file(&path).await);
     }
 }
