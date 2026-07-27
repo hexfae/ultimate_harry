@@ -95,23 +95,35 @@ pub(super) async fn write_json<T: Serialize + Sync>(
         fs::create_dir_all(parent).await.context(IoSnafu)?;
     }
     let temp = path.with_extension("json.tmp");
+    let saved = match fill_temp(&temp, &bytes).await {
+        Ok(()) => fs::rename(&temp, path).await.context(IoSnafu),
+        Err(why) => Err(why),
+    };
+    if saved.is_err() {
+        // the temp file is dead weight once the save has failed, and would otherwise sit next to
+        // the record forever
+        drop(fs::remove_file(&temp).await);
+    }
+    saved
+}
+
+/// Writes `bytes` to the temp file at `temp`, creating it with [`RECORD_MODE`].
+async fn fill_temp(temp: &Path, bytes: &[u8]) -> Result<(), StoreError> {
     let mut file = fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(RECORD_MODE)
-        .open(&temp)
+        .open(temp)
         .await
         .context(IoSnafu)?;
     // a temp file left behind by a crashed write keeps its old mode, since `mode` only applies to
     // a freshly created file
-    fs::set_permissions(&temp, Permissions::from_mode(RECORD_MODE))
+    fs::set_permissions(temp, Permissions::from_mode(RECORD_MODE))
         .await
         .context(IoSnafu)?;
-    file.write_all(&bytes).await.context(IoSnafu)?;
+    file.write_all(bytes).await.context(IoSnafu)?;
     file.flush().await.context(IoSnafu)?;
-    drop(file);
-    fs::rename(&temp, path).await.context(IoSnafu)?;
     Ok(())
 }
 
@@ -212,5 +224,25 @@ mod tests {
             "the loose mode of the leftover temp file does not survive the write"
         );
         drop(fs::remove_file(&path).await);
+    }
+
+    /// A failed save cleans up after itself, so a temp file is not left next to the record.
+    #[tokio::test]
+    async fn write_json_removes_the_temp_file_when_the_save_fails() {
+        let path = temp_record("doomed");
+        let temp = path.with_extension("json.tmp");
+        // renaming over a non-empty directory fails, so the save cannot complete
+        assert!(
+            fs::create_dir_all(path.join("occupant")).await.is_ok(),
+            "seeding an obstructing directory should succeed"
+        );
+
+        let written = write_json(&Mutex::new(()), &path, &"secret-key").await;
+        assert!(written.is_err(), "writing over a directory should fail");
+        assert!(
+            mode_of(&temp).await.is_none(),
+            "the temp file does not outlive the failed save"
+        );
+        drop(fs::remove_dir_all(&path).await);
     }
 }
