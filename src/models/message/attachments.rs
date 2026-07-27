@@ -375,17 +375,14 @@ mod tests {
         let message = Message::builder()
             .parts(vec![
                 Part::builder()
-                    .name("System".to_owned())
                     .content("sys".to_owned())
                     .role(Role::System)
                     .build(),
                 Part::builder()
-                    .name("Bot".to_owned())
                     .content("reply".to_owned())
                     .role(Role::Assistant)
                     .build(),
                 Part::builder()
-                    .name("Alice".to_owned())
                     .content("hi".to_owned())
                     .role(Role::User)
                     .build(),
@@ -413,7 +410,7 @@ mod tests {
         described: Vec<DescribedAttachment>,
     ) -> Message {
         Message::builder()
-            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .parts(("Alice: hi".to_owned(), Role::User))
             .attachments(attachments)
             .described(described)
             .build()
@@ -430,7 +427,7 @@ mod tests {
     /// Builds a user message carrying the given attachment URLs and cached audio encodings.
     fn message_with_encoded_audio(attachments: Vec<String>, encoded: Vec<EncodedAudio>) -> Message {
         Message::builder()
-            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .parts(("Alice: hi".to_owned(), Role::User))
             .attachments(attachments)
             .encoded_audio(encoded)
             .build()
@@ -812,11 +809,7 @@ mod tests {
     #[test]
     fn attachments_without_a_user_part_become_a_trailing_user_message() {
         let message = Message::builder()
-            .parts((
-                "system".to_owned(),
-                "system: do this".to_owned(),
-                Role::System,
-            ))
+            .parts(("system: do this".to_owned(), Role::System))
             .attachments(vec!["https://cdn/img.png".to_owned()])
             .build();
         let messages = message.to_rig_messages(AttachmentMode::default());

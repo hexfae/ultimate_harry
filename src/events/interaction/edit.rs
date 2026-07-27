@@ -33,7 +33,7 @@ pub async fn edit(
         return Ok(());
     };
 
-    history.edit_content(character.name(), modal.content, Some(interaction.user.id));
+    history.edit_content(modal.content, Some(interaction.user.id));
 
     let options = db.character_menu_options().await?;
     let voices = db.voice_options().await;

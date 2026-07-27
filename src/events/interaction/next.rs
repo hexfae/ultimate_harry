@@ -26,7 +26,7 @@ pub async fn next(
     if history.is_on_last_choice() {
         let options = db.character_menu_options().await?;
         let voices = db.voice_options().await;
-        history.push_choice((&character, String::new(), Duration::ZERO));
+        history.push_choice((String::new(), Duration::ZERO));
         history.set_finished(false);
 
         let placeholder = history.to_placeholder_interaction(&character, id, &options, &voices);

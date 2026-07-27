@@ -219,7 +219,7 @@ mod tests {
     fn apply_descriptions_is_a_noop_when_empty_and_describes_otherwise() {
         let url = "https://cdn/pic.png".to_owned();
         let message = Message::builder()
-            .parts(("Alice".to_owned(), "Alice: hi".to_owned(), Role::User))
+            .parts(("Alice: hi".to_owned(), Role::User))
             .attachments(vec![url.clone()])
             .build();
         let mut context = vec![message];
