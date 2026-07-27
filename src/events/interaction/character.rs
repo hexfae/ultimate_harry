@@ -5,7 +5,10 @@ use crate::{
     cancellation::Cancellations,
     database::Database,
     error::{SendMessageSnafu, SendResponseSnafu},
-    events::streaming::{MessageSink, stream_and_finalize},
+    events::{
+        interaction::UnknownInteraction,
+        streaming::{MessageSink, stream_and_finalize},
+    },
     models::{history::History, message::Message},
     util::report_error,
 };
@@ -32,7 +35,7 @@ pub async fn character(
     let character_id: &str = selected_char_id;
 
     let Some(new_character) = db.character(character_id).await? else {
-        return Ok(());
+        return Err(UnknownInteraction::stale(&interaction.data.custom_id).into());
     };
 
     history.begin_handoff(

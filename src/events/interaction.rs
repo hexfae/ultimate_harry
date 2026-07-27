@@ -111,7 +111,7 @@ async fn dispatch(
     }
 
     let Some((history, character)) = history_and_character_of(id, db).await? else {
-        return Ok(());
+        return Err(UnknownInteraction::stale(&interaction.data.custom_id).into());
     };
 
     match kind {

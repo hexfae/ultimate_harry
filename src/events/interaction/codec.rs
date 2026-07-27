@@ -69,6 +69,21 @@ pub struct UnknownInteraction {
     span: SourceSpan,
 }
 
+impl UnknownInteraction {
+    /// The stale-button error for `custom_id`, labelling the whole id.
+    ///
+    /// Besides an unparsable id, this also covers a button whose message or
+    /// character no longer resolves: to the user both mean the same thing, a
+    /// button on a message that is no longer backed by anything.
+    #[must_use]
+    pub fn stale(custom_id: &str) -> Self {
+        Self {
+            custom_id: custom_id.to_owned(),
+            span: (0..custom_id.len()).into(),
+        }
+    }
+}
+
 impl InteractionKind {
     /// Every interaction kind, the basis for tag round-tripping and the round-trip test.
     const ALL: [Self; 16] = [
@@ -136,10 +151,7 @@ impl TryFrom<&str> for InteractionKind {
         Self::ALL
             .into_iter()
             .find(|kind| kind.as_tag() == value)
-            .ok_or_else(|| UnknownInteraction {
-                custom_id: value.to_owned(),
-                span: (0..value.len()).into(),
-            })
+            .ok_or_else(|| UnknownInteraction::stale(value))
     }
 }
 
@@ -149,14 +161,12 @@ impl Interaction {
     pub(super) fn parse(custom_id: &str) -> Result<Self, UnknownInteraction> {
         let (str_id, str_kind) = custom_id
             .split_at_checked(custom_id.len().saturating_sub(4))
-            .ok_or_else(|| UnknownInteraction {
-                custom_id: custom_id.to_owned(),
-                span: (0..custom_id.len()).into(),
-            })?;
-        let id = MessageId::from(str_id.parse::<u64>().map_err(|_why| UnknownInteraction {
-            custom_id: str_id.to_owned(),
-            span: (0..str_id.len()).into(),
-        })?);
+            .ok_or_else(|| UnknownInteraction::stale(custom_id))?;
+        let id = MessageId::from(
+            str_id
+                .parse::<u64>()
+                .map_err(|_why| UnknownInteraction::stale(str_id))?,
+        );
         let kind = str_kind.try_into()?;
         Ok(Self { id, kind })
     }
