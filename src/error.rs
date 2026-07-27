@@ -122,6 +122,13 @@ pub enum AppError {
         #[snafu(implicit)]
         location: Location,
     },
+    /// No pin channel has been configured.
+    #[snafu(display("Ingen fästkanal är inställd"))]
+    NoPinChannel {
+        /// The location of the error.
+        #[snafu(implicit)]
+        location: Location,
+    },
     /// Interacting with the database failed.
     #[snafu(transparent)]
     Database {
@@ -170,7 +177,9 @@ impl AppError {
             | Self::RetrieveMessage { .. }
             | Self::ShowModal { .. }
             | Self::Streaming { .. } => true,
-            Self::UnknownInteraction { .. } | Self::RegisterCommand { .. } => false,
+            Self::UnknownInteraction { .. }
+            | Self::RegisterCommand { .. }
+            | Self::NoPinChannel { .. } => false,
         }
     }
 }
@@ -196,6 +205,7 @@ impl Diagnostic for AppError {
             Self::ShowModal { location, .. } => ("show_modal", location),
             Self::Streaming { location, .. } => ("streaming", location),
             Self::RegisterCommand { location, .. } => ("register_command", location),
+            Self::NoPinChannel { location } => ("no_pin_channel", location),
         };
 
         let file = loc.file().replace('\\', "/");
@@ -228,6 +238,7 @@ impl Diagnostic for AppError {
             Self::Streaming { .. } => Some(Box::new("Förmodligen ett fel hos OpenRouter.")),
             Self::Tts { source } => source.help(),
             Self::RegisterCommand { .. } => Some(Box::new("¯\\_(ツ)_/¯")),
+            Self::NoPinChannel { .. } => Some(Box::new("Ställ in en kanal med /fästkanal.")),
         }
     }
 }

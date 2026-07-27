@@ -3,14 +3,15 @@
 use crate::{
     AppResult,
     database::Database,
-    error::{SendMessageSnafu, SendResponseSnafu},
+    error::{NoPinChannelSnafu, SendMessageSnafu, SendResponseSnafu},
     models::{character::Character, history::History},
     phrases,
 };
 use serenity::all::{
-    ComponentInteraction, Context, CreateInteractionResponse, CreateInteractionResponseMessage,
+    ChannelId, ComponentInteraction, Context, CreateInteractionResponse,
+    CreateInteractionResponseMessage,
 };
-use snafu::ResultExt as _;
+use snafu::{ResultExt as _, ensure};
 
 /// Send the reply in the configured pin channel.
 pub async fn pin(
@@ -20,11 +21,13 @@ pub async fn pin(
     history: History,
     character: Character,
 ) -> AppResult {
+    let pins_channel_id = db.pins_channel().await;
+    ensure!(pins_channel_id != ChannelId::default(), NoPinChannelSnafu);
+
     let reply = history
         .into_bare_response(&character, interaction.message.link().to_string(), db)
         .await;
 
-    let pins_channel_id = db.pins_channel().await;
     let pin = pins_channel_id
         .widen()
         .send_message(&ctx.http, reply.to_prefix((&*interaction.message).into()))
