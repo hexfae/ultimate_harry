@@ -49,6 +49,9 @@ pub const CHARACTER_LIMIT: usize = 3900;
 /// queries and `Character::rank_by_similarity` must agree on this value.
 pub const MAX_RESULTS: usize = 25;
 
+/// Discord's per-option limit for a select menu's label and description text.
+pub const SELECT_OPTION_LIMIT: usize = 100;
+
 /// How long a transient confirmation or notice message lingers before it is deleted.
 pub const TRANSIENT_LINGER: Duration = Duration::from_secs(5);
 

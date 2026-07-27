@@ -14,6 +14,7 @@ use crate::{
     phrases,
     shortcodes::{guild_emojis, resolve},
     traits::SayEphemeral as _,
+    util::ellipsize,
 };
 use poise::{
     execute_modal,
@@ -198,14 +199,9 @@ async fn autocomplete_example<'a>(
     CreateAutocompleteResponse::new().set_choices(choices)
 }
 
-/// Renders `text` as a single line truncated to `limit` characters, appending an
-/// ellipsis when it was cut, so a long or multi-line example fits an autocomplete
-/// label or list line without breaking it.
+/// Renders `text` as a single line of at most `limit` characters, ellipsised when
+/// it was cut, so a long or multi-line example fits an autocomplete label or list
+/// line without breaking it.
 fn preview(text: &str, limit: usize) -> String {
-    let single_line = text.replace('\n', " ");
-    let mut out = single_line.chars().take(limit).collect::<String>();
-    if single_line.chars().count() > limit {
-        out.push('…');
-    }
-    out
+    ellipsize(&text.replace('\n', " "), limit)
 }

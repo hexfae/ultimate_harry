@@ -10,7 +10,9 @@ use jiff::Zoned;
 use poise::serenity_prelude::all::{Color, UserId};
 use serde::{Deserialize, Serialize};
 
+use crate::constants::SELECT_OPTION_LIMIT;
 use crate::llm::CharacterModelSettings;
+use crate::util::ellipsize;
 
 mod lifecycle;
 mod ranking;
@@ -367,7 +369,7 @@ impl Character {
             name: self.name().to_owned(),
             emoji: self.emoji().map(ToOwned::to_owned),
             id: self.id.clone(),
-            description: blurb.chars().take(100).collect(),
+            description: ellipsize(blurb, SELECT_OPTION_LIMIT),
         }
     }
 

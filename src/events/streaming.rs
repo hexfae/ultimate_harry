@@ -25,7 +25,7 @@ use crate::{
         history::History,
         message::{AttachmentMode, Message as ChatMessage},
     },
-    util::report_error,
+    util::{report_error, truncate_to_chars},
 };
 use core::time::Duration;
 use poise::serenity_prelude::{Context, Message, MessageId};
@@ -51,14 +51,6 @@ const GAVE_UP_MESSAGE: &str = "Gubben gav inget svar efter flera försök. Jag g
 
 /// Reply shown when the request fails to start or the stream errors out.
 const ERROR_MESSAGE: &str = "Det krånglade när jag försökte svara. Jag ger upp.";
-
-/// Truncates `text` to at most `limit` characters, never splitting a multi-byte
-/// character. Discord counts characters, not bytes, so the limit is in characters.
-fn truncate_to_chars(text: &mut String, limit: usize) {
-    if let Some((cut, _)) = text.char_indices().nth(limit) {
-        text.truncate(cut);
-    }
-}
 
 /// Joins a continuation onto the reply it extends, capped at `limit` characters.
 ///
@@ -511,7 +503,6 @@ async fn stream_into<S: ReplySink + Send>(
 mod tests {
     use super::{
         ERROR_MESSAGE, GAVE_UP_MESSAGE, Reply, ReplySink, combine_continuation, finalize_failed,
-        truncate_to_chars,
     };
     use crate::AppResult;
     use crate::llm::{LlmManager, ModelSettings};
@@ -876,35 +867,5 @@ mod tests {
             Some(false),
             "the sentinel reply persists as non-complete"
         );
-    }
-
-    /// The limit counts characters, not bytes, and never splits a multi-byte one.
-    #[test]
-    fn truncation_counts_characters_not_bytes() {
-        let mut text = "héllo".to_owned();
-        truncate_to_chars(&mut text, 2);
-        assert_eq!(
-            text, "hé",
-            "two characters are kept even though é is two bytes"
-        );
-    }
-
-    /// A limit at or above the character count keeps everything.
-    #[test]
-    fn truncation_at_the_length_keeps_everything() {
-        let mut text = "hello".to_owned();
-        truncate_to_chars(&mut text, 5);
-        assert_eq!(
-            text, "hello",
-            "nothing is cut when the limit is not exceeded"
-        );
-    }
-
-    /// A zero limit truncates to the empty string.
-    #[test]
-    fn truncation_to_zero_empties_the_string() {
-        let mut text = "abc".to_owned();
-        truncate_to_chars(&mut text, 0);
-        assert!(text.is_empty(), "a zero limit truncates to nothing");
     }
 }

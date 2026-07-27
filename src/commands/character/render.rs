@@ -2,7 +2,7 @@
 
 use poise::serenity_prelude::all::{CreateEmbed, CreateEmbedFooter};
 
-use crate::{database::Database, models::character::Character};
+use crate::{database::Database, models::character::Character, util::ellipsize};
 
 /// E.g. `16 May, Friday, 2025 | 17:41:14 | 2025-05-16`.
 ///
@@ -11,20 +11,6 @@ const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %T | %F";
 
 /// Discord's per-field value limit for embeds; longer values are rejected.
 const FIELD_VALUE_LIMIT: usize = 1024;
-
-/// Truncates a character field to Discord's embed field value limit, cutting on
-/// a character boundary and appending an ellipsis when anything was removed.
-fn truncate_field(value: String) -> String {
-    if value.chars().count() <= FIELD_VALUE_LIMIT {
-        return value;
-    }
-    let mut truncated: String = value
-        .chars()
-        .take(FIELD_VALUE_LIMIT.saturating_sub(1))
-        .collect();
-    truncated.push('…');
-    truncated
-}
 
 /// Builds a Discord embed presenting the character with the given footer text.
 ///
@@ -65,7 +51,7 @@ pub async fn character_embed<F: Into<String>>(
         .title(title)
         .field(
             "Hälsning",
-            truncate_field(character.greeting().to_owned()),
+            ellipsize(character.greeting(), FIELD_VALUE_LIMIT),
             true,
         )
         .field("Konversationer", conversations, true)
@@ -82,27 +68,31 @@ pub async fn character_embed<F: Into<String>>(
         .field("Genererat", character.formatted_generation(), true);
 
     if let Some(nickname) = character.nickname() {
-        embed = embed.field("Smeknamn", truncate_field(nickname.to_owned()), true);
+        embed = embed.field("Smeknamn", ellipsize(nickname, FIELD_VALUE_LIMIT), true);
     }
 
     if let Some(personality) = character.personality() {
-        embed = embed.field("Personlighet", truncate_field(personality.to_owned()), true);
+        embed = embed.field(
+            "Personlighet",
+            ellipsize(personality, FIELD_VALUE_LIMIT),
+            true,
+        );
     }
 
     if let Some(prompt) = character.prompt() {
-        embed = embed.field("Prompt", truncate_field(prompt.to_owned()), true);
+        embed = embed.field("Prompt", ellipsize(prompt, FIELD_VALUE_LIMIT), true);
     }
 
     if let Some(system_prompt) = character.system_prompt() {
         embed = embed.field(
             "Systemprompt",
-            truncate_field(system_prompt.to_owned()),
+            ellipsize(system_prompt, FIELD_VALUE_LIMIT),
             true,
         );
     }
 
     if let Some(scenario) = character.scenario() {
-        embed = embed.field("Scenario", truncate_field(scenario.to_owned()), true);
+        embed = embed.field("Scenario", ellipsize(scenario, FIELD_VALUE_LIMIT), true);
     }
 
     embed = embed.field("Skapare", creator_name, true);
@@ -146,46 +136,10 @@ pub async fn character_embed<F: Into<String>>(
 /// Tests for the stats and metadata surfaced on the character embed.
 #[cfg(test)]
 mod tests {
-    use super::{FIELD_VALUE_LIMIT, character_embed, truncate_field};
+    use super::character_embed;
     use crate::{database::Database, models::character::Character};
     use alloc::collections::BTreeSet;
     use serenity::all::UserId;
-
-    /// A value within the field limit is returned verbatim; an over-limit value is
-    /// cut to the limit on a char boundary and gains an ellipsis.
-    #[test]
-    fn truncate_field_caps_overlong_values_on_a_char_boundary() {
-        let at_limit = "a".repeat(FIELD_VALUE_LIMIT);
-        assert_eq!(
-            truncate_field(at_limit.clone()),
-            at_limit,
-            "a value exactly at the limit is returned unchanged"
-        );
-
-        let over_limit = "a".repeat(FIELD_VALUE_LIMIT.saturating_add(1));
-        let truncated = truncate_field(over_limit);
-        assert_eq!(
-            truncated.chars().count(),
-            FIELD_VALUE_LIMIT,
-            "an over-limit value is cut to the field limit"
-        );
-        assert!(
-            truncated.ends_with('…'),
-            "the truncated value ends with an ellipsis"
-        );
-
-        let multibyte = "å".repeat(FIELD_VALUE_LIMIT.saturating_add(5));
-        let cut = truncate_field(multibyte);
-        assert_eq!(
-            cut.chars().count(),
-            FIELD_VALUE_LIMIT,
-            "a multibyte value is cut on a char boundary to the field limit"
-        );
-        assert!(
-            cut.ends_with('…'),
-            "a multibyte value also gains an ellipsis"
-        );
-    }
 
     /// Builds a minimal character with the given ID and name.
     fn character(id: &str, name: &str) -> Character {
