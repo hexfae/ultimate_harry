@@ -18,11 +18,9 @@ use serenity::all::{
 
 use crate::{
     components::{emoji_button, reaction_from},
-    constants::{
-        CHARACTER_LIMIT, CONTINUE, EDIT, ERROR_COLOUR, ERROR_HEADING, NEXT, PIN, PREVIOUS, REDO,
-        SPEAK, STOP, UNDO,
-    },
+    constants::{CHARACTER_LIMIT, CONTINUE, EDIT, NEXT, PIN, PREVIOUS, REDO, SPEAK, STOP, UNDO},
     database::Database,
+    error_display::error_container,
     events::interaction::InteractionKind,
     models::character::{Character, CharacterOption},
     tts::{VoiceEntry, is_speakable},
@@ -378,12 +376,8 @@ impl History {
         );
 
         if chosen.is_error() {
-            let heading = text_component(ERROR_HEADING);
             let body = text_component(content.to_owned());
-            return vec![CreateComponent::Container(
-                CreateContainer::new([heading, body, components, footer].concat())
-                    .accent_colour(ERROR_COLOUR),
-            )];
+            return vec![error_container([body, components, footer].concat())];
         }
 
         // discord rejects a whitespace-only text display, so an empty choice
