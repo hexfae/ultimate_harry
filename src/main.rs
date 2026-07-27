@@ -100,11 +100,12 @@ async fn main() -> Result<()> {
         }
     }));
 
-    client.start().await.context(StartSnafu)?;
+    let outcome = client.start().await;
 
     // the gateway has stopped, so no new replies will start; cancel the
     // in-flight ones so each breaks at its next select and persists what it has,
-    // then wait for them to finish before exiting.
+    // then wait for them to finish before exiting. this runs even if the gateway
+    // stopped with an error, so a fatal failure still drains what is in flight.
     app_state.tasks.close();
     app_state.cancellations.cancel_all();
     if timeout(SHUTDOWN_GRACE, app_state.tasks.wait())
@@ -113,6 +114,8 @@ async fn main() -> Result<()> {
     {
         warn!("timed out waiting for in-flight replies to finish");
     }
+
+    outcome.context(StartSnafu)?;
 
     Ok(())
 }
