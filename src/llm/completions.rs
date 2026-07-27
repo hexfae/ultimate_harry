@@ -14,7 +14,7 @@ use rig::message::AudioMediaType;
 use serde::Deserialize;
 use snafu::{IntoError, OptionExt as _, ResultExt as _};
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{LazyLock, Mutex};
 
 use super::{
     AddTagsSnafu, AssignVoicesSnafu, DescribeImageSnafu, EmptyDescriptionSnafu, EmptyTagsSnafu,
@@ -56,14 +56,14 @@ impl LlmManager {
     /// The per-model answer is cached process-wide so the full model list is fetched at most once
     /// per model rather than on every request.
     pub async fn supports_vision(&self) -> Result<bool, LlmError> {
-        self.supports_modality("image", modality_cache()).await
+        self.supports_modality("image", &MODALITY_CACHE).await
     }
 
     /// Returns whether the active model can read audio, by checking its `OpenRouter` capabilities.
     ///
     /// The per-model answer is cached process-wide, like [`supports_vision`](Self::supports_vision).
     pub async fn supports_audio(&self) -> Result<bool, LlmError> {
-        self.supports_modality("audio", modality_cache()).await
+        self.supports_modality("audio", &MODALITY_CACHE).await
     }
 
     /// Returns whether the active model lists `modality` among its accepted input modalities,
@@ -283,17 +283,13 @@ fn parse_dialogue_turns(content: &str) -> Option<Vec<DialogueTurn>> {
 
 /// Process-wide cache of (model id, modality) to whether the model accepts that input modality, so
 /// the `OpenRouter` model list is fetched at most once per (model, modality) pair.
-fn modality_cache() -> &'static Mutex<HashMap<(String, String), bool>> {
-    static CACHE: OnceLock<Mutex<HashMap<(String, String), bool>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static MODALITY_CACHE: LazyLock<Mutex<HashMap<(String, String), bool>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Process-wide cache of attachment URL to its base64 encoding, so a voice message is downloaded
 /// and encoded at most once rather than on every generation whose context still carries it.
-fn audio_cache() -> &'static Mutex<HashMap<String, EncodedAudio>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, EncodedAudio>>> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static AUDIO_CACHE: LazyLock<Mutex<HashMap<String, EncodedAudio>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// The base64 encoding of the audio at `url`, downloading and encoding it on the first call and
 /// serving later calls from the process-wide cache.
@@ -301,7 +297,7 @@ fn audio_cache() -> &'static Mutex<HashMap<String, EncodedAudio>> {
 /// `OpenRouter` accepts audio only as base64 `input_audio`, so this is needed both to transcribe a
 /// voice message and to send it natively to an audio-capable model.
 pub async fn fetch_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
-    if let Some(cached) = audio_cache()
+    if let Some(cached) = AUDIO_CACHE
         .lock()
         .ok()
         .and_then(|locked| locked.get(url).cloned())
@@ -309,7 +305,7 @@ pub async fn fetch_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
         return Ok(cached);
     }
     let encoded = download_audio_base64(url).await?;
-    if let Ok(mut locked) = audio_cache().lock() {
+    if let Ok(mut locked) = AUDIO_CACHE.lock() {
         locked.insert(url.to_owned(), encoded.clone());
     }
     Ok(encoded)
