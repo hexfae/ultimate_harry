@@ -115,3 +115,12 @@ pub enum StoreError {
         source: serde_json::Error,
     },
 }
+
+impl StoreError {
+    /// Whether retrying might succeed (a transient filesystem failure) rather than a
+    /// permanent one (a record whose JSON does not match its type, in either direction).
+    #[must_use]
+    pub const fn retryable(&self) -> bool {
+        matches!(self, Self::Io { .. })
+    }
+}

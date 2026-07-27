@@ -730,20 +730,21 @@ pub enum DatabaseError {
 }
 
 impl DatabaseError {
-    /// Whether retrying might succeed (a transient storage failure) rather than a
-    /// permanent condition (an inaccessible directory or a record that is absent).
+    /// Whether retrying might succeed (a transient filesystem failure) rather than a
+    /// permanent condition (an inaccessible directory, a record that is absent, or a
+    /// record whose stored JSON cannot be parsed).
     #[must_use]
     pub const fn retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::Get { .. }
-                | Self::Insert { .. }
-                | Self::Delete { .. }
-                | Self::Update { .. }
-                | Self::SetModelSettings { .. }
-                | Self::SetPinsChannel { .. }
-                | Self::SetTtsSettings { .. }
-        )
+        match self {
+            Self::Get { source }
+            | Self::Insert { source }
+            | Self::Delete { source }
+            | Self::Update { source }
+            | Self::SetModelSettings { source }
+            | Self::SetPinsChannel { source }
+            | Self::SetTtsSettings { source } => source.retryable(),
+            Self::Connect { .. } | Self::NoCharacter { .. } => false,
+        }
     }
 }
 
@@ -751,10 +752,33 @@ impl DatabaseError {
 /// They run against a fresh temporary database directory.
 #[cfg(test)]
 mod tests {
-    use super::{Database, is_safe_id};
+    use super::{Database, DatabaseError, StoreError, is_safe_id};
     use crate::llm::CharacterModelSettings;
     use crate::models::character::Character;
     use serenity::all::{Color, UserId};
+    use std::io;
+
+    /// A storage failure is only worth retrying when the filesystem was at fault; a
+    /// record whose JSON does not parse fails the same way every time.
+    #[test]
+    fn retryable_follows_the_underlying_store_failure() {
+        let transient = DatabaseError::Get {
+            source: StoreError::Io {
+                source: io::Error::other("disk hiccup"),
+            },
+        };
+        assert!(transient.retryable(), "a filesystem failure may pass later");
+
+        let corrupt = serde_json::from_str::<u8>("not json")
+            .err()
+            .map(|source| DatabaseError::Get {
+                source: StoreError::Deserialize { source },
+            });
+        assert!(
+            corrupt.is_some_and(|error| !error.retryable()),
+            "a corrupt record stays corrupt"
+        );
+    }
 
     /// A client-supplied character ID with path-traversal components is rejected,
     /// so a crafted select value cannot read a file outside the characters dir.
