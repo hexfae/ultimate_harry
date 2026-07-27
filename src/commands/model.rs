@@ -1,7 +1,11 @@
 //! The bot's Discord slash command for setting various AI model settings.
 
 use crate::{
-    AppResult, Context, error::SendMessageSnafu, llm::ModelOverrides, phrases,
+    AppResult, Context,
+    commands::{autocomplete_audio_model, autocomplete_model, autocomplete_vision_model},
+    error::SendMessageSnafu,
+    llm::ModelOverrides,
+    phrases,
     traits::SayEphemeral as _,
 };
 use snafu::ResultExt as _;
@@ -12,6 +16,7 @@ pub async fn model(
     ctx: Context<'_>,
     #[rename = "modell"]
     #[description = "Modellen att använda"]
+    #[autocomplete = autocomplete_model]
     model: Option<String>,
     #[rename = "api-nyckel"]
     #[description = "API-nyckeln att använda"]
@@ -21,9 +26,11 @@ pub async fn model(
     temperature: Option<f32>,
     #[rename = "syn-modell"]
     #[description = "Modellen som beskriver bilder för modeller utan syn"]
+    #[autocomplete = autocomplete_vision_model]
     vision_model: Option<String>,
     #[rename = "ljud-modell"]
     #[description = "Modellen som transkriberar ljud för modeller utan ljud"]
+    #[autocomplete = autocomplete_audio_model]
     audio_model: Option<String>,
 ) -> AppResult {
     let overrides = ModelOverrides {

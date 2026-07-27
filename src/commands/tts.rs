@@ -1,8 +1,8 @@
 //! The bot's Discord slash command for setting text-to-speech (`ElevenLabs`) settings.
 
 use crate::{
-    AppResult, Context, error::SendMessageSnafu, phrases, traits::SayEphemeral as _,
-    tts::TtsOverrides,
+    AppResult, Context, commands::autocomplete_model, error::SendMessageSnafu, phrases,
+    traits::SayEphemeral as _, tts::TtsOverrides,
 };
 use snafu::ResultExt as _;
 
@@ -21,6 +21,7 @@ pub async fn tts(
     model: Option<String>,
     #[rename = "tagg-modell"]
     #[description = "Modellen som lägger till ljudtaggar (kräver Eleven v3)"]
+    #[autocomplete = autocomplete_model]
     tag_model: Option<String>,
 ) -> AppResult {
     let overrides = TtsOverrides {

@@ -53,49 +53,28 @@ const SEGMENT_TAG_CLAUSE: &str = " Additionally, insert ElevenLabs v3 audio tags
 impl LlmManager {
     /// Returns whether the active model can read images, by checking its `OpenRouter` capabilities.
     ///
-    /// The per-model answer is cached process-wide so the full model list is fetched at most once
-    /// per model rather than on every request.
+    /// The answer comes from the process-wide model catalog, fetched at most once.
     pub async fn supports_vision(&self) -> Result<bool, LlmError> {
-        self.supports_modality("image", &MODALITY_CACHE).await
+        self.supports_modality("image").await
     }
 
     /// Returns whether the active model can read audio, by checking its `OpenRouter` capabilities.
     ///
-    /// The per-model answer is cached process-wide, like [`supports_vision`](Self::supports_vision).
+    /// The answer comes from the process-wide model catalog, like
+    /// [`supports_vision`](Self::supports_vision).
     pub async fn supports_audio(&self) -> Result<bool, LlmError> {
-        self.supports_modality("audio", &MODALITY_CACHE).await
+        self.supports_modality("audio").await
     }
 
     /// Returns whether the active model lists `modality` among its accepted input modalities,
-    /// caching the per-model answer in `cache` so the model list is fetched at most once per
-    /// (model, modality) pair.
-    async fn supports_modality(
-        &self,
-        modality: &str,
-        cache: &'static Mutex<HashMap<(String, String), bool>>,
-    ) -> Result<bool, LlmError> {
-        let key = (self.settings.model.clone(), modality.to_owned());
-        if let Some(cached) = cache
-            .lock()
-            .ok()
-            .and_then(|locked| locked.get(&key).copied())
-        {
-            return Ok(cached);
-        }
-        let response = http()
-            .get(MODELS_URL)
-            .send()
-            .await
-            .context(ListModelsSnafu)?;
-        let models = response
-            .json::<ModelsResponse>()
-            .await
-            .context(ListModelsSnafu)?;
-        let supported = model_supports_modality(&models, &self.settings.model, modality);
-        if let Ok(mut locked) = cache.lock() {
-            locked.insert(key, supported);
-        }
-        Ok(supported)
+    /// checking the cached model catalog.
+    async fn supports_modality(&self, modality: &str) -> Result<bool, LlmError> {
+        let catalog = model_catalog().await?;
+        Ok(model_supports_modality(
+            &catalog,
+            &self.settings.model,
+            modality,
+        ))
     }
 
     /// POSTs `body` to the `OpenRouter` chat-completions endpoint and parses the
@@ -281,10 +260,35 @@ fn parse_dialogue_turns(content: &str) -> Option<Vec<DialogueTurn>> {
     }
 }
 
-/// Process-wide cache of (model id, modality) to whether the model accepts that input modality, so
-/// the `OpenRouter` model list is fetched at most once per (model, modality) pair.
-static MODALITY_CACHE: LazyLock<Mutex<HashMap<(String, String), bool>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Process-wide cache of the `OpenRouter` model catalog, so the model list is fetched at most
+/// once per process. Empty until the first successful fetch.
+static CATALOG_CACHE: LazyLock<Mutex<Vec<ModelEntry>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// The `OpenRouter` model catalog, fetched on the first call and served from the process-wide
+/// cache afterwards. Backs both the modality probing and the model-id autocomplete.
+pub async fn model_catalog() -> Result<Vec<ModelEntry>, LlmError> {
+    if let Some(cached) = CATALOG_CACHE
+        .lock()
+        .ok()
+        .filter(|locked| !locked.is_empty())
+        .map(|locked| locked.clone())
+    {
+        return Ok(cached);
+    }
+    let response = http()
+        .get(MODELS_URL)
+        .send()
+        .await
+        .context(ListModelsSnafu)?;
+    let models = response
+        .json::<ModelsResponse>()
+        .await
+        .context(ListModelsSnafu)?;
+    if let Ok(mut locked) = CATALOG_CACHE.lock() {
+        locked.clone_from(&models.data);
+    }
+    Ok(models.data)
+}
 
 /// Process-wide cache of attachment URL to its base64 encoding, so a voice message is downloaded
 /// and encoded at most once rather than on every generation whose context still carries it.
@@ -331,9 +335,8 @@ async fn download_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
 }
 
 /// Whether the model with `model_id` lists `modality` among its accepted input modalities.
-fn model_supports_modality(models: &ModelsResponse, model_id: &str, modality: &str) -> bool {
-    models
-        .data
+fn model_supports_modality(catalog: &[ModelEntry], model_id: &str, modality: &str) -> bool {
+    catalog
         .iter()
         .find(|entry| entry.id == model_id)
         .is_some_and(|entry| {
@@ -378,6 +381,37 @@ fn extract_description(response: &ChatResponse) -> Option<String> {
         .filter(|content| !content.is_empty())
 }
 
+/// The most choices Discord shows in an autocomplete response.
+const MAX_MODEL_CHOICES: usize = 25;
+
+/// Filters the catalog to the model ids matching `partial` (case-insensitive
+/// substring), optionally restricted to models accepting `modality` as input,
+/// sorted alphabetically and capped at Discord's autocomplete choice limit.
+pub fn matching_model_ids(
+    catalog: &[ModelEntry],
+    partial: &str,
+    modality: Option<&str>,
+) -> Vec<String> {
+    let needle = partial.to_lowercase();
+    let mut ids = catalog
+        .iter()
+        .filter(|entry| {
+            modality.is_none_or(|wanted| {
+                entry
+                    .architecture
+                    .input_modalities
+                    .iter()
+                    .any(|listed| listed == wanted)
+            })
+        })
+        .filter(|entry| entry.id.to_lowercase().contains(&needle))
+        .map(|entry| entry.id.clone())
+        .collect::<Vec<String>>();
+    ids.sort_unstable();
+    ids.truncate(MAX_MODEL_CHOICES);
+    ids
+}
+
 /// The subset of `OpenRouter`'s model-list response we care about.
 #[derive(Deserialize)]
 struct ModelsResponse {
@@ -387,8 +421,8 @@ struct ModelsResponse {
 }
 
 /// One model in `OpenRouter`'s model list.
-#[derive(Deserialize)]
-struct ModelEntry {
+#[derive(Clone, Deserialize)]
+pub struct ModelEntry {
     /// The model identifier, for example `deepseek/deepseek-v3.2`.
     id: String,
     /// The model's input/output modality metadata.
@@ -397,7 +431,7 @@ struct ModelEntry {
 }
 
 /// A model's modality metadata.
-#[derive(Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 struct Architecture {
     /// The input modalities the model accepts, for example `text` and `image`.
     #[serde(default)]
@@ -431,9 +465,99 @@ struct ChatMessageContent {
 #[cfg(test)]
 mod tests {
     use super::{
-        ChatResponse, ModelsResponse, api_error_message, extract_description,
-        model_supports_modality, parse_dialogue_turns,
+        Architecture, ChatResponse, MAX_MODEL_CHOICES, ModelEntry, ModelsResponse,
+        api_error_message, extract_description, matching_model_ids, model_supports_modality,
+        parse_dialogue_turns,
     };
+
+    /// Builds a catalog entry with the given id and input modalities.
+    fn entry(id: &str, modalities: &[&str]) -> ModelEntry {
+        ModelEntry {
+            id: id.to_owned(),
+            architecture: Architecture {
+                input_modalities: modalities
+                    .iter()
+                    .map(|&modality| modality.to_owned())
+                    .collect(),
+            },
+        }
+    }
+
+    /// An empty partial matches every model, sorted alphabetically.
+    #[test]
+    fn matching_model_ids_lists_all_on_empty_partial() {
+        let catalog = vec![
+            entry("vendor/zebra", &["text"]),
+            entry("vendor/alpha", &["text"]),
+        ];
+        assert_eq!(
+            matching_model_ids(&catalog, "", None),
+            vec!["vendor/alpha".to_owned(), "vendor/zebra".to_owned()],
+            "an empty partial lists the whole catalog alphabetically"
+        );
+    }
+
+    /// The partial is matched as a case-insensitive substring anywhere in the id.
+    #[test]
+    fn matching_model_ids_matches_substring_case_insensitively() {
+        let catalog = vec![
+            entry("deepseek/deepseek-v3.2", &["text"]),
+            entry("openai/gpt-6", &["text"]),
+        ];
+        assert_eq!(
+            matching_model_ids(&catalog, "DeepSeek", None),
+            vec!["deepseek/deepseek-v3.2".to_owned()],
+            "a differently-cased partial still matches by substring"
+        );
+        assert_eq!(
+            matching_model_ids(&catalog, "gpt", None),
+            vec!["openai/gpt-6".to_owned()],
+            "a partial matching mid-id still matches"
+        );
+        assert!(
+            matching_model_ids(&catalog, "claude", None).is_empty(),
+            "a partial matching nothing yields no choices"
+        );
+    }
+
+    /// A required modality keeps only models listing it among their inputs.
+    #[test]
+    fn matching_model_ids_filters_by_modality() {
+        let catalog = vec![
+            entry("vendor/sees", &["text", "image"]),
+            entry("vendor/hears", &["text", "audio"]),
+            entry("vendor/text", &["text"]),
+        ];
+        assert_eq!(
+            matching_model_ids(&catalog, "", Some("image")),
+            vec!["vendor/sees".to_owned()],
+            "an image filter keeps only vision-capable models"
+        );
+        assert_eq!(
+            matching_model_ids(&catalog, "", Some("audio")),
+            vec!["vendor/hears".to_owned()],
+            "an audio filter keeps only audio-capable models"
+        );
+    }
+
+    /// The choice list is capped at Discord's autocomplete limit.
+    #[test]
+    fn matching_model_ids_caps_at_the_choice_limit() {
+        let catalog = (0_u8..30_u8)
+            .map(|index| entry(&format!("vendor/model-{index:02}"), &["text"]))
+            .collect::<Vec<_>>();
+        let ids = matching_model_ids(&catalog, "", None);
+        assert_eq!(
+            ids.len(),
+            MAX_MODEL_CHOICES,
+            "the list is truncated to Discord's choice limit"
+        );
+        assert_eq!(
+            ids.first().map(String::as_str),
+            Some("vendor/model-00"),
+            "truncation keeps the alphabetically first ids"
+        );
+    }
 
     /// A bare JSON array of turns parses, keeping order, voice, and text.
     #[test]
@@ -508,23 +632,23 @@ mod tests {
         let Ok(models) = parsed else { return };
 
         assert!(
-            model_supports_modality(&models, "vendor/sees", "image"),
+            model_supports_modality(&models.data, "vendor/sees", "image"),
             "a model listing image input supports vision"
         );
         assert!(
-            !model_supports_modality(&models, "vendor/text", "image"),
+            !model_supports_modality(&models.data, "vendor/text", "image"),
             "a model without image input does not support vision"
         );
         assert!(
-            model_supports_modality(&models, "vendor/multi", "audio"),
+            model_supports_modality(&models.data, "vendor/multi", "audio"),
             "a model listing audio input supports audio"
         );
         assert!(
-            !model_supports_modality(&models, "vendor/sees", "audio"),
+            !model_supports_modality(&models.data, "vendor/sees", "audio"),
             "a vision-only model does not support audio"
         );
         assert!(
-            !model_supports_modality(&models, "vendor/missing", "audio"),
+            !model_supports_modality(&models.data, "vendor/missing", "audio"),
             "an unlisted model is treated as supporting no modality"
         );
     }
