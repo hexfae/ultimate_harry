@@ -13,6 +13,9 @@ const TTS_URL_BASE: &str = "https://api.elevenlabs.io/v1/text-to-speech/";
 /// The `ElevenLabs` text-to-dialogue endpoint, which speaks multiple voices in one request.
 const DIALOGUE_URL: &str = "https://api.elevenlabs.io/v1/text-to-dialogue";
 
+/// The `ElevenLabs` endpoint listing the account's available voices.
+const VOICES_URL: &str = "https://api.elevenlabs.io/v1/voices";
+
 /// The default `ElevenLabs` model: Eleven v3, the expressive model that interprets audio tags.
 const DEFAULT_TTS_MODEL: &str = "eleven_v3";
 
@@ -64,6 +67,45 @@ pub struct VoiceEntry {
     /// Auto/dialogue ignores this and always uses the configured model (Eleven v3).
     #[serde(default)]
     pub model: Option<String>,
+}
+
+/// One voice available on the `ElevenLabs` account, as listed by the voices
+/// endpoint. Backs the voice-ID autocomplete on the `/gubbe röst` and
+/// `/röst skapa` commands.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AvailableVoice {
+    /// The voice ID used to synthesize with this voice.
+    pub voice_id: String,
+    /// The voice's display name.
+    pub name: String,
+}
+
+/// The subset of the `ElevenLabs` voices-list response we care about.
+#[derive(Debug, Deserialize)]
+struct VoicesResponse {
+    /// The listed voices.
+    #[serde(default)]
+    voices: Vec<AvailableVoice>,
+}
+
+/// The most voice choices Discord accepts in one autocomplete response.
+const MAX_VOICE_CHOICES: usize = 25;
+
+/// Filters `voices` to those whose name or voice ID contains `partial`
+/// (case-insensitively; an empty `partial` matches every voice), truncated to
+/// Discord's autocomplete choice limit.
+#[must_use]
+pub fn filter_voices(voices: Vec<AvailableVoice>, partial: &str) -> Vec<AvailableVoice> {
+    let lowered = partial.to_lowercase();
+    let mut matching: Vec<AvailableVoice> = voices
+        .into_iter()
+        .filter(|voice| {
+            voice.name.to_lowercase().contains(&lowered)
+                || voice.voice_id.to_lowercase().contains(&lowered)
+        })
+        .collect();
+    matching.truncate(MAX_VOICE_CHOICES);
+    matching
 }
 
 /// The text-to-speech manager for synthesizing spoken replies via `ElevenLabs`.
@@ -300,6 +342,33 @@ impl TtsManager {
         }
     }
 
+    /// Lists the voices available on the `ElevenLabs` account, for the voice-ID
+    /// autocomplete. Fails early with [`TtsError::MissingApiKey`] when no API
+    /// key is configured, like [`synthesize`](Self::synthesize).
+    pub async fn list_voices(&self) -> Result<Vec<AvailableVoice>, TtsError> {
+        if self.settings.api_key.is_empty() {
+            return MissingApiKeySnafu.fail();
+        }
+        let response = http()
+            .get(VOICES_URL)
+            .header("xi-api-key", &self.settings.api_key)
+            .send()
+            .await
+            .context(RequestSnafu)?;
+        let status = response.status();
+        if !status.is_success() {
+            return HttpSnafu {
+                status: status.as_u16(),
+            }
+            .fail();
+        }
+        let parsed = response
+            .json::<VoicesResponse>()
+            .await
+            .context(RequestSnafu)?;
+        Ok(parsed.voices)
+    }
+
     /// POSTs `body` to `url` on `ElevenLabs` and returns the MP3 bytes, failing
     /// early without an API key and validating the response status and that the
     /// audio is non-empty. Shared by the single-voice and dialogue paths.
@@ -526,9 +595,10 @@ impl TtsError {
 #[cfg(test)]
 mod tests {
     use super::{
-        DialoguePlan, DialogueTurn, TtsError, TtsOverrides, TtsSettings, VoiceEntry,
-        audio_filename, dialogue_request_body, enforce_allowed_voices, is_speakable, plan_dialogue,
-        tts_request_body, tts_url,
+        AvailableVoice, DialoguePlan, DialogueTurn, TtsError, TtsManager, TtsOverrides,
+        TtsSettings, VoiceEntry, VoicesResponse, audio_filename, dialogue_request_body,
+        enforce_allowed_voices, filter_voices, is_speakable, plan_dialogue, tts_request_body,
+        tts_url,
     };
 
     /// Builds a dialogue turn with the given voice ID and text.
@@ -972,6 +1042,96 @@ mod tests {
         assert!(
             matches!(&multi, DialoguePlan::Multi(turns) if turns.len() == 2),
             "two distinct voices stay a multi-voice plan"
+        );
+    }
+
+    /// Builds an available voice with the given name and voice ID.
+    fn available(name: &str, voice_id: &str) -> AvailableVoice {
+        AvailableVoice {
+            voice_id: voice_id.to_owned(),
+            name: name.to_owned(),
+        }
+    }
+
+    /// The names of the given voices, for assertions.
+    fn names(voices: &[AvailableVoice]) -> Vec<&str> {
+        voices.iter().map(|voice| voice.name.as_str()).collect()
+    }
+
+    /// The voices-list response parses, keeping each voice's ID and name and
+    /// tolerating extra fields; a body without a voices array parses as empty.
+    #[test]
+    fn voices_response_parses_ids_and_names() {
+        let parsed = serde_json::from_str::<VoicesResponse>(
+            r#"{"voices":[
+                {"voice_id":"abc","name":"Adam","category":"premade"},
+                {"voice_id":"def","name":"Eva","labels":{"accent":"swedish"}}
+            ]}"#,
+        );
+        assert!(parsed.is_ok(), "a voices response with extra fields parses");
+        let Ok(response) = parsed else { return };
+        assert_eq!(
+            response
+                .voices
+                .iter()
+                .map(|voice| (voice.voice_id.as_str(), voice.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("abc", "Adam"), ("def", "Eva")],
+            "each voice keeps its ID and name"
+        );
+        let empty = serde_json::from_str::<VoicesResponse>("{}");
+        assert!(
+            empty.is_ok_and(|parsed_empty| parsed_empty.voices.is_empty()),
+            "a body without a voices array parses as no voices"
+        );
+    }
+
+    /// Filtering matches the partial against the name or the voice ID
+    /// case-insensitively, and an empty partial matches every voice.
+    #[test]
+    fn filter_voices_matches_name_and_id_case_insensitively() {
+        let voices = vec![available("Adam", "AbC123"), available("Eva", "XyZ789")];
+        assert_eq!(
+            names(&filter_voices(voices.clone(), "aDa")),
+            ["Adam"],
+            "a partial matches a name case-insensitively"
+        );
+        assert_eq!(
+            names(&filter_voices(voices.clone(), "xyz7")),
+            ["Eva"],
+            "a partial matches a voice ID case-insensitively"
+        );
+        assert_eq!(
+            names(&filter_voices(voices.clone(), "")),
+            ["Adam", "Eva"],
+            "an empty partial matches every voice"
+        );
+        assert!(
+            filter_voices(voices, "saknas").is_empty(),
+            "a partial matching nothing yields no voices"
+        );
+    }
+
+    /// Filtering truncates to Discord's 25-choice autocomplete limit.
+    #[test]
+    fn filter_voices_truncates_to_the_discord_limit() {
+        let voices = (0_usize..30_usize)
+            .map(|index| available(&format!("Röst {index}"), &format!("id-{index}")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            filter_voices(voices, "").len(),
+            25,
+            "at most 25 choices are returned"
+        );
+    }
+
+    /// Listing voices fails early without an API key, before any request is made.
+    #[tokio::test]
+    async fn list_voices_fails_early_without_an_api_key() {
+        let manager = TtsManager::new(TtsSettings::default());
+        assert!(
+            matches!(manager.list_voices().await, Err(TtsError::MissingApiKey)),
+            "an empty API key is reported as missing before any request"
         );
     }
 

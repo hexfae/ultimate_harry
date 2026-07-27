@@ -1,8 +1,12 @@
 //! The bot's Discord slash commands for managing the speak-aloud voice palette.
 
 use crate::{
-    AppResult, Context, commands::autocomplete_from_names, error::SendMessageSnafu, phrases,
-    traits::SayEphemeral as _, tts::VoiceEntry,
+    AppResult, Context,
+    commands::{autocomplete_elevenlabs_voice, autocomplete_from_names},
+    error::SendMessageSnafu,
+    phrases,
+    traits::SayEphemeral as _,
+    tts::VoiceEntry,
 };
 use poise::serenity_prelude::CreateAutocompleteResponse;
 use snafu::ResultExt as _;
@@ -28,6 +32,7 @@ pub async fn create(
     name: String,
     #[rename = "röst-id"]
     #[description = "ElevenLabs röst-ID"]
+    #[autocomplete = autocomplete_elevenlabs_voice]
     voice_id: String,
     #[rename = "emoji"]
     #[description = "Emoji som visas bredvid namnet"]
