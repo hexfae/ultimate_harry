@@ -724,7 +724,7 @@ mod tests {
     fn footer_shows_editor_and_revision_for_an_edit() {
         let character = character();
         let mut choice = timed_choice("hello", 2.0);
-        choice.edit("hello there", Some(UserId::new(7)));
+        choice.edit("hello there", UserId::new(7));
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")

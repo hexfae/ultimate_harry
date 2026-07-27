@@ -146,7 +146,7 @@ impl Message {
     ///
     /// The new content is appended as a fresh revision and the cursor moves to it; revision 0
     /// (the original content) is left untouched, so an undo can return to it.
-    pub fn edit<C, E>(&mut self, content: C, editor: Option<E>)
+    pub fn edit<C, E>(&mut self, content: C, editor: E)
     where
         C: Into<String>,
         E: Into<UserId>,
@@ -154,7 +154,7 @@ impl Message {
         self.revisions.push(
             Revision::builder()
                 .parts((content.into(), Role::Assistant))
-                .maybe_editor(editor)
+                .editor(editor)
                 .build(),
         );
         self.revision = self.revisions.len();
@@ -330,8 +330,8 @@ mod tests {
     /// Builds a system message edited twice, leaving two revisions on top of the original.
     fn message_with_two_edits() -> Message {
         let mut message = Message::new_system("original");
-        message.edit("first", None::<u64>);
-        message.edit("second", None::<u64>);
+        message.edit("first", 1_u64);
+        message.edit("second", 1_u64);
         message
     }
 
