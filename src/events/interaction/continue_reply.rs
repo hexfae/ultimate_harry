@@ -5,7 +5,7 @@ use crate::{
     cancellation::Cancellations,
     database::Database,
     error::SendResponseSnafu,
-    events::streaming::{ContinueSink, stream_and_finalize},
+    events::streaming::{ContinueSink, InteractionSink, stream_and_finalize},
     models::{character::Character, history::History},
 };
 use poise::serenity_prelude::{ComponentInteraction, Context, MessageId};
@@ -40,13 +40,15 @@ pub async fn continue_reply(
         .context(SendResponseSnafu)?;
 
     let sink = ContinueSink {
-        ctx,
-        history: &mut history,
-        character: &character,
-        interaction,
-        id,
-        db,
-        options: &options,
+        inner: InteractionSink {
+            ctx,
+            history: &mut history,
+            character: &character,
+            interaction,
+            id,
+            db,
+            options: &options,
+        },
         seed,
     };
     stream_and_finalize(Some(CONTINUE_PROMPT.to_owned()), cancellations, sink).await
