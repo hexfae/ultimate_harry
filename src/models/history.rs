@@ -103,7 +103,7 @@ pub struct StoredHistory {
 /// A log of messages between the user and a character.
 impl History {
     /// Edits the content of the current choice message.
-    pub fn edit_content<C, E>(&mut self, content: C, editor: Option<E>)
+    pub fn edit_content<C, E>(&mut self, content: C, editor: E)
     where
         C: Into<String>,
         E: Into<UserId>,
@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn edit_modal_default_follows_edits_and_undo() {
         let mut history = history_with_reply("original");
-        history.edit_content("edited", None::<UserId>);
+        history.edit_content("edited", UserId::new(7));
         assert_eq!(
             history.edit_modal_default().content,
             "edited",
@@ -548,7 +548,7 @@ mod tests {
     fn editing_with_the_prefilled_default_round_trips() {
         let mut history = history_with_reply("keep me");
         let default = history.edit_modal_default().content;
-        history.edit_content(default, None::<UserId>);
+        history.edit_content(default, UserId::new(7));
         assert_eq!(
             history.chosen_content(),
             "keep me",
@@ -751,12 +751,12 @@ mod tests {
         );
     }
 
-    /// An edit with an editor records who made it, and undoing back to the
-    /// original revision clears the attribution.
+    /// An edit records who made it, and undoing back to the original revision
+    /// clears the attribution.
     #[test]
     fn edit_content_records_the_editor_and_clears_on_undo() {
         let mut history = history_with_reply("original");
-        history.edit_content("edited", Some(UserId::new(7)));
+        history.edit_content("edited", UserId::new(7));
         assert_eq!(
             history.chosen_message().current_editor(),
             Some(UserId::new(7)),
