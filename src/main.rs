@@ -11,6 +11,7 @@ mod database;
 mod error;
 mod error_display;
 mod events;
+mod http;
 mod llm;
 mod media;
 mod models;

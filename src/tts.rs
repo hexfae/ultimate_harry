@@ -1,5 +1,6 @@
 //! The text-to-speech manager for speaking character replies aloud via `ElevenLabs`.
 
+use crate::http::http;
 use crate::models::character::Character;
 use jiff::Zoned;
 use miette::Diagnostic;
@@ -305,7 +306,7 @@ impl TtsManager {
         if self.settings.api_key.is_empty() {
             return MissingApiKeySnafu.fail();
         }
-        let response = reqwest::Client::new()
+        let response = http()
             .post(url)
             .header("xi-api-key", &self.settings.api_key)
             .json(&body)
