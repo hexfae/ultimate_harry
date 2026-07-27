@@ -144,12 +144,10 @@ pub trait ReplySink {
     /// The conversation being rendered, for the shared finalize bookkeeping.
     fn history(&mut self) -> &mut History;
 
-    /// The character producing the reply, for the shared progress/finalize steps.
-    fn character(&self) -> &Character;
-
-    /// Store `choice` as this reply's current choice: a new swipe branch on a
-    /// freshly sent message, an in-place update for an interaction swipe.
-    fn store_choice(&mut self, choice: (Character, String, Duration));
+    /// Store `text` as this reply's current choice, taking `elapsed` as its
+    /// generation time: a new swipe branch on a freshly sent message, an in-place
+    /// update for an interaction swipe.
+    fn store_choice(&mut self, text: String, elapsed: Duration);
 
     /// Hook run in [`finalize`](ReplySink::finalize) after the final choice is
     /// stored but before persisting. A sent-message sink keys the history by the
@@ -208,7 +206,7 @@ pub trait ReplySink {
         Self: Send,
     {
         async move {
-            self.store_choice((self.character().clone(), total, elapsed));
+            self.store_choice(total, elapsed);
             self.render_and_edit().await
         }
     }
@@ -225,7 +223,7 @@ pub trait ReplySink {
             // a failed continuation keeps the genuine reply it extends untouched;
             // every other failure is stored as the sentinel and marked an error
             if complete || !self.keeps_reply_on_failure() {
-                self.store_choice((self.character().clone(), reply.text, elapsed));
+                self.store_choice(reply.text, elapsed);
                 self.before_persist();
                 if !complete {
                     self.history().set_current_choice_error();
@@ -561,13 +559,9 @@ mod tests {
             self.history
         }
 
-        fn character(&self) -> &Character {
-            &self.character
-        }
-
-        fn store_choice(&mut self, choice: (Character, String, Duration)) {
-            self.records.stored_text = Some(choice.1.clone());
-            self.history.set_choices(choice);
+        fn store_choice(&mut self, text: String, elapsed: Duration) {
+            self.records.stored_text = Some(text.clone());
+            self.history.set_choices((&self.character, text, elapsed));
         }
 
         fn before_persist(&mut self) {

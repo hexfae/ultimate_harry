@@ -25,7 +25,7 @@ pub async fn next(
 ) -> AppResult {
     if history.is_on_last_choice() {
         let options = db.character_menu_options().await?;
-        history.push_choice((character.clone(), String::new(), Duration::ZERO));
+        history.push_choice((&character, String::new(), Duration::ZERO));
         history.set_finished(false);
 
         let placeholder = history

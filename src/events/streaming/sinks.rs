@@ -67,12 +67,8 @@ impl ReplySink for MessageSink<'_> {
         self.history
     }
 
-    fn character(&self) -> &Character {
-        self.character
-    }
-
-    fn store_choice(&mut self, choice: (Character, String, Duration)) {
-        self.history.set_choices(choice);
+    fn store_choice(&mut self, text: String, elapsed: Duration) {
+        self.history.set_choices((self.character, text, elapsed));
     }
 
     fn before_persist(&mut self) {
@@ -145,12 +141,9 @@ impl ReplySink for InteractionSink<'_> {
         self.history
     }
 
-    fn character(&self) -> &Character {
-        self.character
-    }
-
-    fn store_choice(&mut self, choice: (Character, String, Duration)) {
-        self.history.update_current_choice(choice);
+    fn store_choice(&mut self, text: String, elapsed: Duration) {
+        self.history
+            .update_current_choice((self.character, text, elapsed));
     }
 
     async fn persist(&mut self, counts: (u32, u32), complete: bool) -> AppResult {
@@ -212,14 +205,9 @@ impl ReplySink for ContinueSink<'_> {
         self.inner.history()
     }
 
-    fn character(&self) -> &Character {
-        self.inner.character()
-    }
-
-    fn store_choice(&mut self, choice: (Character, String, Duration)) {
-        let (character, addition, elapsed) = choice;
-        let combined = combine_continuation(&self.seed, &addition, CHARACTER_LIMIT);
-        self.inner.store_choice((character, combined, elapsed));
+    fn store_choice(&mut self, text: String, elapsed: Duration) {
+        let combined = combine_continuation(&self.seed, &text, CHARACTER_LIMIT);
+        self.inner.store_choice(combined, elapsed);
     }
 
     async fn persist(&mut self, counts: (u32, u32), complete: bool) -> AppResult {
