@@ -40,9 +40,14 @@ pub async fn chat(
     history.set_finished(true);
 
     let options = db.character_menu_options().await?;
+    let voices = db.voice_options().await;
 
     let msg = ctx
-        .send(history.to_pending_response(character, db, &options).await)
+        .send(
+            history
+                .to_pending_response(character, db, &options, &voices)
+                .await,
+        )
         .await
         .context(SendMessageSnafu)?;
 
@@ -52,7 +57,7 @@ pub async fn chat(
     msg.edit(
         ctx,
         history
-            .to_response(character, actual_id, db, &options)
+            .to_response(character, actual_id, db, &options, &voices)
             .await,
     )
     .await

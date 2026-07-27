@@ -13,6 +13,7 @@ use crate::{
         history::History,
         message::{AttachmentMode, Message as ChatMessage},
     },
+    tts::VoiceEntry,
 };
 use core::time::Duration;
 use poise::serenity_prelude::{ComponentInteraction, Context, Message, MessageId};
@@ -34,6 +35,8 @@ pub struct MessageSink<'a> {
     pub db: &'a Database,
     /// The hand-off select-menu options, computed once for the whole stream.
     pub options: &'a [CharacterOption],
+    /// The read-aloud voice palette, computed once for the whole stream.
+    pub voices: &'a [VoiceEntry],
 }
 
 impl ReplySink for MessageSink<'_> {
@@ -46,16 +49,13 @@ impl ReplySink for MessageSink<'_> {
     }
 
     async fn placeholder(&mut self, elapsed: Duration) -> AppResult {
-        let edit = self
-            .history
-            .to_placeholder_message_edit(
-                self.character,
-                self.message.id,
-                elapsed,
-                self.db,
-                self.options,
-            )
-            .await;
+        let edit = self.history.to_placeholder_message_edit(
+            self.character,
+            self.message.id,
+            elapsed,
+            self.options,
+            self.voices,
+        );
         self.message
             .edit(self.ctx, edit)
             .await
@@ -82,7 +82,13 @@ impl ReplySink for MessageSink<'_> {
     async fn render_and_edit(&mut self) -> AppResult {
         let edit = self
             .history
-            .to_edit_response(self.character, &*self.message, self.db, self.options)
+            .to_edit_response(
+                self.character,
+                &*self.message,
+                self.db,
+                self.options,
+                self.voices,
+            )
             .await;
         self.message
             .edit(self.ctx, edit)
@@ -108,6 +114,8 @@ pub struct InteractionSink<'a> {
     pub db: &'a Database,
     /// The hand-off select-menu options, computed once for the whole stream.
     pub options: &'a [CharacterOption],
+    /// The read-aloud voice palette, computed once for the whole stream.
+    pub voices: &'a [VoiceEntry],
 }
 
 impl ReplySink for InteractionSink<'_> {
@@ -120,16 +128,13 @@ impl ReplySink for InteractionSink<'_> {
     }
 
     async fn placeholder(&mut self, elapsed: Duration) -> AppResult {
-        let edit = self
-            .history
-            .to_placeholder_interaction_edit(
-                self.character,
-                self.id,
-                elapsed,
-                self.db,
-                self.options,
-            )
-            .await;
+        let edit = self.history.to_placeholder_interaction_edit(
+            self.character,
+            self.id,
+            elapsed,
+            self.options,
+            self.voices,
+        );
         self.interaction
             .edit_response(&self.ctx.http, edit)
             .await
@@ -153,7 +158,7 @@ impl ReplySink for InteractionSink<'_> {
     async fn render_and_edit(&mut self) -> AppResult {
         let edit = self
             .history
-            .to_edit_interaction(self.character, self.id, self.db, self.options)
+            .to_edit_interaction(self.character, self.id, self.db, self.options, self.voices)
             .await;
         self.interaction
             .edit_response(&self.ctx.http, edit)

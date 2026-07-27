@@ -44,32 +44,26 @@ const EMPTY_AVATAR: &str = "https://upload.wikimedia.org/wikipedia/commons/c/ca/
 )]
 impl History {
     /// Converts the history to a placeholder interaction response.
-    pub async fn to_placeholder_interaction<'a, M: Into<MessageId>>(
+    pub fn to_placeholder_interaction<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
         id: M,
-        db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> CreateInteractionResponse<'a> {
-        as_update_message(
-            self.to_placeholder(character, id, Duration::ZERO, true, db, options)
-                .await,
-        )
+        as_update_message(self.to_placeholder(character, id, Duration::ZERO, true, options, voices))
     }
 
     /// Converts the history to a placeholder interaction response edit.
-    pub async fn to_placeholder_interaction_edit<'a, M: Into<MessageId>>(
+    pub fn to_placeholder_interaction_edit<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
         id: M,
         elapsed: Duration,
-        db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> EditInteractionResponse<'a> {
-        as_edit_interaction(
-            self.to_placeholder(character, id, elapsed, true, db, options)
-                .await,
-        )
+        as_edit_interaction(self.to_placeholder(character, id, elapsed, true, options, voices))
     }
 
     /// Converts the history to a placeholder message.
@@ -79,64 +73,60 @@ impl History {
     /// tick re-renders it via
     /// [`to_placeholder_message_edit`](Self::to_placeholder_message_edit) with
     /// the real ID and enables it. The ID passed here is therefore unused.
-    pub async fn to_placeholder_message<'a>(
+    pub fn to_placeholder_message<'a>(
         &self,
         character: &'a Character,
         replying_to: &DiscordMessage,
-        db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> CreateMessage<'a> {
         self.to_placeholder(
             character,
             MessageId::new(1),
             Duration::ZERO,
             false,
-            db,
             options,
+            voices,
         )
-        .await
         .to_prefix(replying_to.into())
         .reference_message(replying_to)
         .allowed_mentions(CreateAllowedMentions::new())
     }
 
     /// Converts the history to a placeholder message edit.
-    pub async fn to_placeholder_message_edit<'a, M: Into<MessageId>>(
+    pub fn to_placeholder_message_edit<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
         id: M,
         elapsed: Duration,
-        db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> EditMessage<'a> {
-        as_message_edit(
-            self.to_placeholder(character, id, elapsed, true, db, options)
-                .await,
-        )
+        as_message_edit(self.to_placeholder(character, id, elapsed, true, options, voices))
     }
 
     /// Converts the history to a placeholder, keying its buttons (the live Stop
     /// button in particular) on the reply's message `id`.
-    async fn to_placeholder<'a, M: Into<MessageId>>(
+    ///
+    /// Nothing has streamed in yet, so there is nothing to speak; the speak
+    /// button and voice dropdown are disabled anyway while unfinished, but the
+    /// dropdown is still rendered so it is present throughout the stream like
+    /// the hand-off menu, rather than popping in only when the reply finishes.
+    fn to_placeholder<'a, M: Into<MessageId>>(
         &self,
         character: &'a Character,
         id: M,
         elapsed: Duration,
         stoppable: bool,
-        db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> CreateReply<'a> {
-        // nothing has streamed in yet, so there is nothing to speak; the speak
-        // button and voice dropdown are disabled anyway while unfinished, but the
-        // dropdown is still rendered so it is present throughout the stream like
-        // the hand-off menu, rather than popping in only when the reply finishes
-        let voices = db.voice_options().await;
         let container = self.placeholder_components(
             character,
             id.into().into(),
             elapsed,
             stoppable,
-            &voices,
+            voices,
             options,
         );
         CreateReply::default()
@@ -234,8 +224,9 @@ impl History {
         id: M,
         db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> CreateInteractionResponse<'a> {
-        as_update_message(self.to_response(character, id, db, options).await)
+        as_update_message(self.to_response(character, id, db, options, voices).await)
     }
 
     /// Converts the history to an edit interaction response.
@@ -245,8 +236,9 @@ impl History {
         id: M,
         db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> EditInteractionResponse<'a> {
-        as_edit_interaction(self.to_response(character, id, db, options).await)
+        as_edit_interaction(self.to_response(character, id, db, options, voices).await)
     }
 
     /// Converts the history to an edit message response.
@@ -256,8 +248,9 @@ impl History {
         id: M,
         db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> EditMessage<'a> {
-        as_message_edit(self.to_response(character, id, db, options).await)
+        as_message_edit(self.to_response(character, id, db, options, voices).await)
     }
 
     /// Builds the footer line of a full response: the page counter, name
@@ -331,8 +324,9 @@ impl History {
         id: M,
         db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> CreateReply<'a> {
-        self.to_response_with(character, id.into().into(), true, db, options)
+        self.to_response_with(character, id.into().into(), true, db, options, voices)
             .await
     }
 
@@ -348,8 +342,9 @@ impl History {
         character: &'a Character,
         db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> CreateReply<'a> {
-        self.to_response_with(character, 1, false, db, options)
+        self.to_response_with(character, 1, false, db, options, voices)
             .await
     }
 
@@ -362,18 +357,18 @@ impl History {
         live: bool,
         db: &Database,
         options: &[CharacterOption],
+        voices: &[VoiceEntry],
     ) -> CreateReply<'a> {
         let editor_name = match self.chosen_message().current_editor() {
             Some(user_id) => Some(db.substitute_name(user_id).await),
             None => None,
         };
-        let voices = db.voice_options().await;
         let container = self.render_components(
             character,
             id,
             editor_name.as_deref(),
             live,
-            &voices,
+            voices,
             options,
         );
         CreateReply::default()
