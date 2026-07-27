@@ -8,6 +8,7 @@ pub mod edit;
 pub mod example;
 pub mod model;
 pub mod paginate;
+pub mod prompt;
 pub mod render;
 pub mod restore;
 pub mod two_modals;
@@ -22,6 +23,7 @@ use delete::delete;
 use edit::edit;
 use example::example;
 use model::model;
+use prompt::prompt;
 use restore::restore;
 use view::view;
 use voice::voice;
@@ -31,7 +33,7 @@ use voice::voice;
     slash_command,
     subcommands(
         "create", "clone", "color", "edit", "view", "delete", "model", "restore", "voice",
-        "example"
+        "example", "prompt"
     ),
     subcommand_required,
     rename = "gubbe"
