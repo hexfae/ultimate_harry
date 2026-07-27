@@ -188,7 +188,7 @@ impl History {
         let footer = format!("-# {}/{CHARACTER_LIMIT}{editor}", content.chars().count());
 
         // discord rejects a whitespace-only text display
-        let text = if content.is_empty() {
+        let text = if content.trim().is_empty() {
             "(ingen hälsning)".to_owned()
         } else {
             content
@@ -291,12 +291,12 @@ impl History {
     }
 
     /// The body text shown for the chosen reply: its own content, or a
-    /// placeholder when the content is empty. An empty choice with no prior
+    /// placeholder when the content is blank. A blank choice with no prior
     /// turns is the seeded skip-greeting option (shown with a hint); once a turn
-    /// is under way an empty choice is a reply stopped before its first token
+    /// is under way a blank choice is a reply stopped before its first token
     /// (shown as the "…" placeholder).
     fn body_text<'a>(&self, content: &'a str) -> &'a str {
-        if !content.is_empty() {
+        if !content.trim().is_empty() {
             content
         } else if self.previous_messages().is_empty() {
             "(ingen hälsning, ditt meddelande blir det första)"
@@ -437,23 +437,20 @@ fn with_accent<'a>(container: CreateContainer<'a>, character: &Character) -> Cre
 }
 
 /// The character title section followed by one text display per remaining
-/// non-empty line of `body`: its first line becomes the title's leading text and
-/// each subsequent non-empty line its own text display. The components own their
-/// text, so the result outlives the borrowed `body`.
+/// non-blank line of `body`: its first non-blank line becomes the title's
+/// leading text and each subsequent non-blank line its own text display. Blank
+/// lines are dropped because Discord rejects a whitespace-only text display. The
+/// components own their text, so the result outlives the borrowed `body`.
 fn title_and_body_lines<'a>(
     character: &'a Character,
     body: &str,
 ) -> Vec<CreateContainerComponent<'a>> {
-    let (first, rest) = match body.split_once('\n') {
-        Some((first, rest)) => (first, Some(rest)),
-        None => (body, None),
-    };
+    let mut lines = body.lines().filter(|line| !line.trim().is_empty());
+    let first = lines.next().unwrap_or_default();
     let mut card = vec![character_title_section(character, first.to_owned())];
-    if let Some(tail) = rest {
-        card.extend(tail.split('\n').filter(|line| !line.is_empty()).map(|part| {
-            CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part.to_owned()))
-        }));
-    }
+    card.extend(lines.map(|part| {
+        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part.to_owned()))
+    }));
     card
 }
 
@@ -774,6 +771,42 @@ mod tests {
             history.body_text(""),
             "(ingen hälsning, ditt meddelande blir det första)",
             "an empty greeting choice explains the skip-greeting option"
+        );
+    }
+
+    /// Whitespace-only content is treated as no content at all, so it renders the
+    /// placeholder rather than a text display Discord rejects.
+    #[test]
+    fn body_text_treats_whitespace_as_empty() {
+        let character = character();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(timed_choice(&character, " \n ", 0.0)))
+            .previous(vec![Message::new_user("Bob", "hej")])
+            .build();
+        assert_eq!(
+            history.body_text(" \n "),
+            "…",
+            "whitespace-only content falls back to the placeholder glyph"
+        );
+    }
+
+    /// A body with leading and interior blank lines renders only the lines that
+    /// carry text, since Discord rejects a whitespace-only text display.
+    #[test]
+    fn body_lines_skip_blank_lines() {
+        let character = character();
+        let card = super::title_and_body_lines(&character, "\n  \nhej\n \nsvejs\n");
+        assert_eq!(
+            card.len(),
+            2,
+            "only the title section and the second line of text are emitted"
+        );
+        let json = serde_json::to_string(&card).unwrap_or_default();
+        assert!(
+            json.contains("hej") && json.contains("svejs"),
+            "both non-blank lines survive"
         );
     }
 
