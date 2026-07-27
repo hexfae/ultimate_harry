@@ -25,11 +25,13 @@ pub fn report_error<E: Into<Report>>(error: E) {
 /// Returns the previous index in a cyclic sequence of `len` elements, wrapping from the first
 /// element back to the last.
 ///
-/// `len` must be non-zero; both call sites cycle over a [`nonempty::NonEmpty`], so the length is
-/// always at least one.
+/// An empty sequence has no indices to step through, so a `len` of zero yields zero.
 #[must_use]
 pub const fn wrapping_previous(index: usize, len: usize) -> usize {
-    index.saturating_add(len).saturating_sub(1).strict_rem(len)
+    match index.saturating_add(len).saturating_sub(1).checked_rem(len) {
+        Some(previous) => previous,
+        None => 0,
+    }
 }
 
 /// Tests for the shared helpers.
@@ -53,5 +55,10 @@ mod tests {
             "the second element steps to the first"
         );
         assert_eq!(wrapping_previous(0, 1), 0, "a single element stays put");
+        assert_eq!(
+            wrapping_previous(0, 0),
+            0,
+            "an empty sequence has no index to step to"
+        );
     }
 }
