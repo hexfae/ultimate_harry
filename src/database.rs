@@ -2,6 +2,7 @@
 
 mod store;
 
+use core::cmp::Reverse;
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use miette::{Diagnostic, SourceSpan};
 use nanorand::Rng as _;
@@ -181,9 +182,7 @@ impl Database {
     /// Returns up to 25 visible characters, sorted by the most commonly used ones.
     pub async fn characters_by_usage(&self) -> Result<Vec<Character>, DatabaseError> {
         let mut characters = self.visible_characters().await?;
-        characters.sort_by(|left, right| {
-            right.conversations_had().cmp(&left.conversations_had())
-        });
+        characters.sort_by_key(|character| Reverse(character.conversations_had()));
         characters.truncate(MAX_RESULTS);
         Ok(characters)
     }
