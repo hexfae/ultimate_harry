@@ -3,10 +3,16 @@
 use serenity::all::{ButtonStyle, CreateButton, ReactionType};
 use serenity::small_fixed_array::FixedString;
 
+/// Builds a `ReactionType` from a compile-time unicode emoji, without the
+/// fallible parse the string conversion goes through.
+pub fn unicode_emoji(emoji: &'static str) -> ReactionType {
+    ReactionType::Unicode(FixedString::from_static_trunc(emoji))
+}
+
 /// Builds a secondary-style button with the given custom ID and unicode emoji.
 pub fn emoji_button(custom_id: String, emoji: &'static str) -> CreateButton<'static> {
     CreateButton::new(custom_id)
-        .emoji(ReactionType::Unicode(FixedString::from_static_trunc(emoji)))
+        .emoji(unicode_emoji(emoji))
         .style(ButtonStyle::Secondary)
 }
 

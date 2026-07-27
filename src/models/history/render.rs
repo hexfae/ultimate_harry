@@ -13,12 +13,14 @@ use serenity::all::{
     CreateMessage, CreateSection, CreateSectionAccessory, CreateSectionComponent, CreateSelectMenu,
     CreateSelectMenuKind, CreateSelectMenuOption, CreateTextDisplay, CreateThumbnail,
     CreateUnfurledMediaItem, EditInteractionResponse, EditMessage, Message as DiscordMessage,
-    MessageFlags, MessageId, ReactionType,
+    MessageFlags, MessageId,
 };
 
 use crate::{
-    components::{emoji_button, reaction_from},
-    constants::{CHARACTER_LIMIT, CONTINUE, EDIT, NEXT, PIN, PREVIOUS, REDO, SPEAK, STOP, UNDO},
+    components::{emoji_button, reaction_from, unicode_emoji},
+    constants::{
+        AUTO_VOICE, CHARACTER_LIMIT, CONTINUE, EDIT, NEXT, PIN, PREVIOUS, REDO, SPEAK, STOP, UNDO,
+    },
     database::Database,
     error_display::error_container,
     events::interaction::InteractionKind,
@@ -612,14 +614,11 @@ fn voice_select_menu<'a>(
 /// Builds the voice dropdown's options: a leading "automatic" entry followed by
 /// one entry per palette voice, each carrying its emoji and description.
 fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
-    let mut options = vec![{
-        let auto = CreateSelectMenuOption::new("Automatiskt", "auto")
-            .description("Välj röst(er) automatiskt utifrån innehållet");
-        match ReactionType::try_from("🎭".to_owned()) {
-            Ok(emoji) => auto.emoji(emoji),
-            Err(_why) => auto,
-        }
-    }];
+    let mut options = vec![
+        CreateSelectMenuOption::new("Automatiskt", "auto")
+            .description("Välj röst(er) automatiskt utifrån innehållet")
+            .emoji(unicode_emoji(AUTO_VOICE)),
+    ];
     options.extend(voices.iter().map(|voice| {
         let mut option = CreateSelectMenuOption::new(voice.name.clone(), voice.voice_id.clone())
             .description(voice.description.chars().take(100).collect::<String>());

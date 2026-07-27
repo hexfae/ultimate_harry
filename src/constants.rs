@@ -34,6 +34,8 @@ pub const OLDER_VERSION: &str = "⏮";
 pub const NEWER_VERSION: &str = "⏭";
 /// The emoji used for rolling a character back to the shown older version.
 pub const ROLLBACK: &str = "⏪";
+/// The emoji used for the automatic entry of the read-aloud voice dropdown.
+pub const AUTO_VOICE: &str = "🎭";
 
 /// The max amount of characters an AI can respond with.
 ///
