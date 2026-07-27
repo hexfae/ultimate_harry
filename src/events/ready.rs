@@ -7,38 +7,57 @@ use poise::{
     samples::{register_globally, register_in_guild},
     serenity_prelude::{ActivityData, ActivityType, Context, small_fixed_array::FixedString},
 };
+use core::sync::atomic::{AtomicBool, Ordering};
 use serenity::all::Ready;
 use snafu::ResultExt as _;
 use std::time::Instant;
 use tokio::time::sleep;
 use tracing::info;
 
-/// Handles the ready event when the bot connects to Discord.
-///
-/// This function registers all slash commands in each guild and starts
-/// a background task that updates the bot's activity status.
-#[expect(
-    clippy::integer_division,
-    reason = "the loss of precision is desired, we divide by constant, non-zero numbers"
-)]
-pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> AppResult {
-    info!("ready");
-    let ctx_clone = ctx.clone();
+/// Whether the one-time ready work (command registration, presence task) has
+/// already run, since Discord dispatches `Ready` again on every re-identify.
+static READY_DONE: AtomicBool = AtomicBool::new(false);
+
+/// Registers the slash commands globally and in every guild the bot is in.
+async fn register_commands(ctx: &Context, data_about_bot: &Ready) -> AppResult {
     let (global_commands, guild_commands) = partitioned_commands();
-    register_globally(&ctx_clone.http, &global_commands)
+    register_globally(&ctx.http, &global_commands)
         .await
         .context(RegisterCommandSnafu)?;
     for guild in &data_about_bot.guilds {
         // also register the global (user-installable) commands per guild, so
         // they show up instantly instead of only after global propagation
         register_in_guild(
-            &ctx_clone.http,
+            &ctx.http,
             guild_commands.iter().chain(&global_commands),
             guild.id,
         )
         .await
         .context(RegisterCommandSnafu)?;
     }
+    Ok(())
+}
+
+/// Handles the ready event when the bot connects to Discord.
+///
+/// This function registers all slash commands in each guild and starts
+/// a background task that updates the bot's activity status. Both are done
+/// only on the first ready event of the process; later ones are ignored.
+#[expect(
+    clippy::integer_division,
+    reason = "the loss of precision is desired, we divide by constant, non-zero numbers"
+)]
+pub async fn ready(ctx: &Context, data_about_bot: &Ready) -> AppResult {
+    info!("ready");
+    if READY_DONE.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    if let Err(why) = register_commands(ctx, data_about_bot).await {
+        // let a later ready event try again
+        READY_DONE.store(false, Ordering::SeqCst);
+        return Err(why);
+    }
+    let ctx_clone = ctx.clone();
     tokio::spawn(async move {
         let start = Instant::now();
         let mut rng = WyRand::new();
