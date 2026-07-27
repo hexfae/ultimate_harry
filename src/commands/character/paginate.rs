@@ -24,8 +24,8 @@ use poise::{
     CreateReply, ReplyHandle,
     serenity_prelude::{
         ButtonStyle, ComponentInteraction, ComponentInteractionCollector, CreateActionRow,
-        CreateButton, CreateComponent, CreateInteractionResponse,
-        CreateInteractionResponseMessage, ReactionType,
+        CreateButton, CreateComponent, CreateInteractionResponse, CreateInteractionResponseMessage,
+        ReactionType,
         small_fixed_array::{FixedArray, FixedString},
     },
 };
@@ -312,11 +312,15 @@ fn confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
         vec![
             CreateButton::new(confirm_id)
                 .style(ButtonStyle::Secondary)
-                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(CONFIRM)))
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(
+                    CONFIRM,
+                )))
                 .label(yes()),
             CreateButton::new(cancel_id)
                 .style(ButtonStyle::Secondary)
-                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(CANCEL)))
+                .emoji(ReactionType::Unicode(FixedString::from_static_trunc(
+                    CANCEL,
+                )))
                 .label(no()),
         ]
         .into(),

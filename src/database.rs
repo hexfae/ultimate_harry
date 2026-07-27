@@ -20,12 +20,12 @@ use store::{is_safe_id, read_json, read_or, scan_dir};
 
 use crate::constants::MAX_RESULTS;
 use crate::llm::{CharacterModelSettings, ModelSettings};
-use crate::tts::{TtsSettings, VoiceEntry};
 use crate::models::{
     character::{Character, CharacterOption},
     config::UserPrefs,
     history::{History, StoredHistory},
 };
+use crate::tts::{TtsSettings, VoiceEntry};
 
 /// The root directory of the JSON-file database.
 const DATABASE_DIR: &str = "harry_database";
@@ -263,10 +263,7 @@ impl Database {
 
     /// Restores a soft-deleted character by clearing its deleted state. Returns
     /// the restored character, or `Ok(None)` if it is missing.
-    pub async fn restore_character(
-        &self,
-        id: &str,
-    ) -> Result<Option<Character>, DatabaseError> {
+    pub async fn restore_character(&self, id: &str) -> Result<Option<Character>, DatabaseError> {
         self.mutate_character(id, UpdateSnafu, Character::restore)
             .await
     }
@@ -275,10 +272,7 @@ impl Database {
     /// oldest to newest. Walks back to the chain's root via `previous_version`,
     /// then forward via `next_version`. Returns an empty vector if `id` is
     /// missing, and stops walking at the first dangling link.
-    pub async fn character_versions(
-        &self,
-        id: &str,
-    ) -> Result<Vec<Character>, DatabaseError> {
+    pub async fn character_versions(&self, id: &str) -> Result<Vec<Character>, DatabaseError> {
         let Some(start) = self.character(id).await? else {
             return Ok(Vec::new());
         };
@@ -406,7 +400,9 @@ impl Database {
 
     /// Returns every user's set emoji, paired with their Discord user ID.
     pub async fn user_emoji(&self) -> Result<Vec<(String, ReactionType)>, DatabaseError> {
-        let prefs: Vec<UserPrefs> = scan_dir(&self.root.join(USERS_DIR)).await.context(GetSnafu)?;
+        let prefs: Vec<UserPrefs> = scan_dir(&self.root.join(USERS_DIR))
+            .await
+            .context(GetSnafu)?;
         Ok(prefs
             .into_iter()
             .filter_map(|pref| pref.emoji.map(|emoji| (pref.user_id, emoji)))
@@ -644,40 +640,28 @@ pub enum DatabaseError {
     },
     /// Getting a record failed.
     #[snafu(display("Kunde inte hämta från databasen"))]
-    #[diagnostic(
-        help("Kontrollera att posten finns."),
-        code(database::get)
-    )]
+    #[diagnostic(help("Kontrollera att posten finns."), code(database::get))]
     Get {
         /// The source of the error.
         source: StoreError,
     },
     /// Inserting a record failed.
     #[snafu(display("Kunde inte infoga i databasen"))]
-    #[diagnostic(
-        help("Kontrollera att datat är korrekt."),
-        code(database::insert)
-    )]
+    #[diagnostic(help("Kontrollera att datat är korrekt."), code(database::insert))]
     Insert {
         /// The source of the error.
         source: StoreError,
     },
     /// Deleting a record failed.
     #[snafu(display("Kunde inte ta bort från databasen"))]
-    #[diagnostic(
-        help("Kontrollera att posten finns."),
-        code(database::delete)
-    )]
+    #[diagnostic(help("Kontrollera att posten finns."), code(database::delete))]
     Delete {
         /// The source of the error.
         source: StoreError,
     },
     /// Updating a record failed.
     #[snafu(display("Kunde inte uppdatera databasen"))]
-    #[diagnostic(
-        help("Kontrollera att posten finns."),
-        code(database::update)
-    )]
+    #[diagnostic(help("Kontrollera att posten finns."), code(database::update))]
     Update {
         /// The source of the error.
         source: StoreError,
@@ -768,11 +752,12 @@ mod tests {
         };
         assert!(transient.retryable(), "a filesystem failure may pass later");
 
-        let corrupt = serde_json::from_str::<u8>("not json")
-            .err()
-            .map(|source| DatabaseError::Get {
-                source: StoreError::Deserialize { source },
-            });
+        let corrupt =
+            serde_json::from_str::<u8>("not json")
+                .err()
+                .map(|source| DatabaseError::Get {
+                    source: StoreError::Deserialize { source },
+                });
         assert!(
             corrupt.is_some_and(|error| !error.retryable()),
             "a corrupt record stays corrupt"
@@ -786,7 +771,10 @@ mod tests {
         assert!(is_safe_id("01J0ABCDEF"), "a plain ULID is a safe id");
         assert!(is_safe_id("123456789"), "a numeric snowflake is a safe id");
         assert!(!is_safe_id(""), "an empty id is rejected");
-        assert!(!is_safe_id("../config/tts_settings"), "a parent traversal is rejected");
+        assert!(
+            !is_safe_id("../config/tts_settings"),
+            "a parent traversal is rejected"
+        );
         assert!(!is_safe_id("sub/dir"), "a separator is rejected");
     }
 
@@ -900,13 +888,11 @@ mod tests {
         let Ok(db) = opened else { return };
         insert(&db, character("old-id", "Harry")).await;
 
-        let superseded = db
-            .supersede_character("new-id".to_owned(), "old-id")
-            .await;
+        let superseded = db.supersede_character("new-id".to_owned(), "old-id").await;
         assert!(
-            superseded
+            superseded.as_ref().is_ok_and(|found| found
                 .as_ref()
-                .is_ok_and(|found| found.as_ref().is_some_and(|record| record.next_version() == Some("new-id"))),
+                .is_some_and(|record| record.next_version() == Some("new-id"))),
             "superseding records the new version's ID on the old character"
         );
     }
@@ -921,9 +907,7 @@ mod tests {
             "opening a temporary database should succeed"
         );
         let Ok(db) = opened else { return };
-        let superseded = db
-            .supersede_character("new-id".to_owned(), "missing")
-            .await;
+        let superseded = db.supersede_character("new-id".to_owned(), "missing").await;
         assert!(
             superseded.is_err(),
             "superseding a missing character errors"
@@ -952,10 +936,12 @@ mod tests {
             )
             .await;
         assert!(
-            updated.as_ref().is_ok_and(|found| found.as_ref().is_some_and(|record| record
-                .model_settings()
-                .and_then(|settings| settings.model.as_deref())
-                == Some("char-model"))),
+            updated
+                .as_ref()
+                .is_ok_and(|found| found.as_ref().is_some_and(|record| record
+                    .model_settings()
+                    .and_then(|settings| settings.model.as_deref())
+                    == Some("char-model"))),
             "setting model settings records the override's contents and returns the character"
         );
 
@@ -984,18 +970,17 @@ mod tests {
             .set_character_voice("char-id", Some("voice-abc".to_owned()))
             .await;
         assert!(
-            linked
+            linked.as_ref().is_ok_and(|found| found
                 .as_ref()
-                .is_ok_and(|found| found.as_ref().is_some_and(|record| record.voice()
-                    == Some("voice-abc"))),
+                .is_some_and(|record| record.voice() == Some("voice-abc"))),
             "linking a voice records it and returns the character"
         );
 
         let cleared = db.set_character_voice("char-id", None).await;
         assert!(
-            cleared
+            cleared.as_ref().is_ok_and(|found| found
                 .as_ref()
-                .is_ok_and(|found| found.as_ref().is_some_and(|record| record.voice().is_none())),
+                .is_some_and(|record| record.voice().is_none())),
             "clearing the voice removes the link"
         );
 
@@ -1089,7 +1074,11 @@ mod tests {
             "the saved audio-tag model is read back"
         );
         assert_eq!(
-            loaded.voices.iter().map(|voice| voice.voice_id.as_str()).collect::<Vec<_>>(),
+            loaded
+                .voices
+                .iter()
+                .map(|voice| voice.voice_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["voice-anna"],
             "the saved voice palette is read back"
         );
@@ -1117,14 +1106,16 @@ mod tests {
 
         let latest = db.character("new-id").await.ok().flatten();
         assert!(
-            latest.is_some_and(|record| record.words_generated() == 3
-                && record.tokens_generated() == 9),
+            latest.is_some_and(
+                |record| record.words_generated() == 3 && record.tokens_generated() == 9
+            ),
             "generation stats land on the latest version"
         );
         let original = db.character("old-id").await.ok().flatten();
         assert!(
-            original.is_some_and(|record| record.words_generated() == 0
-                && record.tokens_generated() == 0),
+            original.is_some_and(
+                |record| record.words_generated() == 0 && record.tokens_generated() == 0
+            ),
             "the original version receives no stats"
         );
     }
@@ -1423,7 +1414,9 @@ mod tests {
             "a temperature override replaces the global temperature"
         );
 
-        let plain_resolved = db.resolved_model_settings(&character("plain", "Harry")).await;
+        let plain_resolved = db
+            .resolved_model_settings(&character("plain", "Harry"))
+            .await;
         assert_eq!(
             plain_resolved.model, "global-model",
             "a character with no override leaves the global model unchanged"

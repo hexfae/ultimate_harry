@@ -83,11 +83,18 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> CreateMessage<'a> {
-        self.to_placeholder(character, MessageId::new(1), Duration::ZERO, false, db, options)
-            .await
-            .to_prefix(replying_to.into())
-            .reference_message(replying_to)
-            .allowed_mentions(CreateAllowedMentions::new())
+        self.to_placeholder(
+            character,
+            MessageId::new(1),
+            Duration::ZERO,
+            false,
+            db,
+            options,
+        )
+        .await
+        .to_prefix(replying_to.into())
+        .reference_message(replying_to)
+        .allowed_mentions(CreateAllowedMentions::new())
     }
 
     /// Converts the history to a placeholder message edit.
@@ -121,8 +128,14 @@ impl History {
         // dropdown is still rendered so it is present throughout the stream like
         // the hand-off menu, rather than popping in only when the reply finishes
         let voices = db.voice_options().await;
-        let container =
-            self.placeholder_components(character, id.into().into(), elapsed, stoppable, &voices, options);
+        let container = self.placeholder_components(
+            character,
+            id.into().into(),
+            elapsed,
+            stoppable,
+            &voices,
+            options,
+        );
         CreateReply::default()
             .flags(MessageFlags::IS_COMPONENTS_V2)
             .components(container)
@@ -194,9 +207,9 @@ impl History {
             content
         };
         let mut card = title_and_body_lines(character, &text);
-        card.push(CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-            footer,
-        )));
+        card.push(CreateContainerComponent::TextDisplay(
+            CreateTextDisplay::new(footer),
+        ));
 
         let mut card_container = CreateContainer::new(card);
         if let Some(colour) = character.color() {
@@ -255,7 +268,11 @@ impl History {
         editor_name: Option<&str>,
     ) -> String {
         let chosen = self.chosen_message();
-        let pages = format!("{}/{}", self.current.saturating_add(1), self.choices_count());
+        let pages = format!(
+            "{}/{}",
+            self.current.saturating_add(1),
+            self.choices_count()
+        );
 
         let elapsed = if editor_name.is_some() {
             String::new()
@@ -271,8 +288,7 @@ impl History {
 
         let similarity = character.similarity();
 
-        let editor =
-            editor_name.map_or_else(String::new, |name| format!(" | redigerad av {name}"));
+        let editor = editor_name.map_or_else(String::new, |name| format!(" | redigerad av {name}"));
 
         let edit_pages = if self.chosen_has_edit() {
             format!(
@@ -404,12 +420,10 @@ fn as_message_edit(reply: CreateReply<'_>) -> EditMessage<'_> {
 /// Wraps `text` as a single text-display container component list, ready to
 /// `concat` into a container (the footer, error heading, and error body all share
 /// this one-line shape).
-fn text_component<'a, T: Into<Cow<'a, str>>>(
-    text: T,
-) -> Cow<'a, [CreateContainerComponent<'a>]> {
-    vec![CreateContainerComponent::TextDisplay(CreateTextDisplay::new(
-        text,
-    ))]
+fn text_component<'a, T: Into<Cow<'a, str>>>(text: T) -> Cow<'a, [CreateContainerComponent<'a>]> {
+    vec![CreateContainerComponent::TextDisplay(
+        CreateTextDisplay::new(text),
+    )]
     .into()
 }
 
@@ -560,9 +574,10 @@ fn character_select_menu<'a>(
                         // "emoji" field is prepended to the label instead, since
                         // Discord rejects non-emoji in the emoji slot.
                         let label = match (option.emoji(), &reaction) {
-                            (Some(text), None) => {
-                                format!("{text} {}", option.name()).chars().take(100).collect()
-                            }
+                            (Some(text), None) => format!("{text} {}", option.name())
+                                .chars()
+                                .take(100)
+                                .collect(),
                             _ => option.name().to_owned(),
                         };
                         let mut menu_option =
@@ -603,16 +618,14 @@ fn voice_select_menu<'a>(
 /// Builds the voice dropdown's options: a leading "automatic" entry followed by
 /// one entry per palette voice, each carrying its emoji and description.
 fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
-    let mut options = vec![
-        {
-            let auto = CreateSelectMenuOption::new("Automatiskt", "auto")
-                .description("Välj röst(er) automatiskt utifrån innehållet");
-            match ReactionType::try_from("🎭".to_owned()) {
-                Ok(emoji) => auto.emoji(emoji),
-                Err(_why) => auto,
-            }
-        },
-    ];
+    let mut options = vec![{
+        let auto = CreateSelectMenuOption::new("Automatiskt", "auto")
+            .description("Välj röst(er) automatiskt utifrån innehållet");
+        match ReactionType::try_from("🎭".to_owned()) {
+            Ok(emoji) => auto.emoji(emoji),
+            Err(_why) => auto,
+        }
+    }];
     options.extend(voices.iter().map(|voice| {
         let mut option = CreateSelectMenuOption::new(voice.name.clone(), voice.voice_id.clone())
             .description(voice.description.chars().take(100).collect::<String>());
@@ -727,8 +740,14 @@ mod tests {
     #[test]
     fn footer_includes_the_similarity_when_ranked() {
         let mut ranked = Character::rank_by_similarity(vec![character()], "Harry");
-        assert_eq!(ranked.len(), 1, "ranking returns the single visible character");
-        let Some(character) = ranked.pop() else { return };
+        assert_eq!(
+            ranked.len(),
+            1,
+            "ranking returns the single visible character"
+        );
+        let Some(character) = ranked.pop() else {
+            return;
+        };
         let history = History::builder()
             .id(MessageId::new(1))
             .character("id")
@@ -933,9 +952,8 @@ mod tests {
     /// Reports whether the button keyed on `custom_id` is present in `history`'s
     /// rendered components and, if so, whether it is disabled.
     fn button_disabled(history: &History, character: &Character, custom_id: &str) -> Option<bool> {
-        let value =
-            serde_json::to_value(history.render_components(character, 1, None, &[], &[]))
-                .unwrap_or_default();
+        let value = serde_json::to_value(history.render_components(character, 1, None, &[], &[]))
+            .unwrap_or_default();
         find_disabled(&value, custom_id)
     }
 

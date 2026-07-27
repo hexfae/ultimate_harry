@@ -6,9 +6,7 @@ pub mod message;
 pub mod ready;
 pub mod streaming;
 
-use crate::{
-    app_state::AppState, error::AppError, error_display::error_reply, util::report_error,
-};
+use crate::{app_state::AppState, error::AppError, error_display::error_reply, util::report_error};
 use alloc::sync::Arc;
 use miette::{IntoDiagnostic as _, Result};
 use poise::{FrameworkError, builtins};
@@ -147,7 +145,11 @@ async fn report_framework_error(
                 command = %ctx.command().qualified_name,
                 "command panicked: {payload:?}"
             );
-            send_error(ctx, "Något small internt. Inte ditt fel den här gången.".to_owned()).await?;
+            send_error(
+                ctx,
+                "Något small internt. Inte ditt fel den här gången.".to_owned(),
+            )
+            .await?;
         }
         other => {
             if let Err(why) = builtins::on_error(other).await {

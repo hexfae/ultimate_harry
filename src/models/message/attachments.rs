@@ -324,7 +324,9 @@ fn merge_owned<T: Clone>(
 ) {
     for item in new {
         let url = url_of(item);
-        let owned = attachments.iter().any(|attachment| attachment.as_str() == url);
+        let owned = attachments
+            .iter()
+            .any(|attachment| attachment.as_str() == url);
         let already = target.iter().any(|existing| url_of(existing) == url);
         if owned && !already {
             target.push(item.clone());
@@ -737,7 +739,9 @@ mod tests {
             "native audio sends the text plus the audio as two content parts"
         );
         assert!(
-            content.iter().any(|part| matches!(part, UserContent::Text(_))),
+            content
+                .iter()
+                .any(|part| matches!(part, UserContent::Text(_))),
             "one part carries the text"
         );
         assert!(

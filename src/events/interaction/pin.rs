@@ -35,8 +35,11 @@ pub async fn pin(
         .context(SendMessageSnafu)?;
 
     let response = CreateInteractionResponse::Message(
-        CreateInteractionResponseMessage::new()
-            .content(format!("{}\n{}", phrases::pinned(), pin.link())),
+        CreateInteractionResponseMessage::new().content(format!(
+            "{}\n{}",
+            phrases::pinned(),
+            pin.link()
+        )),
     );
 
     interaction

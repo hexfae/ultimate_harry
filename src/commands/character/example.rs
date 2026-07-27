@@ -56,8 +56,11 @@ pub async fn create(
     let guild_emojis = guild_emojis(ctx).await;
     let response = resolve(&modal.response, &guild_emojis);
     if response.trim().is_empty() {
-        return say_transient(ctx, "Ett exempel utan svar säger ingenting. Ge gubben något att säga.")
-            .await;
+        return say_transient(
+            ctx,
+            "Ett exempel utan svar säger ingenting. Ge gubben något att säga.",
+        )
+        .await;
     }
     let user = modal
         .user
@@ -103,7 +106,9 @@ pub async fn delete(
         .db
         .remove_character_example(character.id(), index)
         .await?;
-    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done())
+        .await
+        .context(SendMessageSnafu)?;
     Ok(())
 }
 
@@ -179,7 +184,13 @@ async fn autocomplete_example<'a>(
             let number = index.saturating_add(1);
             let label = user.as_ref().map_or_else(
                 || format!("{number}. {}", preview(response, 80)),
-                |line| format!("{number}. {} → {}", preview(line, 40), preview(response, 40)),
+                |line| {
+                    format!(
+                        "{number}. {} → {}",
+                        preview(line, 40),
+                        preview(response, 40)
+                    )
+                },
             );
             AutocompleteChoice::new(label, u64::try_from(number).unwrap_or(0))
         })

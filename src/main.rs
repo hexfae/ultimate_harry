@@ -107,7 +107,10 @@ async fn main() -> Result<()> {
     // then wait for them to finish before exiting.
     app_state.tasks.close();
     app_state.cancellations.cancel_all();
-    if timeout(SHUTDOWN_GRACE, app_state.tasks.wait()).await.is_err() {
+    if timeout(SHUTDOWN_GRACE, app_state.tasks.wait())
+        .await
+        .is_err()
+    {
         warn!("timed out waiting for in-flight replies to finish");
     }
 

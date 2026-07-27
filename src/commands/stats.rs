@@ -187,7 +187,13 @@ mod tests {
     use serenity::all::UserId;
 
     /// Builds a character carrying the given name, emoji, and generation stats.
-    fn character(name: &str, emoji: &str, conversations: u32, words: u32, tokens: u32) -> Character {
+    fn character(
+        name: &str,
+        emoji: &str,
+        conversations: u32,
+        words: u32,
+        tokens: u32,
+    ) -> Character {
         Character::builder()
             .id(name.to_owned())
             .name(name)
@@ -355,7 +361,10 @@ mod tests {
     /// An empty leaderboard renders the empty-state message, not a bare header.
     #[test]
     fn an_empty_leaderboard_shows_the_empty_state() {
-        assert_eq!(format_leaderboard(&[]), "Inte en enda gubbe finns. Sorgligt.");
+        assert_eq!(
+            format_leaderboard(&[]),
+            "Inte en enda gubbe finns. Sorgligt."
+        );
     }
 
     /// A never-used character is ranked first, showing its stats and `aldrig`.
@@ -453,6 +462,10 @@ mod tests {
             "999.9k",
             "just below a million stays in thousands"
         );
-        assert_eq!(abbreviate(1_990_000), "1.9M", "millions truncate, not round");
+        assert_eq!(
+            abbreviate(1_990_000),
+            "1.9M",
+            "millions truncate, not round"
+        );
     }
 }

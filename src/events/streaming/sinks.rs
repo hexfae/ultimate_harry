@@ -207,7 +207,10 @@ impl ReplySink for ContinueSink<'_> {
         // give the model the reply so far as the last assistant turn, so it
         // continues that text rather than starting a fresh reply
         if !self.seed.is_empty() {
-            context.push(ChatMessage::new_assistant(self.seed.clone(), self.character));
+            context.push(ChatMessage::new_assistant(
+                self.seed.clone(),
+                self.character,
+            ));
         }
         Ok((requester, context, mode))
     }

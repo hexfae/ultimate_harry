@@ -697,7 +697,11 @@ mod tests {
             .current(1_usize)
             .build();
         history.update_current_choice(Message::new_system("replaced"));
-        assert_eq!(history.current_choice(), 1, "the current index is unchanged");
+        assert_eq!(
+            history.current_choice(),
+            1,
+            "the current index is unchanged"
+        );
         assert_eq!(
             history.chosen_content(),
             "replaced",
@@ -828,7 +832,11 @@ mod tests {
             stored.character, "character-id",
             "the character ID is preserved"
         );
-        assert_eq!(stored.choices.len(), 3, "all three choices are stored inline");
+        assert_eq!(
+            stored.choices.len(),
+            3,
+            "all three choices are stored inline"
+        );
         assert_eq!(
             stored
                 .previous
@@ -842,7 +850,9 @@ mod tests {
 
         let maybe_hydrated = History::hydrate(stored);
         assert!(maybe_hydrated.is_some(), "a history with choices hydrates");
-        let Some(hydrated) = maybe_hydrated else { return };
+        let Some(hydrated) = maybe_hydrated else {
+            return;
+        };
         assert_eq!(hydrated.id(), "42", "hydrate restores the message ID");
         assert_eq!(
             hydrated.character(),
@@ -905,7 +915,9 @@ mod tests {
         let stored = history.into_stored();
         let maybe_hydrated = History::hydrate(stored);
         assert!(maybe_hydrated.is_some(), "a history with choices hydrates");
-        let Some(hydrated) = maybe_hydrated else { return };
+        let Some(hydrated) = maybe_hydrated else {
+            return;
+        };
         assert!(
             hydrated.chosen_message().is_error(),
             "the error flag survives the stored round-trip"
@@ -950,7 +962,9 @@ mod tests {
 
         let maybe_hydrated = History::hydrate(stored);
         assert!(maybe_hydrated.is_some(), "a history with choices hydrates");
-        let Some(hydrated) = maybe_hydrated else { return };
+        let Some(hydrated) = maybe_hydrated else {
+            return;
+        };
         assert_eq!(
             hydrated.current_choice(),
             1,

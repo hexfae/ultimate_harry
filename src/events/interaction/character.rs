@@ -50,10 +50,9 @@ pub async fn character(
 
     let options = db.character_menu_options().await?;
 
-    let placeholder =
-        history
-            .to_placeholder_message(&new_character, &interaction.message, db, &options)
-            .await;
+    let placeholder = history
+        .to_placeholder_message(&new_character, &interaction.message, db, &options)
+        .await;
 
     let mut response_message = interaction
         .message

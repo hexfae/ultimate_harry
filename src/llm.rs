@@ -22,7 +22,10 @@ pub use settings::{CharacterModelSettings, ModelOverrides, ModelSettings};
 /// A streamed reply from the AI model, as returned by
 /// [`LlmManager::request_stream`].
 pub type ReplyStream = Pin<
-    Box<dyn Stream<Item = Result<MultiTurnStreamItem<StreamingCompletionResponse>, StreamingError>> + Send>,
+    Box<
+        dyn Stream<Item = Result<MultiTurnStreamItem<StreamingCompletionResponse>, StreamingError>>
+            + Send,
+    >,
 >;
 
 /// The LLM manager for generating responses from AI models.

@@ -19,13 +19,13 @@ use crate::{
     error::{AppError, EditMessageSnafu, StreamingSnafu},
     error_display::error_message_edit,
     llm::{LlmManager, ReplyStream},
+    media::resolve_attachments,
     models::{
         character::Character,
         history::History,
         message::{AttachmentMode, Message as ChatMessage},
     },
     util::report_error,
-    media::resolve_attachments,
 };
 use core::time::Duration;
 use poise::serenity_prelude::{Context, Message, MessageId};
@@ -223,11 +223,7 @@ pub trait ReplySink {
 
     /// Store `reply` as the finished reply, persist it (along with the
     /// character's generation stats), and render it once more.
-    fn finalize(
-        mut self,
-        reply: Reply,
-        elapsed: Duration,
-    ) -> impl Future<Output = AppResult> + Send
+    fn finalize(mut self, reply: Reply, elapsed: Duration) -> impl Future<Output = AppResult> + Send
     where
         Self: Sized + Send,
     {
@@ -398,25 +394,24 @@ async fn stream_into<S: ReplySink + Send>(
     let mut complete = true;
     'attempts: loop {
         attempt = attempt.saturating_add(1);
-        let mut stream = match start_stream(requester, context, prompt.clone(), mode, start, token)
-            .await
-        {
-            StreamStart::Started(stream) => stream,
-            StreamStart::Cancelled => {
-                debug!("user stopped the stream before it started");
-                break 'attempts;
-            }
-            StreamStart::Failed => {
-                total += ERROR_MESSAGE;
-                complete = false;
-                break 'attempts;
-            }
-            StreamStart::TimedOut => {
-                total += TIMEOUT_MESSAGE;
-                complete = false;
-                break 'attempts;
-            }
-        };
+        let mut stream =
+            match start_stream(requester, context, prompt.clone(), mode, start, token).await {
+                StreamStart::Started(stream) => stream,
+                StreamStart::Cancelled => {
+                    debug!("user stopped the stream before it started");
+                    break 'attempts;
+                }
+                StreamStart::Failed => {
+                    total += ERROR_MESSAGE;
+                    complete = false;
+                    break 'attempts;
+                }
+                StreamStart::TimedOut => {
+                    total += TIMEOUT_MESSAGE;
+                    complete = false;
+                    break 'attempts;
+                }
+            };
         let mut interval = interval(Duration::from_secs(1));
         interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
@@ -801,7 +796,10 @@ mod tests {
             10,
             "the joined text is capped at the limit"
         );
-        assert_eq!(combined, "xxxxxxxx y", "the cap keeps the seed and cuts the tail");
+        assert_eq!(
+            combined, "xxxxxxxx y",
+            "the cap keeps the seed and cuts the tail"
+        );
     }
 
     /// A keep-on-failure sink (a continuation) leaves the reply it was extending
@@ -896,7 +894,10 @@ mod tests {
     fn truncation_at_the_length_keeps_everything() {
         let mut text = "hello".to_owned();
         truncate_to_chars(&mut text, 5);
-        assert_eq!(text, "hello", "nothing is cut when the limit is not exceeded");
+        assert_eq!(
+            text, "hello",
+            "nothing is cut when the limit is not exceeded"
+        );
     }
 
     /// A zero limit truncates to the empty string.

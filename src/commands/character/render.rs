@@ -50,7 +50,10 @@ pub async fn character_embed<F: Into<String>>(
         Some(deleter_id) => Some(db.substitute_name(deleter_id).await),
         None => None,
     };
-    let created = character.created_at().strftime(GOOD_DATE_FORMAT).to_string();
+    let created = character
+        .created_at()
+        .strftime(GOOD_DATE_FORMAT)
+        .to_string();
     let edited = character
         .edited_at()
         .map(|time| time.strftime(GOOD_DATE_FORMAT).to_string());
@@ -66,8 +69,16 @@ pub async fn character_embed<F: Into<String>>(
             true,
         )
         .field("Konversationer", conversations, true)
-        .field("Version", character.version().saturating_add(1).to_string(), true)
-        .field("Senast använd", character.formatted_latest_conversation(), true)
+        .field(
+            "Version",
+            character.version().saturating_add(1).to_string(),
+            true,
+        )
+        .field(
+            "Senast använd",
+            character.formatted_latest_conversation(),
+            true,
+        )
         .field("Genererat", character.formatted_generation(), true);
 
     if let Some(nickname) = character.nickname() {
@@ -83,7 +94,11 @@ pub async fn character_embed<F: Into<String>>(
     }
 
     if let Some(system_prompt) = character.system_prompt() {
-        embed = embed.field("Systemprompt", truncate_field(system_prompt.to_owned()), true);
+        embed = embed.field(
+            "Systemprompt",
+            truncate_field(system_prompt.to_owned()),
+            true,
+        );
     }
 
     if let Some(scenario) = character.scenario() {

@@ -5,9 +5,7 @@
 use crate::{
     database::Database,
     llm::{LlmManager, VoiceChoice},
-    tts::{
-        DialogueTurn, TtsError, TtsManager, TtsSettings, enforce_allowed_voices, plan_dialogue,
-    },
+    tts::{DialogueTurn, TtsError, TtsManager, TtsSettings, enforce_allowed_voices, plan_dialogue},
     util::report_error,
 };
 use jiff::{Timestamp, Zoned};
@@ -77,7 +75,9 @@ pub async fn synthesize_auto(
     let Some(turns) = assign_turns(db, settings, fallback, extra, &text).await else {
         return synthesize_single(db, settings, manager, fallback, &settings.model, text).await;
     };
-    manager.synthesize_plan(plan_dialogue(turns, fallback)).await
+    manager
+        .synthesize_plan(plan_dialogue(turns, fallback))
+        .await
 }
 
 /// Asks the enricher to split `text` into per-voice turns over the palette (plus the
@@ -92,16 +92,25 @@ async fn assign_turns(
     extra: Option<VoiceChoice>,
     text: &str,
 ) -> Option<Vec<DialogueTurn>> {
-    let model = settings.tag_model.clone().filter(|model| !model.is_empty())?;
-    let mut choices: Vec<VoiceChoice> =
-        settings.voices().iter().map(VoiceChoice::from_entry).collect();
+    let model = settings
+        .tag_model
+        .clone()
+        .filter(|model| !model.is_empty())?;
+    let mut choices: Vec<VoiceChoice> = settings
+        .voices()
+        .iter()
+        .map(VoiceChoice::from_entry)
+        .collect();
     if let Some(character_voice) = extra {
         choices.push(character_voice);
     }
     if choices.is_empty() {
         return None;
     }
-    let mut allowed: Vec<String> = choices.iter().map(|choice| choice.voice_id.clone()).collect();
+    let mut allowed: Vec<String> = choices
+        .iter()
+        .map(|choice| choice.voice_id.clone())
+        .collect();
     if !allowed.iter().any(|id| id == fallback) {
         allowed.push(fallback.to_owned());
     }

@@ -13,6 +13,8 @@ pub async fn pin_channel(
     channel: GuildChannel,
 ) -> AppResult {
     ctx.data().db.upsert_pin_channel(channel.id).await?;
-    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done())
+        .await
+        .context(SendMessageSnafu)?;
     Ok(())
 }

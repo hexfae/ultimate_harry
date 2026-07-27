@@ -48,14 +48,18 @@ pub async fn color(
     };
 
     let Some(parsed) = parse_color(&input) else {
-        ctx.say_ephemeral("Det där var ingen färg jag känner igen. Ge mig en hexfärg, typ #ff0000.")
-            .await
-            .context(SendMessageSnafu)?;
+        ctx.say_ephemeral(
+            "Det där var ingen färg jag känner igen. Ge mig en hexfärg, typ #ff0000.",
+        )
+        .await
+        .context(SendMessageSnafu)?;
         return Ok(());
     };
 
     db.set_character_color(character.id(), parsed).await?;
-    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done())
+        .await
+        .context(SendMessageSnafu)?;
     Ok(())
 }
 

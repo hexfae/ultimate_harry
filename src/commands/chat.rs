@@ -50,7 +50,9 @@ pub async fn chat(
 
     msg.edit(
         ctx,
-        history.to_response(character, actual_id, db, &options).await,
+        history
+            .to_response(character, actual_id, db, &options)
+            .await,
     )
     .await
     .context(EditMessageSnafu)?;
@@ -58,7 +60,10 @@ pub async fn chat(
 
     // best-effort: the chat is already created, so a stats-write blip must not
     // fail the command and show the user an error
-    if let Err(why) = db.record_character_spawn(character.id(), ctx.author().id).await {
+    if let Err(why) = db
+        .record_character_spawn(character.id(), ctx.author().id)
+        .await
+    {
         warn!("failed to record spawn stats, keeping the chat");
         report_error(why);
     }

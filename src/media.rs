@@ -139,10 +139,7 @@ async fn describe_modality(
 }
 
 /// Asks the vision model to describe each unique undescribed image URL found across `context`.
-async fn describe_images(
-    requester: &LlmManager,
-    context: &[Message],
-) -> Vec<DescribedAttachment> {
+async fn describe_images(requester: &LlmManager, context: &[Message]) -> Vec<DescribedAttachment> {
     describe_modality(
         requester,
         context,
@@ -154,10 +151,7 @@ async fn describe_images(
 }
 
 /// Asks the audio model to transcribe each unique untranscribed voice URL found across `context`.
-async fn transcribe_audio(
-    requester: &LlmManager,
-    context: &[Message],
-) -> Vec<DescribedAttachment> {
+async fn transcribe_audio(requester: &LlmManager, context: &[Message]) -> Vec<DescribedAttachment> {
     describe_modality(
         requester,
         context,

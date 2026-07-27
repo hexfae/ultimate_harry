@@ -34,7 +34,10 @@ pub async fn voice(
         return Ok(());
     };
 
-    db.set_character_voice(character.id(), Some(new_voice)).await?;
-    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
+    db.set_character_voice(character.id(), Some(new_voice))
+        .await?;
+    ctx.say_ephemeral(phrases::done())
+        .await
+        .context(SendMessageSnafu)?;
     Ok(())
 }
