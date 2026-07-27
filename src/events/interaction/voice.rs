@@ -36,15 +36,8 @@ pub async fn voice(
 
     let requested_at = read_aloud::requested_now();
     let (settings, manager, text) = speak::setup(db, &history).await;
-    let fallback = manager
-        .voice_for(&character)
-        .or_else(|| {
-            settings
-                .voices()
-                .first()
-                .map(|voice| voice.voice_id.clone())
-        })
-        .ok_or(TtsError::NoVoice)?;
+    let fallback =
+        read_aloud::auto_fallback(&settings, Some(&character)).ok_or(TtsError::NoVoice)?;
 
     speak::defer(ctx, interaction).await?;
 

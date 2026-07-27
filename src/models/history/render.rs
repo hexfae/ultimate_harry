@@ -25,6 +25,7 @@ use crate::{
     error_display::error_container,
     events::interaction::InteractionKind,
     models::character::{Character, CharacterOption},
+    read_aloud,
     tts::{VoiceEntry, is_speakable},
 };
 
@@ -650,7 +651,7 @@ fn voice_select_menu<'a>(
 /// one entry per palette voice, each carrying its emoji and description.
 fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
     let mut options = vec![
-        CreateSelectMenuOption::new("Automatiskt", "auto")
+        CreateSelectMenuOption::new(read_aloud::AUTO_LABEL, read_aloud::AUTO_VALUE)
             .description("Välj röst(er) automatiskt utifrån innehållet")
             .emoji(unicode_emoji(AUTO_VOICE)),
     ];
