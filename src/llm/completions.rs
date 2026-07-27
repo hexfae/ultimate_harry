@@ -10,6 +10,7 @@ use crate::http::http;
 use crate::models::message::{EncodedAudio, audio_format_from_url};
 use crate::tts::{DialogueTurn, VoiceEntry};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use reqwest::Response;
 use rig::message::AudioMediaType;
 use serde::Deserialize;
 use snafu::{IntoError, OptionExt as _, ResultExt as _};
@@ -291,7 +292,12 @@ fn modality_cache() -> &'static Mutex<HashMap<(String, String), bool>> {
 /// `OpenRouter` accepts audio only as base64 `input_audio`, so this is needed both to transcribe a
 /// voice message and to send it natively to an audio-capable model.
 pub async fn fetch_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
-    let response = http().get(url).send().await.context(FetchAudioSnafu)?;
+    let response = http()
+        .get(url)
+        .send()
+        .await
+        .and_then(Response::error_for_status)
+        .context(FetchAudioSnafu)?;
     let bytes = response.bytes().await.context(FetchAudioSnafu)?;
     let data = STANDARD.encode(&bytes);
     Ok(EncodedAudio {
