@@ -178,38 +178,25 @@ impl ReplySink for InteractionSink<'_> {
 /// every streamed update, so the new tokens extend the reply in place rather than
 /// replacing it.
 pub struct ContinueSink<'a> {
-    /// The serenity context used to edit the response.
-    pub ctx: &'a Context,
-    /// The conversation the reply belongs to.
-    pub history: &'a mut History,
-    /// The character producing the reply.
-    pub character: &'a Character,
-    /// The interaction whose response is being edited.
-    pub interaction: &'a ComponentInteraction,
-    /// The message ID of the reply being extended.
-    pub id: MessageId,
-    /// The database used while rendering.
-    pub db: &'a Database,
-    /// The hand-off select-menu options, computed once for the whole stream.
-    pub options: &'a [CharacterOption],
+    /// The interaction sink doing the rendering and persistence.
+    pub inner: InteractionSink<'a>,
     /// The existing reply text the continuation is appended to.
     pub seed: String,
 }
 
 impl ReplySink for ContinueSink<'_> {
     fn message_id(&self) -> MessageId {
-        self.id
+        self.inner.message_id()
     }
 
     async fn prepare(&mut self) -> AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)> {
-        let (requester, mut context, mode) =
-            prepare_request(self.db, self.character, self.history).await?;
+        let (requester, mut context, mode) = self.inner.prepare().await?;
         // give the model the reply so far as the last assistant turn, so it
         // continues that text rather than starting a fresh reply
         if !self.seed.is_empty() {
             context.push(ChatMessage::new_assistant(
                 self.seed.clone(),
-                self.character,
+                self.inner.character,
             ));
         }
         Ok((requester, context, mode))
@@ -222,34 +209,25 @@ impl ReplySink for ContinueSink<'_> {
     }
 
     fn history(&mut self) -> &mut History {
-        self.history
+        self.inner.history()
     }
 
     fn character(&self) -> &Character {
-        self.character
+        self.inner.character()
     }
 
     fn store_choice(&mut self, choice: (Character, String, Duration)) {
         let (character, addition, elapsed) = choice;
         let combined = combine_continuation(&self.seed, &addition, CHARACTER_LIMIT);
-        self.history
-            .update_current_choice((character, combined, elapsed));
+        self.inner.store_choice((character, combined, elapsed));
     }
 
     async fn persist(&mut self, counts: (u32, u32), complete: bool) -> AppResult {
-        persist_reply(self.db, self.history, self.character, counts, complete).await
+        self.inner.persist(counts, complete).await
     }
 
     async fn render_and_edit(&mut self) -> AppResult {
-        let edit = self
-            .history
-            .to_edit_interaction(self.character, self.id, self.db, self.options)
-            .await;
-        self.interaction
-            .edit_response(&self.ctx.http, edit)
-            .await
-            .context(EditResponseSnafu)?;
-        Ok(())
+        self.inner.render_and_edit().await
     }
 
     /// A failed continuation keeps the reply it was extending, rather than
