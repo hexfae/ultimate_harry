@@ -269,8 +269,8 @@ impl Part {
     }
 }
 
-impl From<(Character, String, Duration)> for Message {
-    fn from((character, response, time_taken): (Character, String, Duration)) -> Self {
+impl From<(&Character, String, Duration)> for Message {
+    fn from((character, response, time_taken): (&Character, String, Duration)) -> Self {
         Self::builder()
             .parts((character.name().to_owned(), response, Role::Assistant))
             .elapsed(time_taken)

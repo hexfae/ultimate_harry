@@ -689,7 +689,7 @@ mod tests {
     /// Builds a reply that reports `seconds` of generation time.
     fn timed_choice(character: &Character, content: &str, seconds: f64) -> Message {
         Message::from((
-            character.clone(),
+            character,
             content.to_owned(),
             Duration::from_secs_f64(seconds),
         ))
