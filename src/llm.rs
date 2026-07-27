@@ -136,6 +136,16 @@ pub enum LlmError {
         /// The source of the error.
         source: reqwest::Error,
     },
+    /// The voice message's host answered the download with an error status.
+    #[snafu(display("Ljudet gick inte att hämta, felkod {status}"))]
+    #[diagnostic(
+        help("Länken till röstmeddelandet kan ha gått ut."),
+        code(llm::fetch_audio_http)
+    )]
+    FetchAudioHttp {
+        /// The HTTP status code returned.
+        status: u16,
+    },
     /// Failed to transcribe a voice message with the audio model.
     #[snafu(display("Kunde inte transkribera ljudet"))]
     #[diagnostic(
@@ -201,7 +211,9 @@ impl LlmError {
             | Self::EmptyTags { .. }
             | Self::AssignVoices { .. }
             | Self::EmptyVoices { .. } => true,
-            Self::Http { status, .. } => *status >= 500 || matches!(status, 408 | 429),
+            Self::Http { status, .. } | Self::FetchAudioHttp { status } => {
+                *status >= 500 || matches!(status, 408 | 429)
+            }
             Self::BuildClient { .. } | Self::NoVisionModel | Self::NoAudioModel => false,
         }
     }
@@ -264,6 +276,24 @@ mod tests {
                 }
                 .retryable(),
                 "status {status} is a permanent misconfiguration"
+            );
+        }
+    }
+
+    /// An expired attachment link is permanent, while a hiccup at the file host
+    /// may serve the audio on retry.
+    #[test]
+    fn retryable_classification_splits_audio_download_statuses() {
+        for status in [500, 503, 429] {
+            assert!(
+                LlmError::FetchAudioHttp { status }.retryable(),
+                "status {status} may serve the audio on retry"
+            );
+        }
+        for status in [403, 404, 410] {
+            assert!(
+                !LlmError::FetchAudioHttp { status }.retryable(),
+                "status {status} means the link is gone for good"
             );
         }
     }
