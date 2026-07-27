@@ -509,13 +509,15 @@ pub enum TtsError {
 
 impl TtsError {
     /// Whether retrying might succeed (a transient network, server, or empty-response
-    /// failure) rather than a permanent misconfiguration (no API key or no voice).
+    /// failure) rather than a permanent misconfiguration (no API key, no voice, or an
+    /// API error like a bad key or an unknown voice ID).
     #[must_use]
     pub const fn retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::Request { .. } | Self::Http { .. } | Self::EmptyAudio
-        )
+        match self {
+            Self::Request { .. } | Self::EmptyAudio => true,
+            Self::Http { status } => *status >= 500 || matches!(status, 408 | 429),
+            Self::MissingApiKey | Self::NoVoice => false,
+        }
     }
 }
 
@@ -971,12 +973,26 @@ mod tests {
         );
         assert!(!TtsError::NoVoice.retryable(), "a missing voice is permanent");
         assert!(
-            TtsError::Http { status: 500 }.retryable(),
-            "a server error may differ on retry"
-        );
-        assert!(
             TtsError::EmptyAudio.retryable(),
             "empty audio may differ on retry"
         );
+    }
+
+    /// Server-side and rate-limit statuses are transient, while client errors like a
+    /// bad API key or an unknown voice ID are permanent.
+    #[test]
+    fn retryable_classification_splits_http_statuses() {
+        for status in [500, 502, 408, 429] {
+            assert!(
+                TtsError::Http { status }.retryable(),
+                "status {status} may succeed on retry"
+            );
+        }
+        for status in [400, 401, 403, 404, 422] {
+            assert!(
+                !TtsError::Http { status }.retryable(),
+                "status {status} is a permanent misconfiguration"
+            );
+        }
     }
 }
