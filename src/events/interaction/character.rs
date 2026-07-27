@@ -7,7 +7,7 @@ use crate::{
     error::{SendMessageSnafu, SendResponseSnafu},
     events::{
         interaction::UnknownInteraction,
-        streaming::{MessageSink, stream_and_finalize},
+        streaming::{MessageSink, report_reply_failure, stream_and_finalize},
     },
     models::{history::History, message::Message},
     util::report_error,
@@ -64,15 +64,24 @@ pub async fn character(
 
     let prompt = format!("Fortsätt rollspelet som {new_character}.");
 
-    let sink = MessageSink {
-        ctx,
-        history: &mut history,
-        character: &new_character,
-        message: &mut response_message,
-        db,
-        options: &options,
+    let streamed = {
+        let sink = MessageSink {
+            ctx,
+            history: &mut history,
+            character: &new_character,
+            message: &mut response_message,
+            db,
+            options: &options,
+        };
+        stream_and_finalize(Some(prompt), cancellations, sink).await
     };
-    stream_and_finalize(Some(prompt), cancellations, sink).await?;
+
+    // the placeholder is now live, so a later failure must replace it with an
+    // error notice rather than leaving the user staring at a frozen placeholder.
+    if let Err(why) = streamed {
+        report_reply_failure(ctx, &mut response_message, &why).await;
+        return Err(why);
+    }
 
     // best-effort: the hand-off reply is already saved, so a stats-write blip
     // must not fail it and replace it with an error notice

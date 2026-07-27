@@ -16,7 +16,8 @@ use crate::{
     cancellation::Cancellations,
     constants::{CHARACTER_LIMIT, CONTINUE_REVEAL_DELAY},
     database::Database,
-    error::StreamingSnafu,
+    error::{AppError, EditMessageSnafu, StreamingSnafu},
+    error_display::error_message_edit,
     llm::{LlmManager, ReplyStream},
     models::{
         character::Character,
@@ -27,7 +28,7 @@ use crate::{
     media::resolve_attachments,
 };
 use core::time::Duration;
-use poise::serenity_prelude::MessageId;
+use poise::serenity_prelude::{Context, Message, MessageId};
 use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
 use serenity::futures::StreamExt as _;
 use snafu::ResultExt as _;
@@ -294,6 +295,22 @@ pub async fn stream_and_finalize<S: ReplySink + Send>(
     let now = Instant::now();
     let reply = stream_into(&requester, &context, prompt, mode, now, &token, &mut sink).await?;
     sink.finalize(reply, now.elapsed()).await
+}
+
+/// Replaces an already-posted placeholder with the error notice when a reply
+/// fails, logging if even the notice cannot be shown.
+///
+/// Once the placeholder is live, a failure must not leave the user staring at a
+/// frozen placeholder in the channel.
+pub async fn report_reply_failure(ctx: &Context, bot_message: &mut Message, why: &AppError) {
+    let edit = error_message_edit(why.user_message());
+    if let Err(report_why) = bot_message.edit(ctx, edit).await.context(EditMessageSnafu) {
+        warn!(
+            message_id = %bot_message.id,
+            "failed to show the error notice"
+        );
+        report_error(report_why);
+    }
 }
 
 /// Finalizes `sink` with the generic error sentinel, so a pre-stream failure
