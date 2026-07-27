@@ -288,11 +288,35 @@ fn modality_cache() -> &'static Mutex<HashMap<(String, String), bool>> {
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Downloads the audio at `url` and base64-encodes it, detecting the format from the URL.
+/// Process-wide cache of attachment URL to its base64 encoding, so a voice message is downloaded
+/// and encoded at most once rather than on every generation whose context still carries it.
+fn audio_cache() -> &'static Mutex<HashMap<String, EncodedAudio>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, EncodedAudio>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The base64 encoding of the audio at `url`, downloading and encoding it on the first call and
+/// serving later calls from the process-wide cache.
 ///
 /// `OpenRouter` accepts audio only as base64 `input_audio`, so this is needed both to transcribe a
 /// voice message and to send it natively to an audio-capable model.
 pub async fn fetch_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
+    if let Some(cached) = audio_cache()
+        .lock()
+        .ok()
+        .and_then(|locked| locked.get(url).cloned())
+    {
+        return Ok(cached);
+    }
+    let encoded = download_audio_base64(url).await?;
+    if let Ok(mut locked) = audio_cache().lock() {
+        locked.insert(url.to_owned(), encoded.clone());
+    }
+    Ok(encoded)
+}
+
+/// Downloads the audio at `url` and base64-encodes it, detecting the format from the URL.
+async fn download_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
     let response = http().get(url).send().await.context(FetchAudioSnafu)?;
     let status = response.status();
     if !status.is_success() {
