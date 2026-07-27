@@ -14,9 +14,6 @@ use poise::{
 };
 use snafu::ResultExt as _;
 
-/// The autocomplete label that requests auto voice assignment.
-const AUTO_LABEL: &str = "Automatiskt";
-
 /// How a message should be read aloud, resolved from the chosen voice.
 #[derive(Debug, PartialEq, Eq)]
 enum Reading {
@@ -74,7 +71,7 @@ pub async fn say(
                 .await?
         }
         Reading::Auto => {
-            let fallback = auto_fallback(&settings).ok_or(TtsError::NoVoice)?;
+            let fallback = read_aloud::auto_fallback(&settings, None).ok_or(TtsError::NoVoice)?;
             read_aloud::synthesize_auto(db, &settings, &manager, &fallback, None, message).await?
         }
     };
@@ -92,7 +89,7 @@ pub async fn say(
 /// [`Reading::Solo`] with its solo model, and anything else into `None`.
 fn resolve_reading(settings: &TtsSettings, choice: &str) -> Option<Reading> {
     let trimmed = choice.trim();
-    if trimmed.eq_ignore_ascii_case(AUTO_LABEL)
+    if trimmed.eq_ignore_ascii_case(read_aloud::AUTO_LABEL)
         || trimmed.eq_ignore_ascii_case(read_aloud::AUTO_VALUE)
     {
         return Some(Reading::Auto);
@@ -113,8 +110,8 @@ fn resolve_reading(settings: &TtsSettings, choice: &str) -> Option<Reading> {
 fn reading_candidates(settings: &TtsSettings, partial: &str) -> Vec<String> {
     let lowered = partial.to_lowercase();
     let mut names = Vec::new();
-    if AUTO_LABEL.to_lowercase().contains(&lowered) {
-        names.push(AUTO_LABEL.to_owned());
+    if read_aloud::AUTO_LABEL.to_lowercase().contains(&lowered) {
+        names.push(read_aloud::AUTO_LABEL.to_owned());
     }
     for voice in settings.voices() {
         if voice.name.to_lowercase().contains(&lowered) {
@@ -122,16 +119,6 @@ fn reading_candidates(settings: &TtsSettings, partial: &str) -> Vec<String> {
         }
     }
     names
-}
-
-/// The fallback voice for auto reading: the first palette voice, then the generic
-/// default, and nothing when neither is set.
-fn auto_fallback(settings: &TtsSettings) -> Option<String> {
-    settings
-        .voices()
-        .first()
-        .map(|voice| voice.voice_id.clone())
-        .or_else(|| settings.default_voice.clone())
 }
 
 /// Autocompletes the voice argument with the auto label and the palette voices.
@@ -177,7 +164,7 @@ async fn require_guild_member(ctx: Context<'_>) -> AppResult<bool> {
 /// Tests for the voice-resolution and autocomplete helpers.
 #[cfg(test)]
 mod tests {
-    use super::{Reading, auto_fallback, is_member_of_any, reading_candidates, resolve_reading};
+    use super::{Reading, is_member_of_any, reading_candidates, resolve_reading};
     use crate::tts::{TtsSettings, VoiceEntry};
 
     /// A user found in at least one guild is granted access, including when the
@@ -329,34 +316,6 @@ mod tests {
             reading_candidates(&configured, "ev"),
             vec!["Eva".to_owned()],
             "a query matching a voice name lists just that voice"
-        );
-    }
-
-    /// The auto fallback prefers the first palette voice, then the generic default,
-    /// and is nothing when neither exists.
-    #[test]
-    fn auto_fallback_prefers_palette_then_default() {
-        let with_palette = settings(vec![voice("Adam", "adam-id", None)]);
-        assert_eq!(
-            auto_fallback(&with_palette).as_deref(),
-            Some("adam-id"),
-            "the first palette voice is the preferred fallback"
-        );
-
-        let only_default = TtsSettings {
-            default_voice: Some("default-id".to_owned()),
-            ..TtsSettings::default()
-        };
-        assert_eq!(
-            auto_fallback(&only_default).as_deref(),
-            Some("default-id"),
-            "the generic default is used when the palette is empty"
-        );
-
-        assert_eq!(
-            auto_fallback(&TtsSettings::default()),
-            None,
-            "no palette and no default leaves nothing to fall back to"
         );
     }
 }

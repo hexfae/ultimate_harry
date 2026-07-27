@@ -5,6 +5,7 @@
 use crate::{
     database::Database,
     llm::{LlmManager, VoiceChoice},
+    models::character::Character,
     tts::{DialogueTurn, TtsError, TtsManager, TtsSettings, enforce_allowed_voices, plan_dialogue},
     util::report_error,
 };
@@ -13,6 +14,26 @@ use tracing::warn;
 
 /// The select/sentinel value that requests auto voice assignment rather than a fixed voice.
 pub const AUTO_VALUE: &str = "auto";
+
+/// The user-facing label for [`AUTO_VALUE`] in the dropdown and the `/säg` autocomplete.
+pub const AUTO_LABEL: &str = "Automatiskt";
+
+/// The voice auto reading falls back to when assignment yields nothing usable:
+/// `character`'s own voice, then the configured generic default, then the first
+/// palette voice, and `None` when none of those is set.
+#[must_use]
+pub fn auto_fallback(settings: &TtsSettings, character: Option<&Character>) -> Option<String> {
+    character
+        .and_then(Character::voice)
+        .map(str::to_owned)
+        .or_else(|| settings.default_voice.clone())
+        .or_else(|| {
+            settings
+                .voices()
+                .first()
+                .map(|voice| voice.voice_id.clone())
+        })
+}
 
 /// The timezone the audio filename's request timestamp is rendered in.
 const FILENAME_TIMEZONE: &str = "Europe/Stockholm";
@@ -124,5 +145,86 @@ async fn assign_turns(
             report_error(why);
             None
         }
+    }
+}
+
+/// Tests for the shared auto-reading fallback resolution.
+#[cfg(test)]
+mod tests {
+    use super::auto_fallback;
+    use crate::{
+        models::character::Character,
+        tts::{TtsSettings, VoiceEntry},
+    };
+    use serenity::all::UserId;
+
+    /// Builds a character with the given linked voice, if any.
+    fn character(voice: Option<&str>) -> Character {
+        let builder = Character::builder()
+            .id("id".to_owned())
+            .name("Harry")
+            .greeting("hi")
+            .creator(UserId::new(1));
+        match voice {
+            Some(linked) => builder.voice(linked.to_owned()).build(),
+            None => builder.build(),
+        }
+    }
+
+    /// Builds settings carrying the given palette voice and generic default.
+    fn settings(palette: Option<&str>, default_voice: Option<&str>) -> TtsSettings {
+        let mut settings = TtsSettings {
+            default_voice: default_voice.map(str::to_owned),
+            ..TtsSettings::default()
+        };
+        if let Some(voice_id) = palette {
+            settings.add_voice(VoiceEntry {
+                name: "Adam".to_owned(),
+                voice_id: voice_id.to_owned(),
+                emoji: "🎙️".to_owned(),
+                description: "a test voice".to_owned(),
+                model: None,
+            });
+        }
+        settings
+    }
+
+    /// A character's own linked voice outranks both the generic default and the palette.
+    #[test]
+    fn auto_fallback_prefers_the_character_voice() {
+        assert_eq!(
+            auto_fallback(
+                &settings(Some("palette-id"), Some("default-id")),
+                Some(&character(Some("harry-id")))
+            )
+            .as_deref(),
+            Some("harry-id"),
+            "the character's own voice wins"
+        );
+    }
+
+    /// Without a character voice the generic default wins, then the first palette voice.
+    #[test]
+    fn auto_fallback_falls_back_to_default_then_palette() {
+        assert_eq!(
+            auto_fallback(&settings(Some("palette-id"), Some("default-id")), None).as_deref(),
+            Some("default-id"),
+            "the configured default outranks the palette"
+        );
+        assert_eq!(
+            auto_fallback(&settings(Some("palette-id"), None), Some(&character(None))).as_deref(),
+            Some("palette-id"),
+            "the first palette voice is used when nothing else is set"
+        );
+    }
+
+    /// Nothing configured anywhere leaves no fallback voice.
+    #[test]
+    fn auto_fallback_is_none_without_any_voice() {
+        assert_eq!(
+            auto_fallback(&settings(None, None), Some(&character(None))),
+            None,
+            "no character voice, no default, and no palette leaves nothing"
+        );
     }
 }
