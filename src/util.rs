@@ -22,6 +22,32 @@ pub fn report_error<E: Into<Report>>(error: E) {
     eprintln!("{report}");
 }
 
+/// Truncates `text` in place to at most `limit` characters, never splitting a
+/// multi-byte character. Discord counts characters, not bytes, so its limits are
+/// in characters.
+pub fn truncate_to_chars(text: &mut String, limit: usize) {
+    if let Some((cut, _)) = text.char_indices().nth(limit) {
+        text.truncate(cut);
+    }
+}
+
+/// Returns `text` cut to at most `limit` characters, with a trailing ellipsis
+/// standing in for what was removed. The ellipsis counts towards the limit, so
+/// the result always fits.
+#[must_use]
+pub fn ellipsize(text: &str, limit: usize) -> String {
+    if text.chars().count() <= limit {
+        return text.to_owned();
+    }
+    let Some(room) = limit.checked_sub(1) else {
+        return String::new();
+    };
+    let mut truncated = text.to_owned();
+    truncate_to_chars(&mut truncated, room);
+    truncated.push('…');
+    truncated
+}
+
 /// Returns the previous index in a cyclic sequence of `len` elements, wrapping from the first
 /// element back to the last.
 ///
@@ -37,7 +63,77 @@ pub const fn wrapping_previous(index: usize, len: usize) -> usize {
 /// Tests for the shared helpers.
 #[cfg(test)]
 mod tests {
-    use super::wrapping_previous;
+    use super::{ellipsize, truncate_to_chars, wrapping_previous};
+
+    /// The limit counts characters, not bytes, and never splits a multi-byte one.
+    #[test]
+    fn truncation_counts_characters_not_bytes() {
+        let mut text = "héllo".to_owned();
+        truncate_to_chars(&mut text, 2);
+        assert_eq!(
+            text, "hé",
+            "two characters are kept even though é is two bytes"
+        );
+    }
+
+    /// A limit at or above the character count keeps everything.
+    #[test]
+    fn truncation_at_the_length_keeps_everything() {
+        let mut text = "hello".to_owned();
+        truncate_to_chars(&mut text, 5);
+        assert_eq!(
+            text, "hello",
+            "nothing is cut when the limit is not exceeded"
+        );
+    }
+
+    /// A zero limit truncates to the empty string.
+    #[test]
+    fn truncation_to_zero_empties_the_string() {
+        let mut text = "abc".to_owned();
+        truncate_to_chars(&mut text, 0);
+        assert!(text.is_empty(), "a zero limit truncates to nothing");
+    }
+
+    /// Text within the limit is returned untouched, without an ellipsis.
+    #[test]
+    fn ellipsize_leaves_short_text_alone() {
+        assert_eq!(
+            ellipsize("hello", 5),
+            "hello",
+            "text exactly at the limit is untouched"
+        );
+    }
+
+    /// The ellipsis counts towards the limit, so the result never exceeds it.
+    #[test]
+    fn ellipsize_fits_the_ellipsis_within_the_limit() {
+        let cut = ellipsize("abcdefgh", 5);
+        assert_eq!(
+            cut, "abcd…",
+            "the ellipsis replaces the last kept character"
+        );
+        assert_eq!(cut.chars().count(), 5, "the result fits the limit");
+    }
+
+    /// Cutting happens on a character boundary, counting characters not bytes.
+    #[test]
+    fn ellipsize_cuts_on_a_character_boundary() {
+        assert_eq!(
+            ellipsize("héllo", 3),
+            "hé…",
+            "é survives intact and counts as one character"
+        );
+    }
+
+    /// A zero limit leaves no room for even the ellipsis, so nothing is returned.
+    #[test]
+    fn ellipsize_to_zero_yields_nothing() {
+        assert!(
+            ellipsize("abc", 0).is_empty(),
+            "a zero limit leaves no room for the ellipsis"
+        );
+    }
 
     /// Stepping back from the first element wraps around to the last, and other positions just
     /// decrement.

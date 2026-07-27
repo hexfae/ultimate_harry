@@ -19,7 +19,8 @@ use serenity::all::{
 use crate::{
     components::{emoji_button, reaction_from, unicode_emoji},
     constants::{
-        AUTO_VOICE, CHARACTER_LIMIT, CONTINUE, EDIT, NEXT, PIN, PREVIOUS, REDO, SPEAK, STOP, UNDO,
+        AUTO_VOICE, CHARACTER_LIMIT, CONTINUE, EDIT, NEXT, PIN, PREVIOUS, REDO,
+        SELECT_OPTION_LIMIT, SPEAK, STOP, UNDO,
     },
     database::Database,
     error_display::error_container,
@@ -27,6 +28,7 @@ use crate::{
     models::character::{Character, CharacterOption},
     read_aloud,
     tts::{VoiceEntry, is_speakable},
+    util::ellipsize,
 };
 
 use super::History;
@@ -606,10 +608,9 @@ fn character_select_menu<'a>(
                         // "emoji" field is prepended to the label instead, since
                         // Discord rejects non-emoji in the emoji slot.
                         let label = match (option.emoji(), &reaction) {
-                            (Some(text), None) => format!("{text} {}", option.name())
-                                .chars()
-                                .take(100)
-                                .collect(),
+                            (Some(text), None) => {
+                                ellipsize(&format!("{text} {}", option.name()), SELECT_OPTION_LIMIT)
+                            }
                             _ => option.name().to_owned(),
                         };
                         let mut menu_option =
@@ -657,7 +658,7 @@ fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
     ];
     options.extend(voices.iter().map(|voice| {
         let mut option = CreateSelectMenuOption::new(voice.name.clone(), voice.voice_id.clone())
-            .description(voice.description.chars().take(100).collect::<String>());
+            .description(ellipsize(&voice.description, SELECT_OPTION_LIMIT));
         if let Some(emoji) = reaction_from(&voice.emoji) {
             option = option.emoji(emoji);
         }
