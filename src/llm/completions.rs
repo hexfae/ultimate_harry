@@ -18,8 +18,8 @@ use std::sync::{Mutex, OnceLock};
 
 use super::{
     AddTagsSnafu, AssignVoicesSnafu, DescribeImageSnafu, EmptyDescriptionSnafu, EmptyTagsSnafu,
-    EmptyTranscriptionSnafu, EmptyVoicesSnafu, FetchAudioSnafu, ListModelsSnafu, LlmError,
-    LlmManager, NoAudioModelSnafu, NoVisionModelSnafu, TranscribeAudioSnafu,
+    EmptyTranscriptionSnafu, EmptyVoicesSnafu, FetchAudioSnafu, HttpSnafu, ListModelsSnafu,
+    LlmError, LlmManager, NoAudioModelSnafu, NoVisionModelSnafu, TranscribeAudioSnafu,
 };
 
 /// The `OpenRouter` endpoint listing every available model and its capabilities.
@@ -99,7 +99,9 @@ impl LlmManager {
 
     /// POSTs `body` to the `OpenRouter` chat-completions endpoint and parses the
     /// reply, attaching `request_error` as the snafu context for both the request
-    /// and the JSON decode (they share a failure class per caller).
+    /// and the JSON decode (they share a failure class per caller). An error
+    /// status becomes [`LlmError::Http`] carrying the API's own error message,
+    /// so a bad key or empty balance is not mistaken for an empty completion.
     async fn chat_completion<E>(
         &self,
         body: serde_json::Value,
@@ -115,6 +117,15 @@ impl LlmManager {
             .send()
             .await
             .context(request_error)?;
+        let status = response.status();
+        if !status.is_success() {
+            let error_body = response.text().await.unwrap_or_default();
+            return HttpSnafu {
+                status: status.as_u16(),
+                message: api_error_message(&error_body),
+            }
+            .fail();
+        }
         response
             .json::<ChatResponse>()
             .await
@@ -305,6 +316,30 @@ fn model_supports_modality(models: &ModelsResponse, model_id: &str, modality: &s
         })
 }
 
+/// Pulls the human-readable message out of an `OpenRouter` error body
+/// (`{"error": {"message": ...}}`), falling back to a generic phrase when the
+/// body is not that envelope or the message is blank.
+fn api_error_message(body: &str) -> String {
+    /// The envelope `OpenRouter` wraps an error response in.
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        /// The error details.
+        error: ErrorDetail,
+    }
+    /// The details of an `OpenRouter` error.
+    #[derive(Deserialize)]
+    struct ErrorDetail {
+        /// The human-readable error message.
+        #[serde(default)]
+        message: String,
+    }
+    serde_json::from_str::<ErrorBody>(body)
+        .ok()
+        .map(|parsed| parsed.error.message.trim().to_owned())
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| "okänt fel".to_owned())
+}
+
 /// Pulls the description text out of a chat-completions response, if any non-blank content exists.
 fn extract_description(response: &ChatResponse) -> Option<String> {
     response
@@ -366,7 +401,10 @@ struct ChatMessageContent {
 /// Tests for the `OpenRouter` response parsing helpers.
 #[cfg(test)]
 mod tests {
-    use super::{ChatResponse, ModelsResponse, extract_description, model_supports_modality, parse_dialogue_turns};
+    use super::{
+        ChatResponse, ModelsResponse, api_error_message, extract_description,
+        model_supports_modality, parse_dialogue_turns,
+    };
 
     /// A bare JSON array of turns parses, keeping order, voice, and text.
     #[test]
@@ -404,6 +442,27 @@ mod tests {
         assert!(
             parse_dialogue_turns(r#"[{"voice_id":"","text":"  "}]"#).is_none(),
             "turns with blank voice or text are dropped, leaving nothing"
+        );
+    }
+
+    /// The API's own message is pulled out of the error envelope, with a
+    /// generic fallback for anything else.
+    #[test]
+    fn api_error_message_reads_the_envelope() {
+        assert_eq!(
+            api_error_message(r#"{"error":{"message":"Insufficient credits","code":402}}"#),
+            "Insufficient credits",
+            "the envelope's message is used"
+        );
+        assert_eq!(
+            api_error_message(r#"{"error":{"message":"  "}}"#),
+            "okänt fel",
+            "a blank message falls back to the generic phrase"
+        );
+        assert_eq!(
+            api_error_message("<html>gateway timeout</html>"),
+            "okänt fel",
+            "a non-JSON body falls back to the generic phrase"
         );
     }
 
