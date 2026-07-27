@@ -17,7 +17,7 @@ use crate::{
     constants::{CHARACTER_LIMIT, CONTINUE_REVEAL_DELAY},
     database::Database,
     error::StreamingSnafu,
-    llm::LlmManager,
+    llm::{LlmManager, ReplyStream},
     models::{
         character::Character,
         history::History,
@@ -32,7 +32,7 @@ use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
 use serenity::futures::StreamExt as _;
 use snafu::ResultExt as _;
 use std::time::Instant;
-use tokio::time::{MissedTickBehavior, interval, sleep};
+use tokio::time::{MissedTickBehavior, interval, sleep, timeout};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
@@ -307,6 +307,52 @@ async fn finalize_failed<S: ReplySink + Send>(sink: S) -> AppResult {
     sink.finalize(reply, Duration::ZERO).await
 }
 
+/// How an attempt to start the reply stream ended.
+enum StreamStart {
+    /// The stream is live and ready to be consumed.
+    Started(ReplyStream),
+    /// The user stopped the reply before it started.
+    Cancelled,
+    /// The request could not be started at all.
+    Failed,
+    /// No stream was handed back within the silence budget.
+    TimedOut,
+}
+
+/// Starts the reply stream, racing the request against both the stop token and
+/// what is left of the [`RESPONSE_TIMEOUT`] silence budget measured from `start`.
+///
+/// Without the race a stalled connection (accepted, but never answering) would
+/// never reach the streaming loop, leaving the reply stuck on its placeholder
+/// with a Stop button that has nothing to cancel.
+async fn start_stream(
+    requester: &LlmManager,
+    context: &[ChatMessage],
+    prompt: Option<String>,
+    mode: AttachmentMode,
+    start: Instant,
+    token: &CancellationToken,
+) -> StreamStart {
+    let remaining = RESPONSE_TIMEOUT.saturating_sub(start.elapsed());
+    let started = timeout(remaining, requester.request_stream(context, prompt, mode));
+    tokio::select! {
+        biased;
+        () = token.cancelled() => StreamStart::Cancelled,
+        result = started => match result {
+            Ok(Ok(stream)) => StreamStart::Started(stream),
+            Ok(Err(source)) => {
+                error!("failed to start the reply stream, giving up");
+                report_error(source);
+                StreamStart::Failed
+            }
+            Err(_) => {
+                error!("the reply stream did not start within the response timeout, giving up");
+                StreamStart::TimedOut
+            }
+        },
+    }
+}
+
 /// Stream an LLM reply, ticking `sink` about once a second so the Discord
 /// message is edited in place, and return the accumulated [`Reply`].
 ///
@@ -335,12 +381,21 @@ async fn stream_into<S: ReplySink + Send>(
     let mut complete = true;
     'attempts: loop {
         attempt = attempt.saturating_add(1);
-        let mut stream = match requester.request_stream(context, prompt.clone(), mode).await {
-            Ok(stream) => stream,
-            Err(source) => {
-                error!("failed to start the reply stream, giving up");
-                report_error(source);
+        let mut stream = match start_stream(requester, context, prompt.clone(), mode, start, token)
+            .await
+        {
+            StreamStart::Started(stream) => stream,
+            StreamStart::Cancelled => {
+                debug!("user stopped the stream before it started");
+                break 'attempts;
+            }
+            StreamStart::Failed => {
                 total += ERROR_MESSAGE;
+                complete = false;
+                break 'attempts;
+            }
+            StreamStart::TimedOut => {
+                total += TIMEOUT_MESSAGE;
                 complete = false;
                 break 'attempts;
             }

@@ -19,6 +19,12 @@ use snafu::{ResultExt as _, Snafu};
 pub use completions::{VoiceChoice, fetch_audio_base64};
 pub use settings::{CharacterModelSettings, ModelOverrides, ModelSettings};
 
+/// A streamed reply from the AI model, as returned by
+/// [`LlmManager::request_stream`].
+pub type ReplyStream = Pin<
+    Box<dyn Stream<Item = Result<MultiTurnStreamItem<StreamingCompletionResponse>, StreamingError>> + Send>,
+>;
+
 /// The LLM manager for generating responses from AI models.
 ///
 /// This struct manages the settings for the AI model and provides methods
@@ -48,19 +54,7 @@ impl LlmManager {
         context: &[ChatMessage],
         prompt: Option<String>,
         mode: AttachmentMode,
-    ) -> Result<
-        Pin<
-            Box<
-                dyn Stream<
-                        Item = Result<
-                            MultiTurnStreamItem<StreamingCompletionResponse>,
-                            StreamingError,
-                        >,
-                    > + Send,
-            >,
-        >,
-        LlmError,
-    > {
+    ) -> Result<ReplyStream, LlmError> {
         let client = Client::new(&self.settings.api_key).context(BuildClientSnafu)?;
         let model = CompletionModel::new(client, &self.settings.model);
 
