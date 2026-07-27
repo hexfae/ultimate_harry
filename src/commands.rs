@@ -40,6 +40,7 @@ use crate::{
     phrases::no_character,
     shortcodes::strip_custom_emoji,
     traits::SayEphemeral as _,
+    tts::{TtsManager, filter_voices},
     util::report_error,
 };
 
@@ -257,6 +258,31 @@ pub async fn autocomplete_deleted<'a>(
             .await,
         "deleted characters",
     )
+}
+
+/// Autocompletes `ElevenLabs` voices for the röst-id parameters, fetched live
+/// from the account's voice list: the choice shows the voice's name and
+/// submits its voice ID. A fetch failure (or a missing API key) is swallowed
+/// into an empty list (logged) so the picker stays responsive and a raw ID can
+/// still be pasted.
+pub async fn autocomplete_elevenlabs_voice<'a>(
+    ctx: Context<'_>,
+    partial: &str,
+) -> CreateAutocompleteResponse<'a> {
+    let settings = ctx.data().db.tts_settings().await;
+    let voices = match TtsManager::new(settings).list_voices().await {
+        Ok(voices) => voices,
+        Err(why) => {
+            warn!("failed to list ElevenLabs voices for autocomplete, returning none");
+            report_error(why);
+            Vec::new()
+        }
+    };
+    let choices = filter_voices(voices, partial)
+        .into_iter()
+        .map(|voice| AutocompleteChoice::new(voice.name, voice.voice_id))
+        .collect::<Vec<AutocompleteChoice<'_>>>();
+    CreateAutocompleteResponse::new().set_choices(choices)
 }
 
 /// Tests for the registration split.

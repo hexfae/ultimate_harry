@@ -2,7 +2,7 @@
 
 use crate::{
     AppResult, Context,
-    commands::{autocomplete, first_character_or_notify},
+    commands::{autocomplete, autocomplete_elevenlabs_voice, first_character_or_notify},
     error::SendMessageSnafu,
     phrases,
     traits::SayEphemeral as _,
@@ -19,6 +19,7 @@ pub async fn voice(
     name: String,
     #[rename = "röst-id"]
     #[description = "ElevenLabs röst-ID (lämna tomt för att visa nuvarande)"]
+    #[autocomplete = autocomplete_elevenlabs_voice]
     voice: Option<String>,
 ) -> AppResult {
     let db = &ctx.data().db;
