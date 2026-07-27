@@ -15,15 +15,20 @@ use serenity::all::{
 
 use crate::constants::{ERROR_COLOUR, ERROR_HEADING};
 
+/// Wraps `body` in the red error container, below the warning heading.
+pub fn error_container(body: Vec<CreateContainerComponent<'_>>) -> CreateComponent<'_> {
+    let mut components = vec![CreateContainerComponent::TextDisplay(
+        CreateTextDisplay::new(ERROR_HEADING),
+    )];
+    components.extend(body);
+    CreateComponent::Container(CreateContainer::new(components).accent_colour(ERROR_COLOUR))
+}
+
 /// Builds the red error container's components from a user-facing message.
 fn error_components(message: String) -> Vec<CreateComponent<'static>> {
-    let body = vec![
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(ERROR_HEADING)),
+    vec![error_container(vec![
         CreateContainerComponent::TextDisplay(CreateTextDisplay::new(message)),
-    ];
-    vec![CreateComponent::Container(
-        CreateContainer::new(body).accent_colour(ERROR_COLOUR),
-    )]
+    ])]
 }
 
 /// Builds a message edit that replaces an in-flight reply with the error container.
