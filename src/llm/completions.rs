@@ -6,6 +6,7 @@
 //! reach the manager's private settings while staying separate from the rig
 //! streaming core.
 
+use crate::http::http;
 use crate::models::message::{EncodedAudio, audio_format_from_url};
 use crate::tts::{DialogueTurn, VoiceEntry};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -80,7 +81,11 @@ impl LlmManager {
         {
             return Ok(cached);
         }
-        let response = reqwest::get(MODELS_URL).await.context(ListModelsSnafu)?;
+        let response = http()
+            .get(MODELS_URL)
+            .send()
+            .await
+            .context(ListModelsSnafu)?;
         let models = response
             .json::<ModelsResponse>()
             .await
@@ -103,7 +108,7 @@ impl LlmManager {
     where
         E: IntoError<LlmError, Source = reqwest::Error> + Copy,
     {
-        let response = reqwest::Client::new()
+        let response = http()
             .post(CHAT_URL)
             .bearer_auth(&self.settings.api_key)
             .json(&body)
@@ -275,7 +280,7 @@ fn modality_cache() -> &'static Mutex<HashMap<(String, String), bool>> {
 /// `OpenRouter` accepts audio only as base64 `input_audio`, so this is needed both to transcribe a
 /// voice message and to send it natively to an audio-capable model.
 pub async fn fetch_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
-    let response = reqwest::get(url).await.context(FetchAudioSnafu)?;
+    let response = http().get(url).send().await.context(FetchAudioSnafu)?;
     let bytes = response.bytes().await.context(FetchAudioSnafu)?;
     let data = STANDARD.encode(&bytes);
     Ok(EncodedAudio {
