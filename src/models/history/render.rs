@@ -329,6 +329,37 @@ impl History {
         db: &Database,
         options: &[CharacterOption],
     ) -> CreateReply<'a> {
+        self.to_response_with(character, id.into().into(), true, db, options)
+            .await
+    }
+
+    /// Converts the history to a full response whose controls are all rendered
+    /// disabled.
+    ///
+    /// The reply has no Discord ID yet (it is about to be sent), so every button
+    /// and dropdown would be keyed on a placeholder ID that resolves to no
+    /// conversation; the sender re-renders with [`to_response`](Self::to_response)
+    /// once the real ID is known, which enables them.
+    pub async fn to_pending_response<'a>(
+        &'a self,
+        character: &'a Character,
+        db: &Database,
+        options: &[CharacterOption],
+    ) -> CreateReply<'a> {
+        self.to_response_with(character, 1, false, db, options)
+            .await
+    }
+
+    /// Builds the full response keyed on the reply's message `id`, with every
+    /// control disabled when the message is not yet `live`.
+    async fn to_response_with<'a>(
+        &'a self,
+        character: &'a Character,
+        id: u64,
+        live: bool,
+        db: &Database,
+        options: &[CharacterOption],
+    ) -> CreateReply<'a> {
         let editor_name = match self.chosen_message().current_editor() {
             Some(user_id) => Some(db.substitute_name(user_id).await),
             None => None,
@@ -336,8 +367,9 @@ impl History {
         let voices = db.voice_options().await;
         let container = self.render_components(
             character,
-            id.into().into(),
+            id,
             editor_name.as_deref(),
+            live,
             &voices,
             options,
         );
@@ -348,6 +380,8 @@ impl History {
 
     /// Renders the chosen reply into the final Components V2 container, given the
     /// already-resolved editor name and voice palette so this stays synchronous.
+    /// `live` is false while the message's ID is still unknown, which renders
+    /// every control disabled.
     ///
     /// A failed generation is drawn as a distinct red error container rather than
     /// as the character speaking, while keeping the buttons so the user can swipe
@@ -357,6 +391,7 @@ impl History {
         character: &'a Character,
         id: u64,
         editor_name: Option<&str>,
+        live: bool,
         voices: &[VoiceEntry],
         options: &[CharacterOption],
     ) -> Vec<CreateComponent<'a>> {
@@ -367,11 +402,11 @@ impl History {
 
         let components = create_buttons(
             id,
-            self.has_finished,
+            live && self.has_finished,
             self.has_multiple_choices(),
-            self.chosen_has_edit(),
+            live && self.chosen_has_edit(),
             is_speakable(content),
-            !self.has_finished,
+            live && !self.has_finished,
             self.show_continue && self.continue_available(),
             options,
             voices,
@@ -833,7 +868,7 @@ mod tests {
             .choices(NonEmpty::new(timed_choice(&character, "trasigt svar", 1.0)))
             .build();
         history.set_current_choice_error();
-        let container = history.render_components(&character, 1, None, &[], &[]);
+        let container = history.render_components(&character, 1, None, true, &[], &[]);
         let json = serde_json::to_string(&container).unwrap_or_default();
         assert!(
             json.contains(ERROR_HEADING),
@@ -862,7 +897,7 @@ mod tests {
             .character("id")
             .choices(NonEmpty::new(timed_choice(&character, "hej", 1.0)))
             .build();
-        let container = history.render_components(&character, 1, None, &[], &[]);
+        let container = history.render_components(&character, 1, None, true, &[], &[]);
         let json = serde_json::to_string(&container).unwrap_or_default();
         assert!(
             json.contains("## Harry"),
@@ -881,7 +916,7 @@ mod tests {
         let mut character = character();
         character.set_color(Color::new(value));
         let history = finished_reply(&character, "hej");
-        let container = history.render_components(&character, 1, None, &[], &[]);
+        let container = history.render_components(&character, 1, None, true, &[], &[]);
         let json = serde_json::to_string(&container).unwrap_or_default();
         assert!(
             json.contains(&value.to_string()),
@@ -894,7 +929,7 @@ mod tests {
     fn render_components_omits_the_accent_colour_when_unset() {
         let character = character();
         let history = finished_reply(&character, "hej");
-        let container = history.render_components(&character, 1, None, &[], &[]);
+        let container = history.render_components(&character, 1, None, true, &[], &[]);
         let json = serde_json::to_string(&container).unwrap_or_default();
         assert!(
             !json.contains("accent_color"),
@@ -945,8 +980,9 @@ mod tests {
     /// Reports whether the button keyed on `custom_id` is present in `history`'s
     /// rendered components and, if so, whether it is disabled.
     fn button_disabled(history: &History, character: &Character, custom_id: &str) -> Option<bool> {
-        let value = serde_json::to_value(history.render_components(character, 1, None, &[], &[]))
-            .unwrap_or_default();
+        let value =
+            serde_json::to_value(history.render_components(character, 1, None, true, &[], &[]))
+                .unwrap_or_default();
         find_disabled(&value, custom_id)
     }
 
@@ -1069,9 +1105,15 @@ mod tests {
     /// render that carries one hand-off option, or `None` when it is absent.
     fn select_disabled(history: &History, character: &Character, custom_id: &str) -> Option<bool> {
         let options = [character.to_menu_option()];
-        let value =
-            serde_json::to_value(history.render_components(character, 1, None, &[], &options))
-                .unwrap_or_default();
+        let value = serde_json::to_value(history.render_components(
+            character,
+            1,
+            None,
+            true,
+            &[],
+            &options,
+        ))
+        .unwrap_or_default();
         find_disabled(&value, custom_id)
     }
 
@@ -1099,6 +1141,34 @@ mod tests {
             Some(false),
             "the hand-off dropdown is enabled on a finished reply"
         );
+    }
+
+    /// A response rendered before its message ID is known disables every
+    /// control, so nothing can be pressed while the buttons are still keyed on
+    /// the placeholder ID.
+    #[test]
+    fn pending_render_disables_every_control() {
+        let character = character();
+        let history = finished_reply(&character, "hej");
+        let options = [character.to_menu_option()];
+        let value = serde_json::to_value(history.render_components(
+            &character,
+            1,
+            None,
+            false,
+            &[],
+            &options,
+        ))
+        .unwrap_or_default();
+        for custom_id in [
+            "1prev", "1next", "1undo", "1redo", "1edit", "1pinn", "1tala", "1stop", "1char",
+        ] {
+            assert_eq!(
+                find_disabled(&value, custom_id),
+                Some(true),
+                "{custom_id} is disabled until the real message ID is known"
+            );
+        }
     }
 
     /// An empty choice mid-conversation is a reply stopped before its first

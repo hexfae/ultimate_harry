@@ -34,14 +34,15 @@ pub async fn chat(
         return Ok(());
     };
 
-    let id = MessageId::new(1);
-    let mut history = History::from((character, id));
+    // the real ID only exists once the message is sent, so the buttons go out
+    // disabled and the edit below re-renders them keyed on it
+    let mut history = History::from((character, MessageId::new(1)));
     history.set_finished(true);
 
     let options = db.character_menu_options().await?;
 
     let msg = ctx
-        .send(history.to_response(character, id, db, &options).await)
+        .send(history.to_pending_response(character, db, &options).await)
         .await
         .context(SendMessageSnafu)?;
 
