@@ -324,8 +324,8 @@ impl Database {
         };
         head.rollback_to(editor, &target);
         let new_id = head.id().to_owned();
-        self.supersede_character(new_id, head_id).await?;
         self.insert_character(head.clone()).await?;
+        self.supersede_character(new_id, head_id).await?;
         Ok(Some(head))
     }
 

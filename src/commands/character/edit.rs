@@ -43,11 +43,9 @@ pub async fn edit(
     character.edit_from_modals(ctx.author(), first_modal, second_modal);
     let character_name = character.to_string();
 
-    ctx.data()
-        .db
-        .supersede_character(character.id().to_owned(), &old_id)
-        .await?;
+    let new_id = character.id().to_owned();
     ctx.data().db.insert_character(character).await?;
+    ctx.data().db.supersede_character(new_id, &old_id).await?;
 
     say_transient(ctx, edited(character_name)).await
 }
