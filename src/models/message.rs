@@ -110,6 +110,18 @@ pub enum Role {
     System,
 }
 
+impl Role {
+    /// The lowercase role name used in the prompt transcript.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::System => "system",
+        }
+    }
+}
+
 impl Message {
     /// Returns the ID of this message.
     #[must_use]
@@ -232,6 +244,18 @@ impl Message {
     #[must_use]
     pub const fn time_taken(&self) -> Option<Duration> {
         self.elapsed
+    }
+
+    /// Renders the chosen revision as plain text, one `role: content` line per
+    /// part, the transcript form used by the prompt preview.
+    #[must_use]
+    pub fn transcript(&self) -> String {
+        self.chosen_revision()
+            .0
+            .iter()
+            .map(|part| format!("{}: {}", part.role.label(), part.content))
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 }
 
@@ -412,6 +436,60 @@ mod tests {
             message.chosen_revision().head().content(),
             "only",
             "the original content is unchanged"
+        );
+    }
+
+    /// Each role labels itself with its lowercase prompt-transcript name.
+    #[test]
+    fn role_labels_are_the_lowercase_role_names() {
+        assert_eq!(Role::User.label(), "user", "the user role labels as user");
+        assert_eq!(
+            Role::Assistant.label(),
+            "assistant",
+            "the assistant role labels as assistant"
+        );
+        assert_eq!(
+            Role::System.label(),
+            "system",
+            "the system role labels as system"
+        );
+    }
+
+    /// The transcript renders one `role: content` line per part of the chosen revision.
+    #[test]
+    fn transcript_labels_each_part_with_its_role() {
+        let message = Message::builder()
+            .parts(vec![
+                Part::builder()
+                    .content("be terse".to_owned())
+                    .role(Role::System)
+                    .build(),
+                Part::builder()
+                    .content("sure".to_owned())
+                    .role(Role::Assistant)
+                    .build(),
+                Part::builder()
+                    .content("Alice: hi".to_owned())
+                    .role(Role::User)
+                    .build(),
+            ])
+            .build();
+        assert_eq!(
+            message.transcript(),
+            "system: be terse\nassistant: sure\nuser: Alice: hi",
+            "each part becomes a role-labeled line, in order"
+        );
+    }
+
+    /// The transcript follows edits: an edited message renders its chosen revision.
+    #[test]
+    fn transcript_renders_the_chosen_revision() {
+        let mut message = Message::new_assistant("original");
+        message.edit("edited", 1_u64);
+        assert_eq!(
+            message.transcript(),
+            "assistant: edited",
+            "the transcript shows the newest revision after an edit"
         );
     }
 
