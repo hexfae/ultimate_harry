@@ -49,7 +49,9 @@ pub async fn create(
         model: model.filter(|value| !value.is_empty()),
     });
     db.upsert_tts_settings(settings).await?;
-    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done())
+        .await
+        .context(SendMessageSnafu)?;
     Ok(())
 }
 
@@ -66,7 +68,9 @@ pub async fn delete(
     let mut settings = db.tts_settings().await;
     if settings.remove_voice(&name) {
         db.upsert_tts_settings(settings).await?;
-        ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
+        ctx.say_ephemeral(phrases::done())
+            .await
+            .context(SendMessageSnafu)?;
     } else {
         ctx.say_ephemeral(phrases::no_voice(&name))
             .await

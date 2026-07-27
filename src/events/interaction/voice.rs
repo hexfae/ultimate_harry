@@ -38,7 +38,12 @@ pub async fn voice(
     let (settings, manager, text) = speak::setup(db, &history).await;
     let fallback = manager
         .voice_for(&character)
-        .or_else(|| settings.voices().first().map(|voice| voice.voice_id.clone()))
+        .or_else(|| {
+            settings
+                .voices()
+                .first()
+                .map(|voice| voice.voice_id.clone())
+        })
         .ok_or(TtsError::NoVoice)?;
 
     speak::defer(ctx, interaction).await?;
@@ -49,8 +54,15 @@ pub async fn voice(
             name: character.name().to_owned(),
             description: format!("the main character {} speaking", character.name()),
         };
-        read_aloud::synthesize_auto(db, &settings, &manager, &fallback, Some(character_voice), text)
-            .await?
+        read_aloud::synthesize_auto(
+            db,
+            &settings,
+            &manager,
+            &fallback,
+            Some(character_voice),
+            text,
+        )
+        .await?
     } else {
         let model = settings.solo_model(selection).to_owned();
         read_aloud::synthesize_single(db, &settings, &manager, selection, &model, text).await?

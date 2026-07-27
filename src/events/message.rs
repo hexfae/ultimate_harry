@@ -17,10 +17,10 @@ use crate::{
     },
     util::report_error,
 };
+use alloc::collections::BTreeMap;
 use poise::serenity_prelude::{Context, Message};
 use serenity::all::{CreateAllowedMentions, ReactionType};
 use snafu::ResultExt as _;
-use alloc::collections::BTreeMap;
 use tracing::warn;
 
 /// Handle a new message being sent.
@@ -48,8 +48,16 @@ pub async fn message(
 
     // the placeholder is now live, so a later failure must replace it with an
     // error notice rather than leaving the user staring at a frozen placeholder.
-    if let Err(why) =
-        reply_into(ctx, db, cancellations, &character, &mut history, &mut bot_message, &options).await
+    if let Err(why) = reply_into(
+        ctx,
+        db,
+        cancellations,
+        &character,
+        &mut history,
+        &mut bot_message,
+        &options,
+    )
+    .await
     {
         report_reply_failure(ctx, &mut bot_message, &why).await;
         return Err(why);

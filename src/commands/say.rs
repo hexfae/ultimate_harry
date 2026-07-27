@@ -4,8 +4,7 @@ use crate::{
     AppResult, Context,
     commands::autocomplete_from_names,
     error::{SendMessageSnafu, SendResponseSnafu},
-    phrases,
-    read_aloud,
+    phrases, read_aloud,
     traits::SayEphemeral as _,
     tts::{TtsError, TtsManager, TtsSettings, audio_filename, is_speakable},
 };
@@ -71,7 +70,8 @@ pub async fn say(
     let manager = TtsManager::new(settings.clone());
     let audio = match reading {
         Reading::Solo { voice_id, model } => {
-            read_aloud::synthesize_single(db, &settings, &manager, &voice_id, &model, message).await?
+            read_aloud::synthesize_single(db, &settings, &manager, &voice_id, &model, message)
+                .await?
         }
         Reading::Auto => {
             let fallback = auto_fallback(&settings).ok_or(TtsError::NoVoice)?;
@@ -201,10 +201,7 @@ mod tests {
     #[test]
     fn is_member_of_any_denies_without_success() {
         let none: [Result<(), ()>; 2] = [Err(()), Err(())];
-        assert!(
-            !is_member_of_any(none),
-            "all lookups failing denies access"
-        );
+        assert!(!is_member_of_any(none), "all lookups failing denies access");
         let empty: [Result<(), ()>; 0] = [];
         assert!(
             !is_member_of_any(empty),
@@ -300,10 +297,17 @@ mod tests {
     /// The candidates list the auto label first, then every palette voice in order.
     #[test]
     fn reading_candidates_list_auto_first_then_voices() {
-        let configured = settings(vec![voice("Adam", "adam-id", None), voice("Eva", "eva-id", None)]);
+        let configured = settings(vec![
+            voice("Adam", "adam-id", None),
+            voice("Eva", "eva-id", None),
+        ]);
         assert_eq!(
             reading_candidates(&configured, ""),
-            vec!["Automatiskt".to_owned(), "Adam".to_owned(), "Eva".to_owned()],
+            vec![
+                "Automatiskt".to_owned(),
+                "Adam".to_owned(),
+                "Eva".to_owned()
+            ],
             "an empty query lists the auto label first, then the palette"
         );
     }
@@ -312,7 +316,10 @@ mod tests {
     /// the auto label participates in the filtering.
     #[test]
     fn reading_candidates_filter_by_partial() {
-        let configured = settings(vec![voice("Adam", "adam-id", None), voice("Eva", "eva-id", None)]);
+        let configured = settings(vec![
+            voice("Adam", "adam-id", None),
+            voice("Eva", "eva-id", None),
+        ]);
         assert_eq!(
             reading_candidates(&configured, "au"),
             vec!["Automatiskt".to_owned()],

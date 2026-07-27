@@ -46,7 +46,8 @@ pub async fn prompt_two_modals<M1: Modal, M2: Modal>(
         .send(tempting_button_reply(ctx.id().to_string()))
         .await
         .context(SendMessageSnafu)?;
-    let Some(second_modal) = show_modal_on_button_press(ctx, tempting_message, second).await? else {
+    let Some(second_modal) = show_modal_on_button_press(ctx, tempting_message, second).await?
+    else {
         return Ok(None);
     };
     Ok(Some((first_modal, second_modal)))

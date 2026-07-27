@@ -35,6 +35,7 @@ pub async fn tts(
 
     speak::defer(ctx, interaction).await?;
 
-    let audio = read_aloud::synthesize_single(db, &settings, &manager, &voice, &model, text).await?;
+    let audio =
+        read_aloud::synthesize_single(db, &settings, &manager, &voice, &model, text).await?;
     speak::post_followup(ctx, interaction, audio, &character, &requested_at).await
 }

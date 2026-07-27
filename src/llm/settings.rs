@@ -166,7 +166,10 @@ mod tests {
             audio_model: Some("vendor/audio".to_owned()),
             ..ModelOverrides::default()
         });
-        assert_eq!(settings.model, "vendor/new", "the supplied model is replaced");
+        assert_eq!(
+            settings.model, "vendor/new",
+            "the supplied model is replaced"
+        );
         assert_eq!(
             settings.temperature.to_bits(),
             0.3_f32.to_bits(),

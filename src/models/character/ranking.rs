@@ -45,13 +45,14 @@ impl Character {
             .map(|mut character| {
                 let name_similarity =
                     strsim::normalized_damerau_levenshtein(&character.name, input);
-                let similarity = character.nickname.as_deref().map_or(
-                    name_similarity,
-                    |nickname| {
-                        name_similarity
-                            .max(strsim::normalized_damerau_levenshtein(nickname, input))
-                    },
-                );
+                let similarity =
+                    character
+                        .nickname
+                        .as_deref()
+                        .map_or(name_similarity, |nickname| {
+                            name_similarity
+                                .max(strsim::normalized_damerau_levenshtein(nickname, input))
+                        });
                 character.similarity = Some(similarity);
                 character
             })

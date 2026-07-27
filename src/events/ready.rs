@@ -1,13 +1,13 @@
 //! The ready event handler for when the bot connects to Discord.
 
 use crate::{AppResult, commands::partitioned_commands, error::RegisterCommandSnafu};
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 use nanorand::{Rng as _, WyRand};
 use poise::{
     samples::{register_globally, register_in_guild},
     serenity_prelude::{ActivityData, ActivityType, Context, small_fixed_array::FixedString},
 };
-use core::sync::atomic::{AtomicBool, Ordering};
 use serenity::all::Ready;
 use snafu::ResultExt as _;
 use std::time::Instant;

@@ -293,7 +293,8 @@ impl TtsManager {
     pub async fn synthesize_plan(&self, plan: DialoguePlan) -> Result<Vec<u8>, TtsError> {
         match plan {
             DialoguePlan::Single { text, voice_id } => {
-                self.synthesize(&text, &voice_id, &self.settings.model).await
+                self.synthesize(&text, &voice_id, &self.settings.model)
+                    .await
             }
             DialoguePlan::Multi(turns) => self.synthesize_dialogue(&turns).await,
         }
@@ -525,8 +526,8 @@ impl TtsError {
 #[cfg(test)]
 mod tests {
     use super::{
-        DialoguePlan, DialogueTurn, TtsError, TtsOverrides, TtsSettings, VoiceEntry, audio_filename,
-        dialogue_request_body, enforce_allowed_voices, is_speakable, plan_dialogue,
+        DialoguePlan, DialogueTurn, TtsError, TtsOverrides, TtsSettings, VoiceEntry,
+        audio_filename, dialogue_request_body, enforce_allowed_voices, is_speakable, plan_dialogue,
         tts_request_body, tts_url,
     };
 
@@ -832,13 +833,17 @@ mod tests {
         assert_eq!(inputs_value.map(Vec::len), Some(2), "both turns are listed");
         let Some(inputs) = inputs_value else { return };
         assert_eq!(
-            inputs.first().and_then(|input| input.get("voice_id"))
+            inputs
+                .first()
+                .and_then(|input| input.get("voice_id"))
                 .and_then(serde_json::Value::as_str),
             Some("voice-a"),
             "the first turn keeps its voice"
         );
         assert_eq!(
-            inputs.first().and_then(|input| input.get("text"))
+            inputs
+                .first()
+                .and_then(|input| input.get("text"))
                 .and_then(serde_json::Value::as_str),
             Some("hej"),
             "the first turn keeps its text"
@@ -857,7 +862,10 @@ mod tests {
             "re-adding the same name (case-insensitive) replaces rather than duplicates"
         );
         assert_eq!(
-            configured.voices().first().map(|voice| voice.voice_id.as_str()),
+            configured
+                .voices()
+                .first()
+                .map(|voice| voice.voice_id.as_str()),
             Some("new-id"),
             "the replacement keeps the latest voice ID"
         );
@@ -926,7 +934,10 @@ mod tests {
         let allowed = vec!["a".to_owned(), "b".to_owned()];
         let fixed = enforce_allowed_voices(turns, &allowed, "b");
         assert_eq!(
-            fixed.iter().map(|turn| turn.voice_id.as_str()).collect::<Vec<_>>(),
+            fixed
+                .iter()
+                .map(|turn| turn.voice_id.as_str())
+                .collect::<Vec<_>>(),
             vec!["a", "b"],
             "a known id is kept and an unknown one becomes the fallback"
         );
@@ -971,7 +982,10 @@ mod tests {
             !TtsError::MissingApiKey.retryable(),
             "a missing API key is permanent"
         );
-        assert!(!TtsError::NoVoice.retryable(), "a missing voice is permanent");
+        assert!(
+            !TtsError::NoVoice.retryable(),
+            "a missing voice is permanent"
+        );
         assert!(
             TtsError::EmptyAudio.retryable(),
             "empty audio may differ on retry"

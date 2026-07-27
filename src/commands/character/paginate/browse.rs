@@ -76,9 +76,7 @@ async fn display_browse(ctx: Context<'_>, characters: NonEmpty<Character>) -> Ap
                 version = version.saturating_sub(1);
             }
             InteractionKind::NewerVersion => {
-                version = version
-                    .saturating_add(1)
-                    .min(chain.len().saturating_sub(1));
+                version = version.saturating_add(1).min(chain.len().saturating_sub(1));
             }
             InteractionKind::Rollback => {
                 return roll_back_to_shown(ctx, interaction, &chain, version).await;
@@ -130,7 +128,10 @@ async fn browse_components(
     chain: &[Character],
     version: usize,
     page: usize,
-) -> (CreateEmbed<'static>, Cow<'static, [CreateComponent<'static>]>) {
+) -> (
+    CreateEmbed<'static>,
+    Cow<'static, [CreateComponent<'static>]>,
+) {
     let embed = browse_embed(ctx, characters, chain, version, page).await;
     let buttons = browse_buttons(ctx.id(), characters.len() < 2, version, chain.len());
     (embed, buttons)
@@ -143,10 +144,7 @@ fn page_character(characters: &NonEmpty<Character>, page: usize) -> &Character {
 
 /// Loads the version chain (oldest to newest) of a character, falling back to the
 /// character itself when the chain cannot be resolved.
-async fn load_version_chain(
-    ctx: Context<'_>,
-    character: &Character,
-) -> AppResult<Vec<Character>> {
+async fn load_version_chain(ctx: Context<'_>, character: &Character) -> AppResult<Vec<Character>> {
     let chain = ctx.data().db.character_versions(character.id()).await?;
     Ok(if chain.is_empty() {
         vec![character.clone()]

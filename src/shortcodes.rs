@@ -119,7 +119,10 @@ mod tests {
         let Some(emoji) = emojis::get_by_shortcode("smile") else {
             return;
         };
-        assert_eq!(resolve("hej :smile:", &[]), format!("hej {}", emoji.as_str()));
+        assert_eq!(
+            resolve("hej :smile:", &[]),
+            format!("hej {}", emoji.as_str())
+        );
     }
 
     /// An unknown shortcode is left exactly as written.
@@ -142,7 +145,10 @@ mod tests {
             return;
         };
         let rendered = emoji.as_str();
-        assert_eq!(resolve(":smile::smile:", &[]), format!("{rendered}{rendered}"));
+        assert_eq!(
+            resolve(":smile::smile:", &[]),
+            format!("{rendered}{rendered}")
+        );
     }
 
     /// Custom emoji markup is dropped while unicode emoji and text survive.

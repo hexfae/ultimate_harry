@@ -116,7 +116,16 @@ async fn dispatch(
 
     match kind {
         InteractionKind::Previous => {
-            swipe(ctx, interaction, id, db, history, character, History::previous).await?;
+            swipe(
+                ctx,
+                interaction,
+                id,
+                db,
+                history,
+                character,
+                History::previous,
+            )
+            .await?;
         }
         InteractionKind::Next => {
             next(ctx, interaction, id, db, history, character, cancellations).await?;

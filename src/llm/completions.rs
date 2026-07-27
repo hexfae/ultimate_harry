@@ -127,10 +127,7 @@ impl LlmManager {
             }
             .fail();
         }
-        response
-            .json::<ChatResponse>()
-            .await
-            .context(request_error)
+        response.json::<ChatResponse>().await.context(request_error)
     }
 
     /// Describes the image at `url` using the configured vision model, returning its caption.
@@ -277,7 +274,11 @@ fn parse_dialogue_turns(content: &str) -> Option<Vec<DialogueTurn>> {
         .into_iter()
         .filter(|turn| !turn.text.trim().is_empty() && !turn.voice_id.trim().is_empty())
         .collect();
-    if usable.is_empty() { None } else { Some(usable) }
+    if usable.is_empty() {
+        None
+    } else {
+        Some(usable)
+    }
 }
 
 /// Process-wide cache of (model id, modality) to whether the model accepts that input modality, so

@@ -6,8 +6,7 @@ use rig::agent::StreamingError;
 use snafu::{Location, Snafu};
 
 use crate::{
-    database::DatabaseError, events::interaction::UnknownInteraction, llm::LlmError,
-    tts::TtsError,
+    database::DatabaseError, events::interaction::UnknownInteraction, llm::LlmError, tts::TtsError,
 };
 
 /// The central error type for the entire bot.
@@ -279,7 +278,10 @@ mod tests {
         let error = AppError::Llm {
             source: LlmError::EmptyDescription,
         };
-        assert!(error.retryable(), "an empty description may differ on retry");
+        assert!(
+            error.retryable(),
+            "an empty description may differ on retry"
+        );
         assert!(
             error.user_message().contains("Du kan försöka igen"),
             "a transient error offers a retry hint"

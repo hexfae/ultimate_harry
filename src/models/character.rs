@@ -3,12 +3,12 @@
 //! This module contains the `Character` struct which represents an AI character
 //! that users can chat with.
 
+use alloc::collections::{BTreeMap, BTreeSet};
 use bon::Builder;
 use core::fmt::{Display, Formatter, Result as FmtResult};
 use jiff::Zoned;
 use poise::serenity_prelude::all::{Color, UserId};
 use serde::{Deserialize, Serialize};
-use alloc::collections::{BTreeMap, BTreeSet};
 
 use crate::llm::CharacterModelSettings;
 
@@ -473,7 +473,6 @@ impl Character {
             format!(" | {:.0}% namnlikhet", similarity * 100.0_f64)
         })
     }
-
 }
 
 impl Display for Character {
@@ -559,7 +558,11 @@ mod tests {
     #[test]
     fn edit_modal_defaults_prefill_every_field() {
         let (first, second) = populated_character().edit_modal_defaults();
-        assert_eq!(first.name.as_deref(), Some("Harry"), "the name is pre-filled");
+        assert_eq!(
+            first.name.as_deref(),
+            Some("Harry"),
+            "the name is pre-filled"
+        );
         assert_eq!(
             first.greeting.as_deref(),
             Some("hej"),
@@ -622,14 +625,8 @@ mod tests {
             Some("hello"),
             "the required greeting is always pre-filled"
         );
-        assert_eq!(
-            first.nickname, None,
-            "an absent optional field stays empty"
-        );
-        assert_eq!(
-            second.prompt, None,
-            "an absent optional field stays empty"
-        );
+        assert_eq!(first.nickname, None, "an absent optional field stays empty");
+        assert_eq!(second.prompt, None, "an absent optional field stays empty");
     }
 
     /// Submitting the pre-filled modals unchanged leaves every content field identical.
@@ -731,8 +728,7 @@ mod tests {
             "the accumulated stats from the current version are kept"
         );
         assert_eq!(
-            current.version,
-            2,
+            current.version, 2,
             "the rolled-back version's number is bumped past the current one"
         );
         assert_eq!(
@@ -745,10 +741,7 @@ mod tests {
             "v1",
             "a rollback creates a new version with a fresh id"
         );
-        assert!(
-            current.is_visible(),
-            "the rolled-back version is visible"
-        );
+        assert!(current.is_visible(), "the rolled-back version is visible");
     }
 
     /// Every distinct editor is accumulated, not just the latest one.
@@ -809,7 +802,10 @@ mod tests {
             character.deleted_at().is_some(),
             "the deletion time is recorded"
         );
-        assert!(character.is_deleted(), "a marked character reads as deleted");
+        assert!(
+            character.is_deleted(),
+            "a marked character reads as deleted"
+        );
         assert!(
             !character.is_visible(),
             "a deleted character is not visible"
@@ -985,7 +981,11 @@ mod tests {
             clone.all_editors().is_empty(),
             "the clone carries over no editors"
         );
-        assert_eq!(clone.latest_editor(), None, "the clone has no latest editor");
+        assert_eq!(
+            clone.latest_editor(),
+            None,
+            "the clone has no latest editor"
+        );
         assert!(clone.edited_at().is_none(), "the clone has no edit time");
         assert_eq!(
             clone.conversations_had(),
@@ -1016,7 +1016,11 @@ mod tests {
 
         assert_eq!(clone.greeting(), "hej", "the greeting is copied");
         assert_eq!(clone.nickname(), Some("H"), "the nickname is copied");
-        assert_eq!(clone.description(), Some("kort"), "the description is copied");
+        assert_eq!(
+            clone.description(),
+            Some("kort"),
+            "the description is copied"
+        );
         assert_eq!(
             clone.personality(),
             Some("snäll"),
@@ -1047,7 +1051,9 @@ mod tests {
             "the example messages are copied"
         );
         assert_eq!(
-            clone.model_settings().and_then(|settings| settings.model.as_deref()),
+            clone
+                .model_settings()
+                .and_then(|settings| settings.model.as_deref()),
             Some("gpt"),
             "the model override is copied"
         );

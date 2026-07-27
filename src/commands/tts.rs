@@ -38,6 +38,8 @@ pub async fn tts(
     }
     tts_settings.apply_overrides(overrides);
     ctx.data().db.upsert_tts_settings(tts_settings).await?;
-    ctx.say_ephemeral(phrases::done()).await.context(SendMessageSnafu)?;
+    ctx.say_ephemeral(phrases::done())
+        .await
+        .context(SendMessageSnafu)?;
     Ok(())
 }

@@ -22,7 +22,9 @@ pub use stats::stats;
 pub use tts::tts;
 pub use voice::voice;
 
-use poise::serenity_prelude::{AutocompleteChoice, CreateAutocompleteResponse, InstallationContext};
+use poise::serenity_prelude::{
+    AutocompleteChoice, CreateAutocompleteResponse, InstallationContext,
+};
 use snafu::ResultExt as _;
 use tokio::time::sleep;
 use tracing::warn;
@@ -190,7 +192,10 @@ fn autocomplete_from<'a>(
 
 /// Returns an auto completion response from characters found in the database, sorted by similarity to the input.
 pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {
-    autocomplete_from(ctx.data().db.characters_by_similarity(partial).await, "characters")
+    autocomplete_from(
+        ctx.data().db.characters_by_similarity(partial).await,
+        "characters",
+    )
 }
 
 /// Returns an auto completion response from soft-deleted characters, sorted by
@@ -201,7 +206,10 @@ pub async fn autocomplete_deleted<'a>(
     partial: &str,
 ) -> CreateAutocompleteResponse<'a> {
     autocomplete_from(
-        ctx.data().db.deleted_characters_by_similarity(partial).await,
+        ctx.data()
+            .db
+            .deleted_characters_by_similarity(partial)
+            .await,
         "deleted characters",
     )
 }
