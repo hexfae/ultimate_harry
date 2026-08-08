@@ -68,6 +68,8 @@ impl LlmManager {
 
         let agent = AgentBuilder::new(model)
             .temperature(self.settings.temperature.into())
+            // reasoning slows replies and flattens roleplay variety
+            .additional_params(serde_json::json!({"reasoning": {"enabled": false}}))
             .build();
 
         Ok(agent
