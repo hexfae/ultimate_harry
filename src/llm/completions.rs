@@ -82,14 +82,22 @@ impl LlmManager {
     /// and the JSON decode (they share a failure class per caller). An error
     /// status becomes [`LlmError::Http`] carrying the API's own error message,
     /// so a bad key or empty balance is not mistaken for an empty completion.
+    /// Model reasoning is disabled on every request, since these are quick
+    /// utility calls where thinking only adds latency.
     async fn chat_completion<E>(
         &self,
-        body: serde_json::Value,
+        mut body: serde_json::Value,
         request_error: E,
     ) -> Result<ChatResponse, LlmError>
     where
         E: IntoError<LlmError, Source = reqwest::Error> + Copy,
     {
+        if let Some(fields) = body.as_object_mut() {
+            fields.insert(
+                "reasoning".to_owned(),
+                serde_json::json!({"enabled": false}),
+            );
+        }
         let response = http()
             .post(CHAT_URL)
             .bearer_auth(&self.settings.api_key)
