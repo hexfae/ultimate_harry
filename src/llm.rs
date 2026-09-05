@@ -3,6 +3,7 @@
 mod completions;
 mod settings;
 
+use crate::constants::MAX_TOKENS;
 use crate::models::message::{AttachmentMode, Message as ChatMessage};
 use core::pin::Pin;
 use miette::Diagnostic;
@@ -66,16 +67,24 @@ impl LlmManager {
             rig_messages.extend(msg.to_rig_messages(mode));
         }
 
-        let mut builder = AgentBuilder::new(model)
+        let builder = AgentBuilder::new(model)
             .temperature(self.settings.temperature.into());
         // reasoning slows replies and flattens roleplay variety; models that
-        // cannot turn it off reject the parameter, so it is left out for them
-        if !self.reasoning_mandatory().await? {
-            builder = builder
-                .additional_params(serde_json::json!({"reasoning": {"enabled": false}}));
+        // cannot turn it off reject the parameter, so it is left out for them.
+        // rig's OpenRouter adapter has no max_tokens field of its own and
+        // additional_params is flattened into the request body, so the token
+        // budget rides along there; without it OpenRouter defaults to 65536
+        // and reserves that many output tokens against the balance.
+        let mut params = serde_json::json!({ "max_tokens": MAX_TOKENS });
+        if !self.reasoning_mandatory().await?
+            && let Some(fields) = params.as_object_mut()
+        {
+            fields.insert(
+                "reasoning".to_owned(),
+                serde_json::json!({ "enabled": false }),
+            );
         }
-
-        let agent = builder.build();
+        let agent = builder.additional_params(params).build();
 
         Ok(agent
             .stream_chat(

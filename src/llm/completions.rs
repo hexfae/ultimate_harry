@@ -6,6 +6,7 @@
 //! reach the manager's private settings while staying separate from the rig
 //! streaming core.
 
+use crate::constants::MAX_TOKENS;
 use crate::http::http;
 use crate::models::message::{EncodedAudio, audio_format_from_url};
 use crate::tts::{DialogueTurn, VoiceEntry};
@@ -112,6 +113,7 @@ impl LlmManager {
                 serde_json::json!({"enabled": false}),
             );
         }
+        fields_insert_max_tokens(&mut body);
         let response = http()
             .post(CHAT_URL)
             .bearer_auth(&self.settings.api_key)
@@ -354,6 +356,18 @@ async fn download_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
         data,
         format: audio_format_from_url(url).unwrap_or(AudioMediaType::OGG),
     })
+}
+
+/// Caps the utility call's output at [`MAX_TOKENS`], since these bodies never
+/// set `max_tokens` themselves and `OpenRouter` otherwise defaults to 65536,
+/// reserving more output tokens than the balance can cover on pricey models.
+fn fields_insert_max_tokens(body: &mut serde_json::Value) {
+    if let Some(fields) = body.as_object_mut() {
+        fields.insert(
+            "max_tokens".to_owned(),
+            serde_json::json!(MAX_TOKENS),
+        );
+    }
 }
 
 /// Whether the model with `model_id` lists `modality` among its accepted input modalities.
