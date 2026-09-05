@@ -66,11 +66,16 @@ impl LlmManager {
             rig_messages.extend(msg.to_rig_messages(mode));
         }
 
-        let agent = AgentBuilder::new(model)
-            .temperature(self.settings.temperature.into())
-            // reasoning slows replies and flattens roleplay variety
-            .additional_params(serde_json::json!({"reasoning": {"enabled": false}}))
-            .build();
+        let mut builder = AgentBuilder::new(model)
+            .temperature(self.settings.temperature.into());
+        // reasoning slows replies and flattens roleplay variety; models that
+        // cannot turn it off reject the parameter, so it is left out for them
+        if !self.reasoning_mandatory().await? {
+            builder = builder
+                .additional_params(serde_json::json!({"reasoning": {"enabled": false}}));
+        }
+
+        let agent = builder.build();
 
         Ok(agent
             .stream_chat(

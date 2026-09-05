@@ -77,13 +77,27 @@ impl LlmManager {
         ))
     }
 
+    /// Returns whether the active model always reasons and rejects
+    /// `effort: "none"`, checking the cached model catalog.
+    ///
+    /// An unlisted model is treated as able to turn reasoning off, matching
+    /// the optimistic defaults of [`model_supports_modality`].
+    pub(super) async fn reasoning_mandatory(&self) -> Result<bool, LlmError> {
+        let catalog = model_catalog().await?;
+        Ok(model_reasoning_mandatory(
+            &catalog,
+            &self.settings.model,
+        ))
+    }
+
     /// POSTs `body` to the `OpenRouter` chat-completions endpoint and parses the
     /// reply, attaching `request_error` as the snafu context for both the request
     /// and the JSON decode (they share a failure class per caller). An error
     /// status becomes [`LlmError::Http`] carrying the API's own error message,
     /// so a bad key or empty balance is not mistaken for an empty completion.
     /// Model reasoning is disabled on every request, since these are quick
-    /// utility calls where thinking only adds latency.
+    /// utility calls where thinking only adds latency; on models where
+    /// reasoning cannot be turned off the parameter is left out instead.
     async fn chat_completion<E>(
         &self,
         mut body: serde_json::Value,
@@ -92,7 +106,7 @@ impl LlmManager {
     where
         E: IntoError<LlmError, Source = reqwest::Error> + Copy,
     {
-        if let Some(fields) = body.as_object_mut() {
+        if !self.reasoning_mandatory().await? && let Some(fields) = body.as_object_mut() {
             fields.insert(
                 "reasoning".to_owned(),
                 serde_json::json!({"enabled": false}),
@@ -356,6 +370,17 @@ fn model_supports_modality(catalog: &[ModelEntry], model_id: &str, modality: &st
         })
 }
 
+/// Whether the model with `model_id` always reasons and rejects `effort: "none"`.
+///
+/// An unlisted model is treated as able to turn reasoning off, so a catalog
+/// fetch failure never blocks a request that would otherwise have worked.
+fn model_reasoning_mandatory(catalog: &[ModelEntry], model_id: &str) -> bool {
+    catalog
+        .iter()
+        .find(|entry| entry.id == model_id)
+        .is_some_and(|entry| entry.reasoning.mandatory)
+}
+
 /// Pulls the human-readable message out of an `OpenRouter` error body
 /// (`{"error": {"message": ...}}`), falling back to a generic phrase when the
 /// body is not that envelope or the message is blank.
@@ -436,6 +461,9 @@ pub struct ModelEntry {
     /// The model's input/output modality metadata.
     #[serde(default)]
     architecture: Architecture,
+    /// The model's reasoning metadata.
+    #[serde(default)]
+    reasoning: Reasoning,
 }
 
 /// A model's modality metadata.
@@ -444,6 +472,14 @@ struct Architecture {
     /// The input modalities the model accepts, for example `text` and `image`.
     #[serde(default)]
     input_modalities: Vec<String>,
+}
+
+/// A model's reasoning metadata, describing whether reasoning can be turned off.
+#[derive(Clone, Default, Deserialize)]
+struct Reasoning {
+    /// Whether the model always reasons and rejects `effort: "none"`.
+    #[serde(default)]
+    mandatory: bool,
 }
 
 /// The subset of a chat-completions response we care about.
@@ -473,9 +509,9 @@ struct ChatMessageContent {
 #[cfg(test)]
 mod tests {
     use super::{
-        Architecture, ChatResponse, MAX_MODEL_CHOICES, ModelEntry, ModelsResponse,
-        api_error_message, extract_description, matching_model_ids, model_supports_modality,
-        parse_dialogue_turns,
+        Architecture, ChatResponse, MAX_MODEL_CHOICES, ModelEntry, ModelsResponse, Reasoning,
+        api_error_message, extract_description, matching_model_ids, model_reasoning_mandatory,
+        model_supports_modality, parse_dialogue_turns,
     };
 
     /// Builds a catalog entry with the given id and input modalities.
@@ -488,7 +524,15 @@ mod tests {
                     .map(|&modality| modality.to_owned())
                     .collect(),
             },
+            reasoning: Reasoning::default(),
         }
+    }
+
+    /// Builds a catalog entry for a model that cannot turn reasoning off.
+    fn mandatory_entry(id: &str) -> ModelEntry {
+        let mut model = entry(id, &["text"]);
+        model.reasoning.mandatory = true;
+        model
     }
 
     /// An empty partial matches every model, sorted alphabetically.
@@ -658,6 +702,29 @@ mod tests {
         assert!(
             !model_supports_modality(&models.data, "vendor/missing", "audio"),
             "an unlisted model is treated as supporting no modality"
+        );
+    }
+
+    /// Only a model the catalog flags mandatory counts; unlisted and regular
+    /// models can turn reasoning off.
+    #[test]
+    fn model_reasoning_mandatory_checks_the_catalog_flag() {
+        let catalog = vec![
+            mandatory_entry("openai/gpt-6-astra"),
+            entry("deepseek/deepseek-v3.2", &["text"]),
+        ];
+
+        assert!(
+            model_reasoning_mandatory(&catalog, "openai/gpt-6-astra"),
+            "a mandatory model cannot turn reasoning off"
+        );
+        assert!(
+            !model_reasoning_mandatory(&catalog, "deepseek/deepseek-v3.2"),
+            "a regular model can turn reasoning off"
+        );
+        assert!(
+            !model_reasoning_mandatory(&catalog, "vendor/unlisted"),
+            "an unlisted model is optimistically able to turn reasoning off"
         );
     }
 
