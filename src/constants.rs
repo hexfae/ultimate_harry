@@ -37,6 +37,15 @@ pub const ROLLBACK: &str = "⏪";
 /// The emoji used for the automatic entry of the read-aloud voice dropdown.
 pub const AUTO_VOICE: &str = "🎭";
 
+/// The reply character limit expressed as a generous token budget, sent as
+/// `max_tokens` on every generation.
+///
+/// `OpenRouter` reserves prompt plus `max_tokens` output tokens against the
+/// account balance before generating, and defaults an omitted `max_tokens` to
+/// 65536, which expensive models' balances cannot cover. A reply can never
+/// exceed [`CHARACTER_LIMIT`] characters, so a few thousand tokens is plenty.
+pub const MAX_TOKENS: u64 = 3000;
+
 /// The max amount of characters an AI can respond with.
 ///
 /// This is slightly below 4000 (Discord's limit) because their count includes all text of all
