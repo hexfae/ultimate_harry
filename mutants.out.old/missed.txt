@@ -1,3 +1,0 @@
-src/models/character/stats.rs:29:9: replace Character::record_spawn with ()
-src/models/character/stats.rs:44:9: replace Character::formatted_conversations_had -> String with String::new()
-src/models/character/stats.rs:44:9: replace Character::formatted_conversations_had -> String with "xyzzy".into()
