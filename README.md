@@ -1,6 +1,6 @@
 # Ultimate Harry
 
-Ulimate Harry is a Discord bot for talking with characters.
+Feature-packed Discord bot for AI character roleplay.
 
 ## Features
 
@@ -11,19 +11,16 @@ limit)
 - Everything configured via slash commands
 - Multiple users in a conversation
 - Multiple characters in a conversation
-- ElevenLabs V2/V3 TTS support (either a global default voice, a character
-default voice, or from the dropdown, pick a specific voice or automatic (which
-supports multi-voice!))
+- Model support from OpenRouter
+- TTS via ElevenLabs V2/V3 API
 - Automatically adds ElevenLabs V3 audio tags (e.g. `[laughs]`, `[angry]`)
 - User-installable TTS command, for doing TTS anywhere
 - Text streaming (1s intervals, due to Discord's rate limits)
-- Uses OpenRouter for model support
-- Statistics, e.g. tokens generated, most used characters (globally/per user)
-- Swedish user-facing text (sorry, non-speakers!)
+- Fun statistics, per user/character
 - On models without vision/hearing, hand off to a capable model that describes
 the image/audio, then passes the description back
-- React with a configured emoji when a user is mentioned/replied to (special
-request from a user, "feature" from the now-deleted Ryybot)
+- React with a configured emoji when a user is mentioned/replied to
+- Swedish user-facing text (sorry, non-speakers!)
 - Probably more that I'm forgetting…
 
 ## Building
@@ -109,7 +106,8 @@ dumb baby. On the fifth day of the first version, instead of writing a normal
 response, it suddenly started its own long roleplay, writing as both the user
 and as "Harry" in its message. After asking it 4 times who Harry was, it
 introduced itself. We didn't have a (good) name for either the character or the
-bot itself, so we started calling both Harry. So yes, it was a hallucination.
+bot itself, so we started calling both Harry. Yes, the name comes from a
+hallucination.
 
 ## Is it any good?
 
