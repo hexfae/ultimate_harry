@@ -2,6 +2,8 @@
 
 Feature-packed Discord bot for AI character roleplay.
 
+<img width="742" height="626" alt="ultimate harry feature showcase" src="https://github.com/user-attachments/assets/c38f60bf-5eee-4dc2-9dba-9f47306399c9" />
+
 ## Features
 
 - Message "swiping"
