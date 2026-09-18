@@ -64,6 +64,16 @@ async fn enrich(db: &Database, settings: &TtsSettings, model: &str, text: String
     }
 }
 
+/// A synthesized reading: the MP3 bytes plus the exact text sent to `ElevenLabs`,
+/// which is the input text after audio-tag enrichment (identical to the input when
+/// no tags were added).
+pub struct Synthesized {
+    /// The synthesized MP3 audio.
+    pub audio: Vec<u8>,
+    /// The text that was spoken, as sent to the synthesis endpoint.
+    pub spoken: String,
+}
+
 /// Enriches `text` (when applicable) and synthesizes the whole of it in a single
 /// `voice_id` spoken with `model`.
 pub async fn synthesize_single(
@@ -73,9 +83,10 @@ pub async fn synthesize_single(
     voice_id: &str,
     model: &str,
     text: String,
-) -> Result<Vec<u8>, TtsError> {
-    let speak_text = enrich(db, settings, model, text).await;
-    manager.synthesize(&speak_text, voice_id, model).await
+) -> Result<Synthesized, TtsError> {
+    let spoken = enrich(db, settings, model, text).await;
+    let audio = manager.synthesize(&spoken, voice_id, model).await?;
+    Ok(Synthesized { audio, spoken })
 }
 
 /// Synthesizes `text` with auto-assigned voices, falling back to a single voice
@@ -85,6 +96,9 @@ pub async fn synthesize_single(
 /// `extra` is the main character's own voice choice, offered to the enricher
 /// alongside the palette: `Some` for the dropdown path (the character wins its own
 /// lines), `None` for the free-text command.
+///
+/// The returned [`Synthesized::spoken`] is the assigned turns' texts joined by
+/// newlines, or the single-voice text when assignment yields nothing.
 pub async fn synthesize_auto(
     db: &Database,
     settings: &TtsSettings,
@@ -92,13 +106,17 @@ pub async fn synthesize_auto(
     fallback: &str,
     extra: Option<VoiceChoice>,
     text: String,
-) -> Result<Vec<u8>, TtsError> {
+) -> Result<Synthesized, TtsError> {
     let Some(turns) = assign_turns(db, settings, fallback, extra, &text).await else {
         return synthesize_single(db, settings, manager, fallback, &settings.model, text).await;
     };
-    manager
-        .synthesize_plan(plan_dialogue(turns, fallback))
-        .await
+    let spoken = turns
+        .iter()
+        .map(|turn| turn.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let audio = manager.synthesize_plan(plan_dialogue(turns, fallback)).await?;
+    Ok(Synthesized { audio, spoken })
 }
 
 /// Asks the enricher to split `text` into per-voice turns over the palette (plus the

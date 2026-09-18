@@ -7,6 +7,7 @@ use crate::{
     phrases, read_aloud,
     traits::SayEphemeral as _,
     tts::{TtsError, TtsManager, TtsSettings, audio_filename, is_speakable},
+    util::ellipsize,
 };
 use poise::{
     CreateReply,
@@ -65,7 +66,8 @@ pub async fn say(
     ctx.defer().await.context(SendResponseSnafu)?;
 
     let manager = TtsManager::new(settings.clone());
-    let audio = match reading {
+    let original = message.clone();
+    let synthesized = match reading {
         Reading::Solo { voice_id, model } => {
             read_aloud::synthesize_single(db, &settings, &manager, &voice_id, &model, message)
                 .await?
@@ -76,12 +78,39 @@ pub async fn say(
         }
     };
 
-    let attachment =
-        CreateAttachment::bytes(audio, audio_filename(&voice, &read_aloud::requested_now()));
-    ctx.send(CreateReply::default().attachment(attachment))
-        .await
-        .context(SendMessageSnafu)?;
+    let attachment = CreateAttachment::bytes(
+        synthesized.audio,
+        audio_filename(&voice, &read_aloud::requested_now()),
+    );
+    let mut reply = CreateReply::default().attachment(attachment);
+    if let Some(tagged) = tagged_spoiler(&synthesized.spoken, &original) {
+        reply = reply.content(tagged);
+    }
+    ctx.send(reply).await.context(SendMessageSnafu)?;
     Ok(())
+}
+
+/// The most characters Discord accepts in a message's content, in characters.
+const CONTENT_LIMIT: usize = 2000;
+
+/// The Discord marker opening and closing a spoiler (`||text||`).
+const SPOILER_MARKER: &str = "||";
+
+/// Wraps the tag-enriched `spoken` text in a Discord spoiler to show beside the
+/// audio, so the user can see what the tag model added to the synthesis request;
+/// `None` when `spoken` is unchanged from the original `text`, so nothing was
+/// added and the reply is only the audio. The spoilered text is cut to fit
+/// Discord's content limit, counting the markers against it.
+fn tagged_spoiler(spoken: &str, text: &str) -> Option<String> {
+    if spoken == text {
+        return None;
+    }
+    let markers = SPOILER_MARKER.len().saturating_mul(2);
+    let room = CONTENT_LIMIT.saturating_sub(markers);
+    Some(format!(
+        "{SPOILER_MARKER}{}{SPOILER_MARKER}",
+        ellipsize(spoken, room)
+    ))
 }
 
 /// Resolves the chosen voice into a [`Reading`]: the auto label or sentinel into
@@ -164,8 +193,45 @@ async fn require_guild_member(ctx: Context<'_>) -> AppResult<bool> {
 /// Tests for the voice-resolution and autocomplete helpers.
 #[cfg(test)]
 mod tests {
-    use super::{Reading, is_member_of_any, reading_candidates, resolve_reading};
+    use super::{Reading, is_member_of_any, reading_candidates, resolve_reading, tagged_spoiler};
     use crate::tts::{TtsSettings, VoiceEntry};
+
+    /// The spoiler is shown, wrapped in Discord's markers, only when the spoken
+    /// text differs from the original, so a reply that got no tags stays audio-only.
+    #[test]
+    fn tagged_spoiler_wraps_only_added_tags() {
+        assert_eq!(
+            tagged_spoiler("[angry] Hej", "Hej").as_deref(),
+            Some("||[angry] Hej||"),
+            "tagged text is shown inside the spoiler markers"
+        );
+        assert_eq!(
+            tagged_spoiler("Hej", "Hej"),
+            None,
+            "unchanged text is not shown at all"
+        );
+    }
+
+    /// A long tagged text is cut so the spoiler, markers included, fits Discord's
+    /// content limit.
+    #[test]
+    fn tagged_spoiler_fits_the_content_limit() {
+        let long = "a".repeat(3000);
+        let spoiled = tagged_spoiler(&long, "short");
+        assert!(spoiled.is_some(), "changed text is still shown");
+        let Some(spoilered) = spoiled else {
+            return;
+        };
+        assert!(
+            spoilered.starts_with("||") && spoilered.ends_with("…||"),
+            "the markers survive the truncation, which ends in an ellipsis"
+        );
+        assert_eq!(
+            spoilered.chars().count(),
+            2000,
+            "the text fills exactly the content limit, markers included"
+        );
+    }
 
     /// A user found in at least one guild is granted access, including when the
     /// successful lookup is not the first one checked.
