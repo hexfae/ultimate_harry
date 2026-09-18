@@ -61,5 +61,5 @@ pub async fn voice(
         read_aloud::synthesize_single(db, &settings, &manager, selection, &model, text).await?
     };
 
-    speak::post_followup(ctx, interaction, audio, &character, &requested_at).await
+    speak::post_followup(ctx, interaction, audio.audio, &character, &requested_at).await
 }
