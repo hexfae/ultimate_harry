@@ -37,15 +37,24 @@ const DESCRIBE_PROMPT: &str =
 /// The instruction given to the audio model when transcribing a voice message.
 const TRANSCRIBE_PROMPT: &str = "Transcribe the spoken audio verbatim, keeping the transcription in the original spoken language (do not translate it). Briefly describe any non-speech sounds in square brackets. Reply with only the transcription, no explanation.";
 
-/// The instruction given to the tag model when enriching a reply with audio tags.
-const TAG_PROMPT: &str = "You are given a single line of dialogue from a roleplay. Insert ElevenLabs v3 audio tags (square-bracketed, always in English, e.g. [laughs], [sighs], [whispers], [angry], [sad], [pause], [excited]) at fitting points so it sounds expressive when read aloud. Draw on the full range of v3 tag categories: emotions, delivery and pacing, human reactions, accents and character voices, and occasional sound effects. A tag can sit anywhere in the text (a line often opens with one), and several tags can be combined or layered within one sentence for a shifting performance. Tag sparingly though: too many tags, or extreme ones the voice cannot plausibly perform, make the model read the tag aloud as text instead of acting it. For pacing, prefer the natural cues first: an ellipsis or a comma for a short pause, a line break for a longer beat, a capitalised word for emphasis. Keep all of the original text and its language exactly as given: do not translate, rephrase, or change any words; only add tags. The tags themselves must always be in English, even when the dialogue is in another language. Reply with only the tagged text, no explanation.";
+/// The opening instruction given to the tag model when enriching a reply with audio
+/// tags. [`TAG_GUIDE`] and [`TAG_PROMPT_REPLY`] are appended to it before sending.
+const TAG_PROMPT: &str = "You are given a single line of dialogue from a roleplay. Insert ElevenLabs v3 audio tags (square-bracketed and always in English) throughout it so it sounds as expressive as possible when read aloud.";
+
+/// The audio-tag guidance shared by the single-line enricher and the per-turn
+/// dialogue enricher, so both push for the same maximal expressiveness.
+const TAG_GUIDE: &str = "Be prolific: every line should carry tags, and every shift in emotion, intensity, volume, pace, or speaker should be marked with one, stacking several tags in a sentence when the performance layers (e.g. \"[tired] [softly] it has been a long day... [upset] how many more can I take?\"). A tag can sit anywhere in the text, and a line usually opens with one. Use the whole v3 vocabulary and give the actor as much direction as the moment allows: emotions ([angry], [sad], [sorrowful], [excited], [happily], [sarcastically], [awe], [annoyed], [surprised], [booming], [big laugh]), delivery and pacing ([whispers], [shouts], [softly], [rushed], [slowly], [drawn out], [pause]), human reactions ([laughs], [sighs], [gasps], [coughing], [clears throat], [beginning to speak], [interrupting], [overlapping]), accents and character voices ([French accent], [British accent], [pirate voice]), and sound effects where the scene calls for them ([clapping], [gunshot], [explosion]). Shape the pacing in the text as well: an ellipsis or a comma for a short pause, a line break for a longer beat, capitals on a word to stress it. Pick tags the voice can actually embody, since one it cannot perform gets read aloud as words: push it hard, but stay inside its register rather than contradicting it. Keep all of the original text and its language exactly as given: do not translate, rephrase, drop, reorder, or change any words; only add tags, never action or narration outside them. Every tag must be in English, even when the dialogue is in another language.";
+
+/// The closing format instruction for [`TAG_PROMPT`].
+const TAG_PROMPT_REPLY: &str = "Reply with only the tagged text, no explanation.";
 
 /// The instruction given to the model when splitting a reply into per-voice turns.
 const SEGMENT_PROMPT: &str = "You are given a roleplay reply and a list of available voices. Split the reply into an ordered sequence of speaker turns and assign each turn one of the available voices by its id, choosing the voice whose description best matches that speaker. Cover the entire reply in order, keeping every word and its original language exactly as given: do not translate, rephrase, drop, or reorder any text. Use only voice ids from the provided list. Reply with ONLY a JSON array of objects with the keys \"voice_id\" and \"text\", and nothing else (no prose, no code fences).";
 
 /// The extra instruction folded into [`SEGMENT_PROMPT`] when the synthesis model
 /// is audio-tag aware, so each turn's text is also enriched with v3 tags.
-const SEGMENT_TAG_CLAUSE: &str = " Additionally, insert ElevenLabs v3 audio tags (square-bracketed and always in English, e.g. [laughs], [sighs], [whispers], [pause]) at fitting points within each turn's text so it sounds expressive when read aloud, opening a turn with a tag when it captures the moment and layering tags across a turn for mood shifts, interruptions, and overlaps. Tag sparingly, so the model acts each tag rather than reading it aloud.";
+/// [`TAG_GUIDE`] is appended to it.
+const SEGMENT_TAG_CLAUSE: &str = " Additionally, insert ElevenLabs v3 audio tags (square-bracketed and always in English) throughout each turn's text so it sounds as expressive as possible when read aloud, opening a turn with a tag when it captures the moment and tagging the mood shifts, interruptions, and overlaps between turns.";
 
 #[expect(
     clippy::multiple_inherent_impl,
@@ -183,10 +192,11 @@ impl LlmManager {
     /// expressive text-to-speech. Only the spoken text is enriched; the visible reply
     /// is left untouched by the caller.
     pub async fn add_audio_tags(&self, text: &str, model: &str) -> Result<String, LlmError> {
+        let system = format!("{TAG_PROMPT} {TAG_GUIDE} {TAG_PROMPT_REPLY}");
         let body = serde_json::json!({
             "model": model,
             "messages": [
-                {"role": "system", "content": TAG_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": text},
             ],
         });
@@ -211,6 +221,8 @@ impl LlmManager {
         let mut system = SEGMENT_PROMPT.to_owned();
         if add_tags {
             system.push_str(SEGMENT_TAG_CLAUSE);
+            system.push(' ');
+            system.push_str(TAG_GUIDE);
         }
         let voices = choices
             .iter()
