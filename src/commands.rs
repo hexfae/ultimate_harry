@@ -23,7 +23,8 @@ pub use tts::tts;
 pub use voice::voice;
 
 use poise::serenity_prelude::{
-    AutocompleteChoice, CreateAutocompleteResponse, InstallationContext,
+    AutocompleteChoice, CreateAutocompleteResponse, InstallationContext, ResolvedOption,
+    ResolvedValue,
 };
 use snafu::ResultExt as _;
 use tokio::time::sleep;
@@ -35,7 +36,7 @@ use crate::{
     constants::TRANSIENT_LINGER,
     database::DatabaseError,
     error::{AppError, DeleteMessageSnafu, SendMessageSnafu},
-    llm::{matching_model_ids, model_catalog},
+    llm::{matching_endpoints, matching_model_ids, model_catalog, model_endpoints},
     models::character::Character,
     phrases::no_character,
     shortcodes::strip_custom_emoji,
@@ -236,6 +237,97 @@ pub async fn autocomplete_audio_model<'a>(
     autocomplete_models(partial, Some("audio")).await
 }
 
+/// The options of the command invocation being autocompleted.
+///
+/// An autocomplete interaction carries every option of the command, not just
+/// the focused one, so a picker can read what the user already chose for an
+/// earlier option. A prefix invocation has no such options.
+const fn invocation_options(ctx: Context<'_>) -> &[ResolvedOption<'_>] {
+    match ctx {
+        Context::Application(app) => app.args,
+        Context::Prefix(_) => &[],
+    }
+}
+
+/// The value the user already supplied for the option named `name`, if any.
+///
+/// Both a filled option and the focused one being typed carry their text, so a
+/// picker downstream of a model option sees the model as soon as it is picked.
+fn chosen_option<'a>(args: &'a [ResolvedOption<'a>], name: &str) -> Option<&'a str> {
+    args.iter()
+        .find(|option| option.name == name)
+        .and_then(|option| match &option.value {
+            ResolvedValue::String(value) | ResolvedValue::Autocomplete { value, .. } => {
+                Some(*value)
+            }
+            _ => None,
+        })
+        .filter(|value| !value.is_empty())
+}
+
+/// Builds an autocomplete response of the provider slugs serving `model`, from
+/// the `OpenRouter` endpoint listing.
+async fn autocomplete_providers_of<'a>(
+    model: &str,
+    partial: &str,
+) -> CreateAutocompleteResponse<'a> {
+    let endpoints = model_endpoints(model).await;
+    let choices = matching_endpoints(&endpoints, partial)
+        .into_iter()
+        .map(|endpoint| AutocompleteChoice::new(endpoint.label(), endpoint.tag().to_owned()))
+        .collect::<Vec<AutocompleteChoice<'_>>>();
+    CreateAutocompleteResponse::new().set_choices(choices)
+}
+
+/// Returns an autocomplete response of the `OpenRouter` provider slugs serving
+/// the model chosen in the same `/modell` invocation, falling back to the
+/// configured model while that option is still empty.
+///
+/// A slug names one endpoint of one model, so the list has to follow the model
+/// rather than being a fixed set.
+pub async fn autocomplete_provider<'a>(
+    ctx: Context<'_>,
+    partial: &str,
+) -> CreateAutocompleteResponse<'a> {
+    let args = invocation_options(ctx);
+    let chosen = chosen_option(args, "modell").map(str::to_owned);
+    let Some(model) = chosen else {
+        let settings = ctx.data().db.model_settings().await;
+        return autocomplete_providers_of(&settings.model, partial).await;
+    };
+    autocomplete_providers_of(&model, partial).await
+}
+
+/// Returns an autocomplete response of the `OpenRouter` provider slugs serving
+/// the model a `/gubbe modell` invocation will end up using: the model chosen in
+/// the same invocation, else the named character's own model, else the global
+/// one.
+pub async fn autocomplete_character_provider<'a>(
+    ctx: Context<'_>,
+    partial: &str,
+) -> CreateAutocompleteResponse<'a> {
+    let model = character_provider_model(ctx).await;
+    autocomplete_providers_of(&model, partial).await
+}
+
+/// The model a `/gubbe modell` invocation's provider list should follow: the
+/// model chosen in the same invocation, else the named character's own model,
+/// else the global one.
+async fn character_provider_model(ctx: Context<'_>) -> String {
+    let args = invocation_options(ctx);
+    if let Some(model) = chosen_option(args, "modell") {
+        return model.to_owned();
+    }
+    let db = &ctx.data().db;
+    if let Some(name) = chosen_option(args, "namn")
+        && let Ok(ranked) = db.characters_by_similarity(name.to_owned()).await
+        && let Some(character) = ranked.into_iter().next()
+    {
+        return db.resolved_model_settings(&character).await.model;
+    }
+    db.model_settings().await.model
+}
+
 /// Returns an auto completion response from characters found in the database, sorted by similarity to the input.
 pub async fn autocomplete<'a>(ctx: Context<'_>, partial: &str) -> CreateAutocompleteResponse<'a> {
     autocomplete_from(
@@ -311,6 +403,10 @@ mod tests {
             "/modell's modell parameter offers model autocomplete"
         );
         assert!(
+            has_autocomplete(&global, "leverantör"),
+            "/modell's leverantör parameter offers provider autocomplete"
+        );
+        assert!(
             has_autocomplete(&global, "syn-modell"),
             "/modell's syn-modell parameter offers model autocomplete"
         );
@@ -327,8 +423,16 @@ mod tests {
             .into_iter()
             .find(|subcommand| subcommand.name == "modell");
         assert!(
-            character_model.is_some_and(|subcommand| has_autocomplete(&subcommand, "modell")),
+            character_model
+                .as_ref()
+                .is_some_and(|subcommand| has_autocomplete(subcommand, "modell")),
             "/gubbe modell's modell parameter offers model autocomplete"
+        );
+        assert!(
+            character_model
+                .as_ref()
+                .is_some_and(|subcommand| has_autocomplete(subcommand, "leverantör")),
+            "/gubbe modell's leverantör parameter offers provider autocomplete"
         );
     }
 

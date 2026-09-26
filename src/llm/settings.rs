@@ -23,6 +23,14 @@ pub struct ModelSettings {
     /// Higher values make the output more random, while lower values make it
     /// more deterministic and focused.
     pub temperature: f32,
+    /// The `OpenRouter` provider slug the model is pinned to, if any.
+    ///
+    /// `OpenRouter` load balances a model across every provider serving it. Pinning
+    /// one slug restricts the request to that endpoint, which fails outright when the
+    /// endpoint is down. A slug is only valid for the model it was picked from, so
+    /// switching models drops a pin the new model does not offer.
+    #[serde(default)]
+    pub provider: Option<String>,
     /// The model used to describe image attachments for models that lack vision.
     ///
     /// When the active model cannot read images, this model is asked to caption them and the text
@@ -66,8 +74,9 @@ impl ModelSettings {
         };
         let vision_model = self.vision_model.as_deref().unwrap_or("ingen");
         let audio_model = self.audio_model.as_deref().unwrap_or("ingen");
+        let provider = self.provider.as_deref().unwrap_or("ingen");
         format!(
-            "modell: {}\nsyn-modell: {vision_model}\nljud-modell: {audio_model}\ntemperatur: {}\napi-nyckel: {api_key}",
+            "modell: {}\nleverantör: {provider}\nsyn-modell: {vision_model}\nljud-modell: {audio_model}\ntemperatur: {}\napi-nyckel: {api_key}",
             self.model, self.temperature
         )
     }
@@ -82,6 +91,9 @@ impl ModelSettings {
         }
         if let Some(new_temperature) = overrides.temperature {
             self.temperature = new_temperature;
+        }
+        if let Some(new_provider) = overrides.provider {
+            self.provider = Some(new_provider);
         }
         if let Some(new_vision_model) = overrides.vision_model {
             self.vision_model = Some(new_vision_model);
@@ -98,6 +110,7 @@ impl Default for ModelSettings {
             model: "deepseek/deepseek-v3.2".to_owned(),
             api_key: String::new(),
             temperature: 1.0,
+            provider: None,
             vision_model: default_vision_model(),
             audio_model: default_audio_model(),
         }
@@ -106,15 +119,22 @@ impl Default for ModelSettings {
 
 /// A character's per-character overrides for the global model settings.
 ///
-/// Only the model and temperature can be overridden per character; the API key and the
-/// vision/audio fallback models always come from the global settings. Each present field
-/// replaces the corresponding global setting at request time (see
+/// Only the model, its provider pin, and the temperature can be overridden per
+/// character; the API key and the vision/audio fallback models always come from
+/// the global settings. Each present field replaces the corresponding global
+/// setting at request time (see
 /// [`Database::resolved_model_settings`](crate::database::Database::resolved_model_settings)).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CharacterModelSettings {
     /// The model to use for this character, if overridden.
     #[serde(default)]
     pub model: Option<String>,
+    /// The provider slug this character's model is pinned to, if overridden.
+    ///
+    /// Like the global pin, a slug only makes sense for the model it was picked
+    /// from, so a character overriding the model can pin its own provider here.
+    #[serde(default)]
+    pub provider: Option<String>,
     /// The sampling temperature for this character, if overridden.
     #[serde(default)]
     pub temperature: Option<f32>,
@@ -132,6 +152,8 @@ pub struct ModelOverrides {
     pub api_key: Option<String>,
     /// The sampling temperature, if overridden.
     pub temperature: Option<f32>,
+    /// The provider slug to pin the model to, if overridden.
+    pub provider: Option<String>,
     /// The vision model for image descriptions, if overridden.
     pub vision_model: Option<String>,
     /// The audio model for voice-message transcriptions, if overridden.
@@ -145,6 +167,7 @@ impl ModelOverrides {
         self.model.is_none()
             && self.api_key.is_none()
             && self.temperature.is_none()
+            && self.provider.is_none()
             && self.vision_model.is_none()
             && self.audio_model.is_none()
     }
@@ -162,6 +185,7 @@ mod tests {
         settings.apply_overrides(ModelOverrides {
             model: Some("vendor/new".to_owned()),
             temperature: Some(0.3),
+            provider: Some("vendor/new-fp8".to_owned()),
             vision_model: Some("vendor/vision".to_owned()),
             audio_model: Some("vendor/audio".to_owned()),
             ..ModelOverrides::default()
@@ -174,6 +198,11 @@ mod tests {
             settings.temperature.to_bits(),
             0.3_f32.to_bits(),
             "the supplied temperature is replaced"
+        );
+        assert_eq!(
+            settings.provider.as_deref(),
+            Some("vendor/new-fp8"),
+            "the supplied provider pin is set"
         );
         assert_eq!(
             settings.vision_model.as_deref(),
@@ -191,6 +220,25 @@ mod tests {
         );
     }
 
+    /// Leaving the provider out of an override bundle keeps the existing pin,
+    /// so an unrelated change never silently unpins the model.
+    #[test]
+    fn model_apply_overrides_keeps_an_existing_pin() {
+        let mut settings = ModelSettings {
+            provider: Some("vendor/kept-fp8".to_owned()),
+            ..ModelSettings::default()
+        };
+        settings.apply_overrides(ModelOverrides {
+            temperature: Some(0.3),
+            ..ModelOverrides::default()
+        });
+        assert_eq!(
+            settings.provider.as_deref(),
+            Some("vendor/kept-fp8"),
+            "a bundle without a provider leaves the pin alone"
+        );
+    }
+
     /// `ModelOverrides::is_empty` is true only for an all-None bundle.
     #[test]
     fn model_overrides_emptiness_is_detected() {
@@ -205,6 +253,14 @@ mod tests {
             }
             .is_empty(),
             "a bundle with any field set is not empty"
+        );
+        assert!(
+            !ModelOverrides {
+                provider: Some("vendor/x-fp8".to_owned()),
+                ..ModelOverrides::default()
+            }
+            .is_empty(),
+            "a bundle carrying only a provider pin is not empty"
         );
     }
 
@@ -233,6 +289,27 @@ mod tests {
                 .summary()
                 .contains("api-nyckel: inte inställd"),
             "an unset API key is reported as unset"
+        );
+    }
+
+    /// The summary shows the provider pin, or reports that the model is free to
+    /// be routed anywhere when there is none.
+    #[test]
+    fn summary_reports_the_provider_pin() {
+        let pinned = ModelSettings {
+            provider: Some("baidu/fp8".to_owned()),
+            ..ModelSettings::default()
+        }
+        .summary();
+        assert!(
+            pinned.contains("leverantör: baidu/fp8"),
+            "a pinned provider is shown by its slug"
+        );
+        assert!(
+            ModelSettings::default()
+                .summary()
+                .contains("leverantör: ingen"),
+            "an unpinned model reports that it has no provider"
         );
     }
 }

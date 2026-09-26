@@ -2,9 +2,12 @@
 
 use crate::{
     AppResult, Context,
-    commands::{autocomplete_audio_model, autocomplete_model, autocomplete_vision_model},
+    commands::{
+        autocomplete_audio_model, autocomplete_model, autocomplete_provider,
+        autocomplete_vision_model,
+    },
     error::SendMessageSnafu,
-    llm::ModelOverrides,
+    llm::{ModelOverrides, model_endpoints, pin_for_model},
     phrases,
     traits::SayEphemeral as _,
 };
@@ -18,6 +21,10 @@ pub async fn model(
     #[description = "Modellen att använda"]
     #[autocomplete = autocomplete_model]
     model: Option<String>,
+    #[rename = "leverantör"]
+    #[description = "Leverantören att låsa modellen till"]
+    #[autocomplete = autocomplete_provider]
+    provider: Option<String>,
     #[rename = "api-nyckel"]
     #[description = "API-nyckeln att använda"]
     api_key: Option<String>,
@@ -37,6 +44,7 @@ pub async fn model(
         model,
         api_key,
         temperature,
+        provider,
         vision_model,
         audio_model,
     };
@@ -47,7 +55,15 @@ pub async fn model(
             .context(SendMessageSnafu)?;
         return Ok(());
     }
+    let switched_model = overrides.model.is_some();
     model_settings.apply_overrides(overrides);
+    // a provider slug names one endpoint of one model, so switching models
+    // leaves a pin the new model does not serve behind, failing every request
+    if switched_model {
+        let endpoints = model_endpoints(&model_settings.model).await;
+        model_settings.provider =
+            pin_for_model(model_settings.provider.as_deref(), &endpoints).map(str::to_owned);
+    }
     ctx.data().db.upsert_model_settings(model_settings).await?;
     ctx.say_ephemeral(phrases::done())
         .await

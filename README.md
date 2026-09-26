@@ -14,6 +14,7 @@ limit)
 - Multiple users in a conversation
 - Multiple characters in a conversation
 - Model support from OpenRouter
+- Optional per-model provider pinning, to force a specific OpenRouter endpoint
 - TTS via ElevenLabs V2/V3 API
 - Automatically adds ElevenLabs V3 audio tags (e.g. `[laughs]`, `[angry]`)
 - User-installable TTS command, for doing TTS anywhere
@@ -48,10 +49,18 @@ through `/modell`.
 
 ## Usage
 
-Configure text model, OpenRouter API key, temperature, vision model, and audio
-model globally with `/modell`. Configure model and temperature per character
-with `/gubbe modell`. Configure ElevenLabs API key, global default voice,
-global default ElevenLabs model, and V3 audio tag model with `/tal`.
+Configure text model, its OpenRouter provider, OpenRouter API key, temperature,
+vision model, and audio model globally with `/modell`. Configure model, provider,
+and temperature per character with `/gubbe modell`. Configure ElevenLabs API key,
+global default voice, global default ElevenLabs model, and V3 audio tag model
+with `/tal`.
+
+The provider is optional. Left unset, OpenRouter load balances the model across
+every provider serving it. Setting one pins the bot to that single endpoint
+(e.g. `baidu/fp8`), so the request fails outright when that endpoint is down
+rather than going somewhere else. A provider belongs to one model, so switching
+models drops a pin the new model does not offer, and a character on its own model
+does not inherit the global pin.
 
 Create, view, and delete voices with `/röst {skapa,visa,döda}` (create them on
 the ElevenLabs website first). Set a character's default voice with `/gubbe

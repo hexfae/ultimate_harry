@@ -9,13 +9,17 @@ use miette::Diagnostic;
 use rig::{
     agent::{AgentBuilder, StreamingResult},
     http_client::Error as RigError,
+    json_utils::merge,
     message::Message,
     providers::openrouter::{Client, CompletionModel},
     streaming::StreamingChat as _,
 };
 use snafu::{ResultExt as _, Snafu};
 
-pub use completions::{VoiceChoice, fetch_audio_base64, matching_model_ids, model_catalog};
+pub use completions::{
+    VoiceChoice, fetch_audio_base64, matching_endpoints, matching_model_ids, model_catalog,
+    model_endpoints, pin_for_model,
+};
 pub use settings::{CharacterModelSettings, ModelOverrides, ModelSettings};
 
 /// A streamed reply from the AI model, as returned by
@@ -76,6 +80,9 @@ impl LlmManager {
                 serde_json::json!({ "enabled": false }),
             );
         }
+        if let Some(provider) = &self.settings.provider {
+            params = merge(params, provider_params(provider));
+        }
         let agent = builder.additional_params(params).build();
 
         Ok(agent
@@ -85,6 +92,20 @@ impl LlmManager {
             )
             .await)
     }
+}
+
+/// The `provider` routing field pinning a request to `slug`.
+///
+/// A pin is a hard allowlist with fallbacks disabled, so a request either goes
+/// to the chosen endpoint or fails; `OpenRouter` would otherwise load balance
+/// across every provider serving the model.
+fn provider_params(slug: &str) -> serde_json::Value {
+    serde_json::json!({
+        "provider": {
+            "only": [slug],
+            "allow_fallbacks": false,
+        }
+    })
 }
 
 /// All errors that can happen when using the AI client.
@@ -233,7 +254,24 @@ impl LlmError {
 /// Tests for the error classification.
 #[cfg(test)]
 mod tests {
-    use super::LlmError;
+    use super::{LlmError, provider_params};
+
+    /// The streaming request's provider field is a hard pin: a single-entry
+    /// allowlist with fallbacks off, so the request either reaches the chosen
+    /// endpoint or fails rather than silently going elsewhere.
+    #[test]
+    fn provider_params_pins_the_request_to_one_endpoint() {
+        assert_eq!(
+            provider_params("baidu/fp8"),
+            serde_json::json!({
+                "provider": {
+                    "only": ["baidu/fp8"],
+                    "allow_fallbacks": false,
+                }
+            }),
+            "the pin is a single-provider allowlist with fallbacks disabled"
+        );
+    }
 
     /// Missing-model misconfigurations are permanent, while empty-response
     /// failures are transient and may differ on retry.

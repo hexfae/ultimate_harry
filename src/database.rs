@@ -558,12 +558,24 @@ impl Database {
     }
 
     /// Returns the global model settings with the character's per-character
-    /// overrides (model and temperature) applied on top, if it has any.
+    /// overrides (model, provider, and temperature) applied on top, if it has any.
+    ///
+    /// A global provider pin is only inherited when the character runs the global
+    /// model, since a pin names one endpoint of one model and would fail every
+    /// request against any other.
     pub async fn resolved_model_settings(&self, character: &Character) -> ModelSettings {
         let mut settings = self.model_settings().await;
         if let Some(overrides) = character.model_settings() {
+            let global_model = settings.model.clone();
             if let Some(model) = overrides.model.clone() {
+                let runs_global_model = model == global_model;
                 settings.model = model;
+                if !runs_global_model {
+                    settings.provider = None;
+                }
+            }
+            if let Some(provider) = overrides.provider.clone() {
+                settings.provider = Some(provider);
             }
             if let Some(temperature) = overrides.temperature {
                 settings.temperature = temperature;
@@ -934,6 +946,7 @@ mod tests {
                 "char-id",
                 CharacterModelSettings {
                     model: Some("char-model".to_owned()),
+                    provider: Some("vendor/fp8".to_owned()),
                     temperature: Some(0.5),
                 },
             )
@@ -1388,6 +1401,7 @@ mod tests {
         let mut model_only = character("model-only", "Harry");
         model_only.set_model_settings(CharacterModelSettings {
             model: Some("char-model".to_owned()),
+            provider: None,
             temperature: None,
         });
         let model_resolved = db.resolved_model_settings(&model_only).await;
@@ -1400,10 +1414,16 @@ mod tests {
             0.5_f32.to_bits(),
             "the global temperature is kept when only the model is overridden"
         );
+        assert_eq!(
+            model_resolved.provider, None,
+            "a character on another model does not inherit the global provider pin, \
+             which names an endpoint of the global model"
+        );
 
         let mut temperature_only = character("temperature-only", "Harry");
         temperature_only.set_model_settings(CharacterModelSettings {
             model: None,
+            provider: None,
             temperature: Some(0.9_f32),
         });
         let temperature_resolved = db.resolved_model_settings(&temperature_only).await;
@@ -1423,6 +1443,65 @@ mod tests {
         assert_eq!(
             plain_resolved.model, "global-model",
             "a character with no override leaves the global model unchanged"
+        );
+    }
+
+    /// A provider pin belongs to the model it was picked from, so it is inherited
+    /// only by a character running the global model, and a character's own pin
+    /// replaces it whatever model that character runs.
+    #[tokio::test]
+    async fn resolved_model_settings_scopes_the_provider_pin_to_its_model() {
+        use crate::llm::ModelSettings;
+
+        let opened = Database::temporary().await;
+        assert!(
+            opened.is_ok(),
+            "opening a temporary database should succeed"
+        );
+        let Ok(db) = opened else { return };
+        let global = ModelSettings {
+            model: "global-model".to_owned(),
+            provider: Some("vendor/global-fp8".to_owned()),
+            ..ModelSettings::default()
+        };
+        assert!(
+            db.upsert_model_settings(global).await.is_ok(),
+            "storing the global settings should succeed"
+        );
+
+        let inherits = db
+            .resolved_model_settings(&character("inherit", "Harry"))
+            .await;
+        assert_eq!(
+            inherits.provider.as_deref(),
+            Some("vendor/global-fp8"),
+            "a character on the global model inherits the global pin"
+        );
+
+        let mut same_model = character("same-model", "Harry");
+        same_model.set_model_settings(CharacterModelSettings {
+            model: Some("global-model".to_owned()),
+            provider: None,
+            temperature: None,
+        });
+        let same_model_resolved = db.resolved_model_settings(&same_model).await;
+        assert_eq!(
+            same_model_resolved.provider.as_deref(),
+            Some("vendor/global-fp8"),
+            "a character redundantly restating the global model keeps the global pin"
+        );
+
+        let mut own_pin = character("own-pin", "Harry");
+        own_pin.set_model_settings(CharacterModelSettings {
+            model: Some("char-model".to_owned()),
+            provider: Some("vendor/char-fp8".to_owned()),
+            temperature: None,
+        });
+        let own_pin_resolved = db.resolved_model_settings(&own_pin).await;
+        assert_eq!(
+            own_pin_resolved.provider.as_deref(),
+            Some("vendor/char-fp8"),
+            "a character's own pin replaces the global one"
         );
     }
 

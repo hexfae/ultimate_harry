@@ -21,7 +21,7 @@ use super::{
     AddTagsSnafu, AssignVoicesSnafu, DescribeImageSnafu, EmptyDescriptionSnafu, EmptyTagsSnafu,
     EmptyTranscriptionSnafu, EmptyVoicesSnafu, FetchAudioHttpSnafu, FetchAudioSnafu, HttpSnafu,
     ListModelsSnafu, LlmError, LlmManager, NoAudioModelSnafu, NoVisionModelSnafu,
-    TranscribeAudioSnafu,
+    TranscribeAudioSnafu, settings::ModelSettings,
 };
 
 /// The `OpenRouter` endpoint listing every available model and its capabilities.
@@ -105,6 +105,10 @@ impl LlmManager {
     /// Model reasoning is disabled on every request, since these are quick
     /// utility calls where thinking only adds latency; on models where
     /// reasoning cannot be turned off the parameter is left out instead.
+    ///
+    /// A provider pin rides along only when the body targets the pinned model:
+    /// a slug names one endpoint of one model, so sending it with the vision,
+    /// audio, or tag model would ask for a provider that does not serve it.
     async fn chat_completion<E>(
         &self,
         mut body: serde_json::Value,
@@ -122,6 +126,7 @@ impl LlmManager {
             );
         }
         fields_insert_max_tokens(&mut body);
+        fields_insert_provider(&mut body, &self.settings);
         let response = http()
             .post(CHAT_URL)
             .bearer_auth(&self.settings.api_key)
@@ -325,6 +330,58 @@ pub async fn model_catalog() -> Result<Vec<ModelEntry>, LlmError> {
     Ok(models.data)
 }
 
+/// Process-wide cache of model id to the provider slugs serving it, so a
+/// provider lookup costs at most one request per model per process. Endpoint
+/// lists churn, but the bot is long-lived and a stale slug is caught by the
+/// request failing, so caching beats re-fetching on every keystroke.
+static ENDPOINTS_CACHE: LazyLock<Mutex<HashMap<String, Vec<EndpointEntry>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The provider slugs serving `model`, from the process-wide cache when present.
+///
+/// Backs the provider autocomplete and the check that drops a pin the new model
+/// does not offer. An unknown model yields no endpoints rather than an error, so
+/// a bad model id cannot wedge the `/modell` command.
+pub async fn model_endpoints(model: &str) -> Vec<EndpointEntry> {
+    if let Some(cached) = ENDPOINTS_CACHE
+        .lock()
+        .ok()
+        .and_then(|locked| locked.get(model).cloned())
+    {
+        return cached;
+    }
+    let url = format!("{MODELS_URL}/{model}/endpoints");
+    let Ok(response) = http().get(url).send().await else {
+        return Vec::new();
+    };
+    if !response.status().is_success() {
+        return Vec::new();
+    }
+    let Ok(parsed) = response.json::<EndpointsResponse>().await else {
+        return Vec::new();
+    };
+    let endpoints = parsed.data.endpoints;
+    if let Ok(mut locked) = ENDPOINTS_CACHE.lock() {
+        locked.insert(model.to_owned(), endpoints.clone());
+    }
+    endpoints
+}
+
+/// Drops a provider pin that `model` does not serve, so switching models never
+/// leaves a pin behind that would fail every request.
+///
+/// A pin is kept when the model still offers it, and cleared when it does not.
+/// A lookup that yields nothing (network failure, unknown model) also clears,
+/// since a pin that cannot be confirmed is not worth keeping.
+#[must_use]
+pub fn pin_for_model<'a>(pinned: Option<&'a str>, endpoints: &[EndpointEntry]) -> Option<&'a str> {
+    let slug = pinned?;
+    endpoints
+        .iter()
+        .any(|endpoint| endpoint.tag == slug)
+        .then_some(slug)
+}
+
 /// Process-wide cache of attachment URL to its base64 encoding, so a voice message is downloaded
 /// and encoded at most once rather than on every generation whose context still carries it.
 static AUDIO_CACHE: LazyLock<Mutex<HashMap<String, EncodedAudio>>> =
@@ -375,6 +432,34 @@ async fn download_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
 fn fields_insert_max_tokens(body: &mut serde_json::Value) {
     if let Some(fields) = body.as_object_mut() {
         fields.insert("max_tokens".to_owned(), serde_json::json!(MAX_TOKENS));
+    }
+}
+
+/// Adds the `provider` routing field pinning the request to the configured slug,
+/// but only when the body targets the pinned model.
+///
+/// The utility calls in this module run the vision, audio, and tag models, and a
+/// slug names one endpoint of one model, so sending the pin with any of them
+/// would ask `OpenRouter` for a provider that does not serve it.
+fn fields_insert_provider(body: &mut serde_json::Value, settings: &ModelSettings) {
+    let Some(provider) = settings.provider.as_deref() else {
+        return;
+    };
+    let targets_pinned_model = body
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|model| model == settings.model);
+    if !targets_pinned_model {
+        return;
+    }
+    if let Some(fields) = body.as_object_mut() {
+        fields.insert(
+            "provider".to_owned(),
+            serde_json::json!({
+                "only": [provider],
+                "allow_fallbacks": false,
+            }),
+        );
     }
 }
 
@@ -436,7 +521,8 @@ fn extract_description(response: &ChatResponse) -> Option<String> {
         .filter(|content| !content.is_empty())
 }
 
-/// The most choices Discord shows in an autocomplete response.
+/// The most choices Discord shows in an autocomplete response, the cap on both
+/// the model-id and the provider-slug lists.
 const MAX_MODEL_CHOICES: usize = 25;
 
 /// Filters the catalog to the model ids matching `partial` (case-insensitive
@@ -467,6 +553,32 @@ pub fn matching_model_ids(
     ids
 }
 
+/// Filters `endpoints` to those whose slug or display name matches `partial`
+/// (case-insensitive substring), capped at Discord's autocomplete choice limit.
+///
+/// The provider a user wants is named either way round ("baidu" or "Baidu"), so
+/// both are matched, and an exact slug match sorts first so pinning a specific
+/// endpoint is one keystroke away.
+pub fn matching_endpoints(endpoints: &[EndpointEntry], partial: &str) -> Vec<EndpointEntry> {
+    let needle = partial.to_lowercase();
+    let mut matched = endpoints
+        .iter()
+        .filter(|endpoint| {
+            endpoint.tag.to_lowercase().contains(&needle)
+                || endpoint.provider_name.to_lowercase().contains(&needle)
+        })
+        .cloned()
+        .collect::<Vec<EndpointEntry>>();
+    matched.sort_by(|left, right| {
+        let exact = |entry: &EndpointEntry| i32::from(!entry.tag.eq_ignore_ascii_case(partial));
+        exact(right)
+            .cmp(&exact(left))
+            .then_with(|| left.tag.cmp(&right.tag))
+    });
+    matched.truncate(MAX_MODEL_CHOICES);
+    matched
+}
+
 /// The subset of `OpenRouter`'s model-list response we care about.
 #[derive(Deserialize)]
 struct ModelsResponse {
@@ -494,6 +606,52 @@ struct Architecture {
     /// The input modalities the model accepts, for example `text` and `image`.
     #[serde(default)]
     input_modalities: Vec<String>,
+}
+
+/// The subset of a model's endpoint listing we care about.
+#[derive(Deserialize)]
+struct EndpointsResponse {
+    /// The model and the providers serving it.
+    data: EndpointsData,
+}
+
+/// One model's endpoint listing.
+#[derive(Deserialize)]
+struct EndpointsData {
+    /// The providers currently serving the model.
+    #[serde(default)]
+    endpoints: Vec<EndpointEntry>,
+}
+
+/// One provider endpoint serving a model.
+#[derive(Clone, Deserialize)]
+pub struct EndpointEntry {
+    /// The slug identifying this endpoint in the `provider` routing fields, for
+    /// example `baidu/fp8` or `google-vertex/us-east5`.
+    tag: String,
+    /// The provider's display name, for example `Baidu`.
+    provider_name: String,
+    /// The quantization the endpoint serves, for example `fp8`.
+    #[serde(default)]
+    quantization: String,
+}
+
+impl EndpointEntry {
+    /// The slug identifying this endpoint in the `provider` routing fields.
+    #[must_use]
+    pub const fn tag(&self) -> &str {
+        self.tag.as_str()
+    }
+
+    /// The choice label: the provider name and its quantization, falling back to
+    /// the slug alone when the quantization is uninteresting.
+    pub fn label(&self) -> String {
+        if self.quantization.is_empty() || self.quantization == "unknown" {
+            self.tag.clone()
+        } else {
+            format!("{} ({})", self.provider_name, self.quantization)
+        }
+    }
 }
 
 /// A model's reasoning metadata, describing whether reasoning can be turned off.
@@ -531,10 +689,30 @@ struct ChatMessageContent {
 #[cfg(test)]
 mod tests {
     use super::{
-        Architecture, ChatResponse, MAX_MODEL_CHOICES, ModelEntry, ModelsResponse, Reasoning,
-        api_error_message, extract_description, matching_model_ids, model_reasoning_mandatory,
-        model_supports_modality, parse_dialogue_turns,
+        Architecture, ChatResponse, EndpointsResponse, MAX_MODEL_CHOICES, ModelEntry,
+        ModelsResponse, Reasoning, api_error_message, extract_description, fields_insert_provider,
+        matching_endpoints, matching_model_ids, model_reasoning_mandatory, model_supports_modality,
+        parse_dialogue_turns, pin_for_model,
     };
+    use crate::llm::ModelSettings;
+
+    /// Builds an endpoint entry with the given slug, provider name, and quantization.
+    fn endpoint(tag: &str, provider_name: &str, quantization: &str) -> super::EndpointEntry {
+        super::EndpointEntry {
+            tag: tag.to_owned(),
+            provider_name: provider_name.to_owned(),
+            quantization: quantization.to_owned(),
+        }
+    }
+
+    /// Builds a settings value pinned to `provider` on `model`.
+    fn pinned(model: &str, provider: &str) -> ModelSettings {
+        ModelSettings {
+            model: model.to_owned(),
+            provider: Some(provider.to_owned()),
+            ..ModelSettings::default()
+        }
+    }
 
     /// Builds a catalog entry with the given id and input modalities.
     fn entry(id: &str, modalities: &[&str]) -> ModelEntry {
@@ -783,6 +961,152 @@ mod tests {
         assert!(
             extract_description(&blank).is_none(),
             "blank content yields no description"
+        );
+    }
+
+    /// The endpoint listing parses, and a pin survives only for a model that
+    /// actually serves that slug.
+    #[test]
+    fn pin_for_model_keeps_only_an_offered_slug() {
+        let json = r#"{"data":{"id":"vendor/model","endpoints":[
+            {"tag":"baidu/fp8","provider_name":"Baidu","quantization":"fp8"},
+            {"tag":"wafer","provider_name":"Wafer","quantization":"unknown"}
+        ]}}"#;
+        let parsed = serde_json::from_str::<EndpointsResponse>(json);
+        assert!(parsed.is_ok(), "the endpoint listing should parse");
+        let Ok(listing) = parsed else { return };
+        let endpoints = &listing.data.endpoints;
+
+        assert_eq!(
+            pin_for_model(Some("baidu/fp8"), endpoints),
+            Some("baidu/fp8"),
+            "a slug the model serves is kept"
+        );
+        assert_eq!(
+            pin_for_model(Some("vendor/elsewhere"), endpoints),
+            None,
+            "a slug the model does not serve is dropped, since it would fail every request"
+        );
+        assert_eq!(
+            pin_for_model(None, endpoints),
+            None,
+            "an unpinned model stays unpinned"
+        );
+        assert_eq!(
+            pin_for_model(Some("baidu/fp8"), &[]),
+            None,
+            "a pin is dropped when the lookup yields nothing, since it cannot be confirmed"
+        );
+    }
+
+    /// A pin rides along only for the pinned model: the utility calls run the
+    /// vision, audio, and tag models, which the slug does not name.
+    #[test]
+    fn provider_field_is_added_only_for_the_pinned_model() {
+        let settings = pinned("vendor/main", "vendor/fp8");
+
+        let mut own = serde_json::json!({ "model": "vendor/main" });
+        fields_insert_provider(&mut own, &settings);
+        assert_eq!(
+            own.get("provider"),
+            Some(&serde_json::json!({
+                "only": ["vendor/fp8"],
+                "allow_fallbacks": false,
+            })),
+            "a body naming the pinned model carries the hard pin"
+        );
+
+        let mut other = serde_json::json!({ "model": "vendor/vision" });
+        fields_insert_provider(&mut other, &settings);
+        assert!(
+            other.get("provider").is_none(),
+            "a body naming another model is left unrouted, since the slug names \
+             one endpoint of the pinned model only"
+        );
+
+        let mut unpinned = serde_json::json!({ "model": "vendor/main" });
+        fields_insert_provider(&mut unpinned, &ModelSettings::default());
+        assert!(
+            unpinned.get("provider").is_none(),
+            "an unpinned model sends no provider field at all"
+        );
+    }
+
+    /// The provider picker matches a partial against the slug and the display
+    /// name either way round, and an exact slug sorts first.
+    #[test]
+    fn matching_endpoints_filters_and_ranks() {
+        let endpoints = vec![
+            endpoint("deepinfra/fp8", "DeepInfra", "fp8"),
+            endpoint("baidu/fp8", "Baidu", "fp8"),
+            endpoint("wafer", "Wafer", "unknown"),
+        ];
+
+        assert_eq!(
+            matching_endpoints(&endpoints, "baidu")
+                .into_iter()
+                .map(|entry| entry.tag().to_owned())
+                .collect::<Vec<String>>(),
+            vec!["baidu/fp8".to_owned()],
+            "a partial matching the slug finds that endpoint"
+        );
+        assert_eq!(
+            matching_endpoints(&endpoints, "deepinfra").len(),
+            1,
+            "a partial matching the slug mid-string still matches"
+        );
+        assert_eq!(
+            matching_endpoints(&endpoints, "Baidu").len(),
+            1,
+            "the display name matches case-insensitively too"
+        );
+        assert!(
+            matching_endpoints(&endpoints, "nonesuch").is_empty(),
+            "a partial matching nothing yields no choices"
+        );
+
+        let ambiguous = vec![
+            endpoint("vendor/zulu", "Vendor", "fp8"),
+            endpoint("vendor/alpha", "Vendor", "fp8"),
+        ];
+        let ranked = matching_endpoints(&ambiguous, "vendor")
+            .into_iter()
+            .map(|entry| entry.tag().to_owned())
+            .collect::<Vec<String>>();
+        assert_eq!(
+            ranked,
+            vec!["vendor/alpha".to_owned(), "vendor/zulu".to_owned()],
+            "an exact-slug-less partial falls back to alphabetical order"
+        );
+    }
+
+    /// The picker is capped at Discord's autocomplete choice limit, like the
+    /// model-id picker.
+    #[test]
+    fn matching_endpoints_caps_at_the_choice_limit() {
+        let endpoints = (0_u8..30_u8)
+            .map(|index| endpoint(&format!("vendor/provider-{index:02}"), "Vendor", "fp8"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching_endpoints(&endpoints, "vendor").len(),
+            MAX_MODEL_CHOICES,
+            "the list is truncated to Discord's choice limit"
+        );
+    }
+
+    /// The label names the provider and its quantization, and falls back to the
+    /// bare slug when the quantization says nothing useful.
+    #[test]
+    fn endpoint_label_names_the_provider_and_quantization() {
+        assert_eq!(
+            endpoint("baidu/fp8", "Baidu", "fp8").label(),
+            "Baidu (fp8)",
+            "a known quantization is shown beside the provider"
+        );
+        assert_eq!(
+            endpoint("wafer", "Wafer", "unknown").label(),
+            "wafer",
+            "an unknown quantization falls back to the slug alone"
         );
     }
 }

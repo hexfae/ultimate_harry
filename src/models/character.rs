@@ -948,6 +948,7 @@ mod tests {
             .example_messages(vec![(Some("hi".to_owned()), "there".to_owned())])
             .model_settings(CharacterModelSettings {
                 model: Some("gpt".to_owned()),
+                provider: Some("vendor/fp8".to_owned()),
                 temperature: Some(0.7),
             })
             .voice("voice-abc".to_owned())
