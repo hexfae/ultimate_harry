@@ -11,6 +11,9 @@ use crate::http::http;
 use crate::models::message::{EncodedAudio, audio_format_from_url};
 use crate::tts::{DialogueTurn, VoiceEntry};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use rig::agent::StreamingError;
+use rig::completion::CompletionError;
+use rig::http_client::Error as RigError;
 use rig::message::AudioMediaType;
 use serde::Deserialize;
 use snafu::{IntoError, OptionExt as _, ResultExt as _};
@@ -137,6 +140,11 @@ impl LlmManager {
         let status = response.status();
         if !status.is_success() {
             let error_body = response.text().await.unwrap_or_default();
+            // a rejected pin names the providers that would work, which is the
+            // only way out, so it gets its own error instead of a bare status
+            if let Some(error) = rejection_error(&error_body) {
+                return Err(error);
+            }
             return HttpSnafu {
                 status: status.as_u16(),
                 message: api_error_message(&error_body),
@@ -521,6 +529,100 @@ fn extract_description(response: &ChatResponse) -> Option<String> {
         .filter(|content| !content.is_empty())
 }
 
+/// An `OpenRouter` routing rejection: the request named a provider pin that
+/// cannot serve the model, and the providers that can are listed alongside.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ProviderRejection {
+    /// The model the request targeted.
+    pub model: String,
+    /// The provider slugs that do serve it, which the pin could be moved to.
+    pub available: Vec<String>,
+}
+
+/// Recognizes the provider-routing rejection `OpenRouter` returns for a pin it
+/// cannot satisfy, reading the model and the servable slugs out of the routing
+/// metadata it reports.
+///
+/// Returns `None` for any other failure, since a rejection is told apart by
+/// carrying routing metadata rather than by its status alone.
+pub fn provider_rejection(body: &str) -> Option<ProviderRejection> {
+    /// The envelope `OpenRouter` wraps an error response in.
+    #[derive(Deserialize)]
+    struct ErrorBody {
+        /// The error details.
+        error: ErrorDetail,
+    }
+    /// The details of an `OpenRouter` error.
+    #[derive(Deserialize)]
+    struct ErrorDetail {
+        /// The routing metadata naming the providers that were and were not allowed.
+        #[serde(default)]
+        metadata: Option<RoutingMetadata>,
+    }
+    /// The routing metadata of a rejected request.
+    #[derive(Deserialize)]
+    struct RoutingMetadata {
+        /// The providers that do serve the model.
+        #[serde(default)]
+        available_providers: Vec<String>,
+    }
+
+    let parsed = serde_json::from_str::<ErrorBody>(body).ok()?;
+    let available = parsed.error.metadata?.available_providers;
+    if available.is_empty() {
+        return None;
+    }
+    let model = rejected_model(&api_error_message(body));
+    Some(ProviderRejection { model, available })
+}
+
+/// Recovers the targeted model from the rejection message, which names it as
+/// "Providers serving <model>: <slugs>".
+///
+/// Falls back to an empty string, since the model is a nicety for the message
+/// and the available slugs are the part that lets the user fix the pin.
+fn rejected_model(message: &str) -> String {
+    const SERVING: &str = "Providers serving ";
+    let Some(rest) = message.split_once(SERVING).map(|(_, tail)| tail) else {
+        return String::new();
+    };
+    rest.split_once(':')
+        .map(|(model, _)| model.trim().to_owned())
+        .unwrap_or_default()
+}
+
+/// Reads a provider rejection out of a failed reply stream, so a pin that
+/// `OpenRouter` refuses can be reported to the user with the slugs that would
+/// have worked instead of a generic failure.
+///
+/// Returns `None` unless the stream failed with a non-success HTTP response
+/// whose body is a routing rejection, leaving every other failure to the
+/// generic notice.
+pub fn rejection_of(error: &StreamingError) -> Option<ProviderRejection> {
+    let StreamingError::Completion(CompletionError::HttpError(http)) = error else {
+        return None;
+    };
+    let body = match http {
+        RigError::InvalidStatusCodeWithDetails { body, .. }
+        | RigError::InvalidStatusCodeWithMessage(_, body) => body.as_str(),
+        _ => return None,
+    };
+    provider_rejection(body)
+}
+
+/// Turns a failed `OpenRouter` response body into the provider error, for the
+/// utility calls that do not stream and read the body themselves.
+///
+/// Returns `None` for any other failure, which stays an
+/// [`LlmError::Http`] carrying the status and the API's own message.
+fn rejection_error(body: &str) -> Option<LlmError> {
+    let rejection = provider_rejection(body)?;
+    Some(LlmError::ProviderRejected {
+        model: rejection.model,
+        available: rejection.available.join(", "),
+    })
+}
+
 /// The most choices Discord shows in an autocomplete response, the cap on both
 /// the model-id and the provider-slug lists.
 const MAX_MODEL_CHOICES: usize = 25;
@@ -689,12 +791,16 @@ struct ChatMessageContent {
 #[cfg(test)]
 mod tests {
     use super::{
-        Architecture, ChatResponse, EndpointsResponse, MAX_MODEL_CHOICES, ModelEntry,
+        Architecture, ChatResponse, EndpointsResponse, LlmError, MAX_MODEL_CHOICES, ModelEntry,
         ModelsResponse, Reasoning, api_error_message, extract_description, fields_insert_provider,
         matching_endpoints, matching_model_ids, model_reasoning_mandatory, model_supports_modality,
-        parse_dialogue_turns, pin_for_model,
+        parse_dialogue_turns, pin_for_model, provider_rejection, rejection_error, rejection_of,
     };
     use crate::llm::ModelSettings;
+    use reqwest::StatusCode;
+    use rig::agent::StreamingError;
+    use rig::completion::CompletionError;
+    use rig::http_client::{Error as RigError, HeaderMap};
 
     /// Builds an endpoint entry with the given slug, provider name, and quantization.
     fn endpoint(tag: &str, provider_name: &str, quantization: &str) -> super::EndpointEntry {
@@ -1108,5 +1214,133 @@ mod tests {
             "wafer",
             "an unknown quantization falls back to the slug alone"
         );
+    }
+
+    /// The exact body `OpenRouter` returns when a pin cannot be satisfied is
+    /// recognized, and the providers that do serve the model are extracted, so
+    /// the user can be told which slug to pick instead.
+    #[test]
+    fn provider_rejection_names_the_providers_that_could_serve() {
+        let body = r#"{"error":{"message":"No allowed providers are available for the selected model. Providers serving openai/gpt-3.5-turbo: openai, but your request's provider.only preference permits only: definitely-not-a-real-provider/xyz.","code":404,"metadata":{"available_providers":["openai"],"requested_providers":["definitely-not-a-real-provider/xyz"],"failed_routing_step":"Filter by Allowed Providers"}}}"#;
+        let rejection = provider_rejection(body);
+        assert_eq!(
+            rejection.as_ref().map(|found| found.model.as_str()),
+            Some("openai/gpt-3.5-turbo"),
+            "the rejected model is named, so the user knows which pin to change"
+        );
+        assert_eq!(
+            rejection.as_ref().map(|found| found.available.as_slice()),
+            Some(["openai".to_owned()].as_slice()),
+            "the providers that do serve the model are extracted from the routing metadata"
+        );
+    }
+
+    /// A rejection listing several alternatives keeps them all, so the user is
+    /// not left guessing which slug would work.
+    #[test]
+    fn provider_rejection_keeps_every_available_provider() {
+        let body = r#"{"error":{"message":"No allowed providers are available.","code":404,"metadata":{"available_providers":["baidu/fp8","wafer","novita/fp8"],"requested_providers":["gone"],"failed_routing_step":"Filter by Allowed Providers"}}}"#;
+        let rejection = provider_rejection(body);
+        assert_eq!(
+            rejection.as_ref().map(|found| found.available.len()),
+            Some(3),
+            "each provider that could serve the model is kept"
+        );
+    }
+
+    /// An ordinary `OpenRouter` failure is not a provider rejection, and a body
+    /// that is not that envelope at all parses to nothing rather than panicking.
+    #[test]
+    fn provider_rejection_ignores_unrelated_failures() {
+        for body in [
+            r#"{"error":{"message":"No credits","code":402}}"#,
+            r#"{"error":{"message":"No allowed providers are available."}}"#,
+            "not json at all",
+            "",
+        ] {
+            assert!(
+                provider_rejection(body).is_none(),
+                "a body without routing metadata is not a provider rejection"
+            );
+        }
+    }
+
+    /// Builds a rig streaming error carrying `body` as a failed `OpenRouter`
+    /// response, the shape a provider rejection arrives in.
+    fn rejected_stream(body: &str) -> StreamingError {
+        StreamingError::Completion(CompletionError::HttpError(
+            RigError::InvalidStatusCodeWithDetails {
+                status: StatusCode::NOT_FOUND,
+                body: body.to_owned(),
+                headers: Box::new(HeaderMap::new()),
+            },
+        ))
+    }
+
+    /// A `StreamingError` carrying the real 404 body is recognized as a rejected
+    /// pin, and the slugs that would work are extracted from it. This is the glue
+    /// between rig's error and the user-facing notice.
+    #[test]
+    fn a_rejected_pin_is_recognized_from_a_streaming_error() {
+        let body = r#"{"error":{"message":"No allowed providers are available for the selected model. Providers serving vendor/main: wafer, novita/fp8, but your request's provider.only preference permits only: gone/now.","code":404,"metadata":{"available_providers":["wafer","novita/fp8"],"requested_providers":["gone/now"],"failed_routing_step":"Filter by Allowed Providers"}}}"#;
+        let rejection = rejection_of(&rejected_stream(body));
+        assert_eq!(
+            rejection.map(|found| (found.model, found.available.join(", "))),
+            Some(("vendor/main".to_owned(), "wafer, novita/fp8".to_owned())),
+            "the rejection is read out of the streaming error, ready for display"
+        );
+    }
+
+    /// A stream error that is not a routing rejection yields nothing, so an
+    /// ordinary failure keeps its existing generic notice.
+    #[test]
+    fn an_ordinary_stream_error_is_not_a_rejection() {
+        assert!(
+            rejection_of(&rejected_stream(
+                r#"{"error":{"message":"No credits","code":402}}"#
+            ))
+            .is_none(),
+            "a non-routing failure is not reported as a rejection"
+        );
+        assert!(
+            rejection_of(&StreamingError::Completion(CompletionError::ResponseError(
+                "Response did not contain a valid message or tool call".into()
+            )))
+            .is_none(),
+            "a malformed response is not reported as a rejection"
+        );
+    }
+
+    /// A failed utility call whose body is a routing rejection becomes the
+    /// dedicated provider error, carrying the slugs that would have worked, so
+    /// a vision or tag model pinned to a dead provider says so.
+    #[test]
+    fn a_utility_call_rejection_becomes_the_provider_error() {
+        let body = r#"{"error":{"message":"No allowed providers are available for the selected model. Providers serving vendor/main: wafer, but your request's provider.only preference permits only: gone/now.","code":404,"metadata":{"available_providers":["wafer","novita/fp8"],"requested_providers":["gone/now"]}}}"#;
+        let error = rejection_error(body);
+        assert!(
+            matches!(
+                error,
+                Some(LlmError::ProviderRejected { ref model, ref available })
+                    if model == "vendor/main" && available == "wafer, novita/fp8"
+            ),
+            "a routing rejection becomes the provider error naming the model and \
+             the slugs that would work, got {error:?}"
+        );
+    }
+
+    /// An ordinary non-success response stays the generic HTTP error, so a bad
+    /// key or an empty balance is not misreported as a provider problem.
+    #[test]
+    fn an_ordinary_utility_failure_stays_an_http_error() {
+        for body in [
+            r#"{"error":{"message":"No credits","code":402}}"#,
+            r#"{"error":{"message":"No allowed providers are available."}}"#,
+        ] {
+            assert!(
+                rejection_error(body).is_none(),
+                "a failure without routing metadata keeps the generic HTTP error"
+            );
+        }
     }
 }

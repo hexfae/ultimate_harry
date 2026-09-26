@@ -18,7 +18,7 @@ use snafu::{ResultExt as _, Snafu};
 
 pub use completions::{
     VoiceChoice, fetch_audio_base64, matching_endpoints, matching_model_ids, model_catalog,
-    model_endpoints, pin_for_model,
+    model_endpoints, pin_for_model, rejection_of,
 };
 pub use settings::{CharacterModelSettings, ModelOverrides, ModelSettings};
 
@@ -143,6 +143,18 @@ pub enum LlmError {
         /// The error message from the response body.
         message: String,
     },
+    /// The pinned provider cannot serve the model, so the request was refused.
+    #[snafu(display("{model} går inte att nå via den låsta leverantören"))]
+    #[diagnostic(
+        help("Leverantörer som fungerar för modellen: {available}. Byt leverantör med /modell."),
+        code(llm::provider_rejected)
+    )]
+    ProviderRejected {
+        /// The model the request targeted.
+        model: String,
+        /// The provider slugs that do serve it, joined for display.
+        available: String,
+    },
     /// Failed to describe an image with the vision model.
     #[snafu(display("Kunde inte beskriva bilden"))]
     #[diagnostic(
@@ -246,7 +258,10 @@ impl LlmError {
             Self::Http { status, .. } | Self::FetchAudioHttp { status } => {
                 *status >= 500 || matches!(status, 408 | 429)
             }
-            Self::BuildClient { .. } | Self::NoVisionModel | Self::NoAudioModel => false,
+            Self::BuildClient { .. }
+            | Self::NoVisionModel
+            | Self::NoAudioModel
+            | Self::ProviderRejected { .. } => false,
         }
     }
 }
@@ -255,6 +270,7 @@ impl LlmError {
 #[cfg(test)]
 mod tests {
     use super::{LlmError, provider_params};
+    use crate::error::AppError;
 
     /// The streaming request's provider field is a hard pin: a single-entry
     /// allowlist with fallbacks off, so the request either reaches the chosen
@@ -345,5 +361,38 @@ mod tests {
                 "status {status} means the link is gone for good"
             );
         }
+    }
+
+    /// A rejected pin names the model and the slugs that would work, and offers
+    /// no retry hint, since retrying the same pin fails identically.
+    #[test]
+    fn a_rejected_pin_tells_the_user_which_providers_to_pick() {
+        let error = AppError::Llm {
+            source: LlmError::ProviderRejected {
+                model: "deepseek/deepseek-v4-pro-0813".to_owned(),
+                available: "baidu/fp8, novita/fp8".to_owned(),
+            },
+        };
+        assert!(
+            !error.retryable(),
+            "the same pin fails the same way, so retrying is pointless"
+        );
+        let message = error.user_message();
+        assert!(
+            message.contains("deepseek/deepseek-v4-pro-0813"),
+            "the rejected model is named: {message}"
+        );
+        assert!(
+            message.contains("baidu/fp8") && message.contains("novita/fp8"),
+            "the providers that do serve it are offered: {message}"
+        );
+        assert!(
+            message.contains("/modell"),
+            "the user is pointed at the command that changes the pin: {message}"
+        );
+        assert!(
+            !message.contains("Du kan försöka igen"),
+            "a rejected pin offers no retry hint: {message}"
+        );
     }
 }

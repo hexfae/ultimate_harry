@@ -18,7 +18,7 @@ use crate::{
     database::Database,
     error::{AppError, EditMessageSnafu, StreamingSnafu},
     error_display::error_message_edit,
-    llm::{LlmManager, ReplyStream},
+    llm::{self, LlmManager, ReplyStream},
     media::resolve_attachments,
     models::{
         character::Character,
@@ -29,7 +29,10 @@ use crate::{
 };
 use core::time::Duration;
 use poise::serenity_prelude::{Context, Message, MessageId};
-use rig::{agent::MultiTurnStreamItem, streaming::StreamedAssistantContent};
+use rig::{
+    agent::{MultiTurnStreamItem, StreamingError},
+    streaming::StreamedAssistantContent,
+};
 use serenity::futures::StreamExt as _;
 use snafu::ResultExt as _;
 use std::time::Instant;
@@ -51,6 +54,32 @@ const GAVE_UP_MESSAGE: &str = "Gubben gav inget svar efter flera försök. Jag g
 
 /// Reply shown when the request fails to start or the stream errors out.
 const ERROR_MESSAGE: &str = "Det krånglade när jag försökte svara. Jag ger upp.";
+
+/// Builds the user-facing notice for a failed stream whose error is a provider
+/// rejection, naming the model and the slugs that would have worked.
+///
+/// Returns `None` for any other failure, so the generic [`ERROR_MESSAGE`] still
+/// covers it. A rejected pin is worth spelling out because retrying it fails
+/// identically, and the providers that do serve the model are the only way out.
+fn rejection_notice(error: &StreamingError) -> Option<String> {
+    let rejection = llm::rejection_of(error)?;
+    let available = rejection.available.join(", ");
+    Some(format!(
+        "Leverantören går inte att nå {} via. Prova en av dessa: {available}. \
+         Byt leverantör med /modell.",
+        rejection.model
+    ))
+}
+
+/// Picks the notice for a stream that errored, naming the provider when the
+/// error is a routing rejection and falling back to the generic give-up line.
+fn failure_notice(error: &AppError) -> String {
+    match error {
+        AppError::Streaming { source, .. } => rejection_notice(source),
+        _ => None,
+    }
+    .unwrap_or_else(|| ERROR_MESSAGE.to_owned())
+}
 
 /// Joins a continuation onto the reply it extends, capped at `limit` characters.
 ///
@@ -418,11 +447,12 @@ async fn stream_into<S: ReplySink + Send>(
                 result = stream.next() => {
                     let item = match result.transpose().context(StreamingSnafu) {
                         Ok(item) => item,
-                        Err(why) => {
+                        Err(wrapped) => {
                             error!("the reply stream errored, giving up");
-                            report_error(why);
+                            let notice = failure_notice(&wrapped);
+                            report_error(wrapped);
                             if total.trim().is_empty() {
-                                total += ERROR_MESSAGE;
+                                total.push_str(&notice);
                                 complete = false;
                             }
                             break 'attempts;
@@ -500,7 +530,8 @@ async fn stream_into<S: ReplySink + Send>(
 #[cfg(test)]
 mod tests {
     use super::{
-        ERROR_MESSAGE, GAVE_UP_MESSAGE, Reply, ReplySink, combine_continuation, finalize_failed,
+        AppError, ERROR_MESSAGE, GAVE_UP_MESSAGE, Reply, ReplySink, combine_continuation,
+        failure_notice, finalize_failed,
     };
     use crate::AppResult;
     use crate::llm::{LlmManager, ModelSettings};
@@ -508,7 +539,39 @@ mod tests {
     use crate::models::message::{AttachmentMode, Message};
     use core::time::Duration;
     use nonempty::NonEmpty;
+    use reqwest::StatusCode;
+    use rig::agent::StreamingError;
+    use rig::completion::CompletionError;
+    use rig::http_client::{Error as RigError, HeaderMap};
     use serenity::all::MessageId;
+
+    /// The exact 404 body `OpenRouter` returns for a pin it cannot satisfy.
+    const REJECTION_BODY: &str = r#"{"error":{"message":"No allowed providers are available for the selected model. Providers serving vendor/main: wafer, novita/fp8, but your request's provider.only preference permits only: gone/now.","code":404,"metadata":{"available_providers":["wafer","novita/fp8"],"requested_providers":["gone/now"],"failed_routing_step":"Filter by Allowed Providers"}}}"#;
+
+    /// The Swedish notice the rejection above should produce.
+    const REJECTION_NOTICE: &str = "Leverantören går inte att nå vendor/main via. Prova en av dessa: wafer, novita/fp8. \
+         Byt leverantör med /modell.";
+
+    /// Wraps a rig streaming error the way the reply loop does, so the notice
+    /// selection is exercised through the same error the loop sees.
+    fn streaming_failure(source: StreamingError) -> AppError {
+        AppError::Streaming {
+            source,
+            location: core::panic::Location::caller(),
+        }
+    }
+
+    /// Builds a rig streaming error carrying `body` as a failed `OpenRouter`
+    /// response, the shape a provider rejection arrives in.
+    fn rejected_stream(body: &str) -> StreamingError {
+        StreamingError::Completion(CompletionError::HttpError(
+            RigError::InvalidStatusCodeWithDetails {
+                status: StatusCode::NOT_FOUND,
+                body: body.to_owned(),
+                headers: Box::new(HeaderMap::new()),
+            },
+        ))
+    }
 
     /// The side effects the finalize path is expected to drive, captured so the
     /// test can assert them after the sink is consumed.
@@ -843,5 +906,35 @@ mod tests {
             Some(false),
             "the sentinel reply persists as non-complete"
         );
+    }
+
+    /// A failed stream whose error is a provider rejection is reported with the
+    /// slugs that would have worked, so the user can fix the pin instead of
+    /// seeing the generic give-up line.
+    #[test]
+    fn a_rejected_pin_reports_the_usable_providers() {
+        let notice = failure_notice(&streaming_failure(rejected_stream(REJECTION_BODY)));
+        assert_eq!(
+            notice, REJECTION_NOTICE,
+            "the notice names the model and the providers that serve it"
+        );
+    }
+
+    /// A failure that is not a routing rejection falls back to the generic
+    /// notice, so an ordinary error is not misreported as a provider problem.
+    #[test]
+    fn other_failures_keep_the_generic_notice() {
+        for error in [
+            rejected_stream(r#"{"error":{"message":"No credits","code":402}}"#),
+            StreamingError::Completion(CompletionError::ResponseError(
+                "Response did not contain a valid message or tool call".into(),
+            )),
+        ] {
+            assert_eq!(
+                failure_notice(&streaming_failure(error)),
+                ERROR_MESSAGE,
+                "an ordinary failure keeps the generic notice"
+            );
+        }
     }
 }

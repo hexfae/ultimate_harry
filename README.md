@@ -60,7 +60,9 @@ every provider serving it. Setting one pins the bot to that single endpoint
 (e.g. `baidu/fp8`), so the request fails outright when that endpoint is down
 rather than going somewhere else. A provider belongs to one model, so switching
 models drops a pin the new model does not offer, and a character on its own model
-does not inherit the global pin.
+does not inherit the global pin. When a pinned provider stops serving the model,
+the reply fails with an error naming the providers that do serve it, so you can
+switch with `/modell` without leaving the channel.
 
 Create, view, and delete voices with `/röst {skapa,visa,döda}` (create them on
 the ElevenLabs website first). Set a character's default voice with `/gubbe
