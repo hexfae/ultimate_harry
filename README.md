@@ -61,7 +61,7 @@ Create, view, update, and delete characters with  `/gubbe
 {skapa,visa,ändra,döda}`. Start a new chat with `/prata`. Restore deleted
 characters with `/gubbe återuppliva`. Duplicate a character with `/gubbe klona`.
 Set a character's color (the strip of color on the left of the embed) with
-`/gubbe färg`. 
+`/gubbe färg`.
 
 Read some text via an ElevenLabs TTS voice with `/säg`. View fun statistics
 with `/statistik`. Set which name the bot prepends to your messages with `/namn`

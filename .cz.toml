@@ -1,0 +1,7 @@
+[tool.commitizen]
+name = "cz_customize"
+
+[tool.commitizen.customize]
+message_template = "{{change_type}}: {{message}}"
+example = "feat: stream replies into a components v2 message"
+schema_pattern = '^(feat|fix|chore|refactor|docs|style|build|revert): [a-z][^\n]*$'
