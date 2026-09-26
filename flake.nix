@@ -9,91 +9,105 @@
     };
   };
 
-  outputs = {
-    self,
-    nixpkgs,
-    flake-parts,
-    crane,
-    rust-overlay,
-  } @ inputs:
-    flake-parts.lib.mkFlake {inherit inputs;} {
-      systems = ["x86_64-linux" "aarch64-linux"];
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-parts,
+      crane,
+      rust-overlay,
+    }@inputs:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      systems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
 
-      perSystem = {
-        config,
-        self',
-        inputs',
-        pkgs,
-        system,
-        ...
-      }: let
-        pkgs = import inputs.nixpkgs {
-          inherit system;
-          overlays = [(import rust-overlay)];
-        };
+      perSystem =
+        {
+          system,
+          ...
+        }:
+        let
+          pkgs = import inputs.nixpkgs {
+            inherit system;
+            overlays = [ (import rust-overlay) ];
+          };
 
-        rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
-          extensions = ["rust-src" "rust-analyzer" "rustc-codegen-cranelift-preview"];
-        };
+          rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
+            extensions = [
+              "rust-src"
+              "rust-analyzer"
+              "rustc-codegen-cranelift-preview"
+            ];
+          };
 
-        craneLib = (crane.mkLib pkgs).overrideToolchain (p: rustToolchain);
+          craneLib = (crane.mkLib pkgs).overrideToolchain (_: rustToolchain);
 
-        commonArgs = {
-          src = craneLib.cleanCargoSource ./.;
-          strictDeps = true;
-          buildInputs = [];
-          nativeBuildInputs = with pkgs; [rustToolchain clang mold];
+          commonArgs = {
+            src = craneLib.cleanCargoSource ./.;
+            strictDeps = true;
+            buildInputs = [ ];
+            nativeBuildInputs = with pkgs; [
+              rustToolchain
+              clang
+              mold
+            ];
+          };
+        in
+        {
+          packages.default = craneLib.buildPackage commonArgs;
+          checks.fmt = craneLib.cargoFmt { inherit (commonArgs) src; };
+          devShells.default = pkgs.mkShell {
+            inherit (commonArgs) buildInputs nativeBuildInputs;
+            packages = [ pkgs.cargo-mutants ];
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath commonArgs.buildInputs;
+          };
         };
-      in {
-        packages.default = craneLib.buildPackage commonArgs;
-        checks.fmt = craneLib.cargoFmt {inherit (commonArgs) src;};
-        devShells.default = pkgs.mkShell {
-          inherit (commonArgs) buildInputs nativeBuildInputs;
-          packages = [pkgs.cargo-mutants];
-          LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath commonArgs.buildInputs;
-        };
-      };
 
       flake = {
-        nixosModules.default = {
-          config,
-          lib,
-          pkgs,
-          ...
-        }: let
-          cfg = config.services.harry;
-        in {
-          options.services.harry = {
-            enable = lib.mkEnableOption "Ultimate Harry";
-            token-file = lib.mkOption {
-              type = lib.types.path;
-              description = "Path to the token file";
+        nixosModules.default =
+          {
+            config,
+            lib,
+            pkgs,
+            ...
+          }:
+          let
+            cfg = config.services.harry;
+          in
+          {
+            options.services.harry = {
+              enable = lib.mkEnableOption "Ultimate Harry";
+              token-file = lib.mkOption {
+                type = lib.types.path;
+                description = "Path to the token file";
+              };
             };
-          };
 
-          config = lib.mkIf cfg.enable {
-            users = {
-              groups.harry = {};
-              users.harry = {
-                isSystemUser = true;
-                group = "harry";
+            config = lib.mkIf cfg.enable {
+              users = {
+                groups.harry = { };
+                users.harry = {
+                  isSystemUser = true;
+                  group = "harry";
+                };
               };
-            };
-            systemd.services.harry = {
-              wantedBy = ["multi-user.target"];
-              serviceConfig = {
-                ExecStart = "${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/harry";
-                User = "harry";
-                Group = "harry";
-                WorkingDirectory = /var/lib/harry;
-                StateDirectory = "harry";
-                LogsDirectory = "harry";
-                Restart = "on-failure";
-                Environment = ["TOKEN_FILE=${toString cfg.token-file}"];
+              systemd.services.harry = {
+                wantedBy = [ "multi-user.target" ];
+                serviceConfig = {
+                  ExecStart = "${self.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/harry";
+                  User = "harry";
+                  Group = "harry";
+                  WorkingDirectory = /var/lib/harry;
+                  StateDirectory = "harry";
+                  LogsDirectory = "harry";
+                  Restart = "on-failure";
+                  Environment = [ "TOKEN_FILE=${toString cfg.token-file}" ];
+                };
               };
             };
           };
-        };
       };
     };
 }
