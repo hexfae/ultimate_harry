@@ -363,14 +363,8 @@ impl History {
             Some(user_id) => Some(db.substitute_name(user_id).await),
             None => None,
         };
-        let container = self.render_components(
-            character,
-            id,
-            editor_name.as_deref(),
-            live,
-            voices,
-            options,
-        );
+        let container =
+            self.render_components(character, id, editor_name.as_deref(), live, voices, options);
         CreateReply::default()
             .flags(MessageFlags::IS_COMPONENTS_V2)
             .components(container)

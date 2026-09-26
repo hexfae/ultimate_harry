@@ -94,10 +94,7 @@ impl LlmManager {
     /// the optimistic defaults of [`model_supports_modality`].
     pub(super) async fn reasoning_mandatory(&self) -> Result<bool, LlmError> {
         let catalog = model_catalog().await?;
-        Ok(model_reasoning_mandatory(
-            &catalog,
-            &self.settings.model,
-        ))
+        Ok(model_reasoning_mandatory(&catalog, &self.settings.model))
     }
 
     /// POSTs `body` to the `OpenRouter` chat-completions endpoint and parses the
@@ -116,7 +113,9 @@ impl LlmManager {
     where
         E: IntoError<LlmError, Source = reqwest::Error> + Copy,
     {
-        if !self.reasoning_mandatory().await? && let Some(fields) = body.as_object_mut() {
+        if !self.reasoning_mandatory().await?
+            && let Some(fields) = body.as_object_mut()
+        {
             fields.insert(
                 "reasoning".to_owned(),
                 serde_json::json!({"enabled": false}),
@@ -375,10 +374,7 @@ async fn download_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
 /// reserving more output tokens than the balance can cover on pricey models.
 fn fields_insert_max_tokens(body: &mut serde_json::Value) {
     if let Some(fields) = body.as_object_mut() {
-        fields.insert(
-            "max_tokens".to_owned(),
-            serde_json::json!(MAX_TOKENS),
-        );
+        fields.insert("max_tokens".to_owned(), serde_json::json!(MAX_TOKENS));
     }
 }
 

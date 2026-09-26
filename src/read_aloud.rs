@@ -115,7 +115,9 @@ pub async fn synthesize_auto(
         .map(|turn| turn.text.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let audio = manager.synthesize_plan(plan_dialogue(turns, fallback)).await?;
+    let audio = manager
+        .synthesize_plan(plan_dialogue(turns, fallback))
+        .await?;
     Ok(Synthesized { audio, spoken })
 }
 

@@ -67,8 +67,7 @@ impl LlmManager {
             rig_messages.extend(msg.to_rig_messages(mode));
         }
 
-        let builder = AgentBuilder::new(model)
-            .temperature(self.settings.temperature.into());
+        let builder = AgentBuilder::new(model).temperature(self.settings.temperature.into());
         // reasoning slows replies and flattens roleplay variety; models that
         // cannot turn it off reject the parameter, so it is left out for them.
         // rig's OpenRouter adapter has no max_tokens field of its own and
