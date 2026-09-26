@@ -86,7 +86,6 @@ async fn button_collector(ctx: ApplicationContext<'_>) -> Option<ComponentIntera
 
 /// Builds the ephemeral message whose button tempts the user into opening the
 /// second modal.
-#[must_use]
 fn tempting_button_reply<'a>(id: impl Into<Cow<'a, str>>) -> CreateReply<'a> {
     CreateReply::default()
         .content(click_below())

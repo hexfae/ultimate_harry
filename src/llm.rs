@@ -5,16 +5,14 @@ mod settings;
 
 use crate::constants::MAX_TOKENS;
 use crate::models::message::{AttachmentMode, Message as ChatMessage};
-use core::pin::Pin;
 use miette::Diagnostic;
 use rig::{
-    agent::{AgentBuilder, MultiTurnStreamItem, StreamingError},
+    agent::{AgentBuilder, StreamingResult},
     http_client::Error as RigError,
     message::Message,
-    providers::openrouter::{Client, CompletionModel, streaming::StreamingCompletionResponse},
+    providers::openrouter::{Client, CompletionModel},
     streaming::StreamingChat as _,
 };
-use serenity::futures::Stream;
 use snafu::{ResultExt as _, Snafu};
 
 pub use completions::{VoiceChoice, fetch_audio_base64, matching_model_ids, model_catalog};
@@ -22,12 +20,7 @@ pub use settings::{CharacterModelSettings, ModelOverrides, ModelSettings};
 
 /// A streamed reply from the AI model, as returned by
 /// [`LlmManager::request_stream`].
-pub type ReplyStream = Pin<
-    Box<
-        dyn Stream<Item = Result<MultiTurnStreamItem<StreamingCompletionResponse>, StreamingError>>
-            + Send,
-    >,
->;
+pub type ReplyStream = StreamingResult;
 
 /// The LLM manager for generating responses from AI models.
 ///

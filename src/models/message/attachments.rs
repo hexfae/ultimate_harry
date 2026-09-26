@@ -6,7 +6,6 @@
 //! reach `Message`'s private fields and helper methods.
 
 use rig::{
-    OneOrMany,
     agent::Text,
     message::{
         AssistantContent, Audio, AudioMediaType, DocumentSourceKind, Message as RigMessage,
@@ -118,9 +117,7 @@ impl Message {
                 },
                 Role::Assistant => RigMessage::Assistant {
                     id: None,
-                    content: OneOrMany::one(AssistantContent::Text(Text::new(
-                        part.content.clone(),
-                    ))),
+                    content: vec![AssistantContent::Text(Text::new(part.content.clone()))],
                 },
                 Role::User => {
                     let renders = if Some(index) == last_user {
@@ -177,10 +174,8 @@ impl Message {
             }
         }
 
-        let mut content = OneOrMany::one(UserContent::text(&text));
-        for item in media {
-            content.push(item);
-        }
+        let mut content = vec![UserContent::text(&text)];
+        content.extend(media);
 
         RigMessage::User { content }
     }
@@ -731,7 +726,7 @@ mod tests {
             return;
         };
         assert_eq!(
-            content.iter().count(),
+            content.len(),
             2,
             "native audio sends the text plus the audio as two content parts"
         );
@@ -769,12 +764,12 @@ mod tests {
             return;
         };
         assert_eq!(
-            content.iter().count(),
+            content.len(),
             1,
             "describe mode keeps the user message as a single text content"
         );
         assert!(
-            matches!(content.iter().next(), Some(UserContent::Text(_))),
+            matches!(content.first(), Some(UserContent::Text(_))),
             "the single content is text, with the description folded in"
         );
     }
@@ -792,7 +787,7 @@ mod tests {
             return;
         };
         assert_eq!(
-            content.iter().count(),
+            content.len(),
             2,
             "image mode sends the text plus the image as two content parts"
         );
@@ -826,7 +821,7 @@ mod tests {
             return;
         };
         assert_eq!(
-            content.iter().count(),
+            content.len(),
             2,
             "the trailing user message holds the empty text plus the image"
         );

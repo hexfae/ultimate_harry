@@ -214,9 +214,7 @@ impl History {
     /// so the edit form opens populated with the existing text instead of blank.
     #[must_use]
     pub fn edit_modal_default(&self) -> EditMessageModal {
-        EditMessageModal {
-            content: self.chosen_content().to_owned(),
-        }
+        EditMessageModal::from_content(self.chosen_content())
     }
 
     /// Returns the Discord message ID of this history.

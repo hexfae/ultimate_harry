@@ -25,7 +25,7 @@ pub use attachments::{
 #[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct Message {
     /// If this message originates from Discord, the message's Discord ID, otherwise a ulid ID.
-    #[builder(default = Ulid::new().to_string(), with = |id: MessageId| id.to_string())]
+    #[builder(default = Ulid::generate().to_string(), with = |id: MessageId| id.to_string())]
     id: String,
     /// The "parts" of the message. A message will ONLY have multiple parts if created from a user's Discord
     /// message. If so, the "parts" of it are every line.

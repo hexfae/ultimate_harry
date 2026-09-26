@@ -6,7 +6,7 @@
 //! reach `Character`'s private fields.
 
 use jiff::Zoned;
-use poise::serenity_prelude::all::UserId;
+use poise::serenity_prelude::{all::UserId, small_fixed_array::FixedString};
 use ulid::Ulid;
 use url::Url;
 
@@ -37,7 +37,7 @@ impl Character {
         self.edited_at = Some(Zoned::now());
         self.version = self.version.saturating_add(1);
         self.previous_version = Some(self.id.clone());
-        self.id = Ulid::new().to_string();
+        self.id = Ulid::generate().to_string();
     }
 
     /// Rolls the character back to the content of an older version `old`.
@@ -76,7 +76,7 @@ impl Character {
     pub fn duplicate<U: Into<UserId>>(&self, creator: U, new_name: Option<String>) -> Self {
         let name = new_name.unwrap_or_else(|| format!("{} (kopia)", self.name));
         Self::builder()
-            .id(Ulid::new().to_string())
+            .id(Ulid::generate().to_string())
             .name(name)
             .greeting(self.greeting.clone())
             .creator(creator)
@@ -103,18 +103,21 @@ impl Character {
     #[must_use]
     pub fn edit_modal_defaults(&self) -> (EditCharacterModal, SecondEditCharacterModal) {
         let first = EditCharacterModal {
-            name: Some(self.name.clone()),
-            greeting: Some(self.greeting.clone()),
-            nickname: self.nickname.clone(),
-            description: self.description.clone(),
-            personality: self.personality.clone(),
+            name: Some(FixedString::from_string_trunc(self.name.clone())),
+            greeting: Some(FixedString::from_string_trunc(self.greeting.clone())),
+            nickname: self.nickname.clone().map(FixedString::from_string_trunc),
+            description: self.description.clone().map(FixedString::from_string_trunc),
+            personality: self.personality.clone().map(FixedString::from_string_trunc),
         };
         let second = SecondEditCharacterModal {
-            avatar: self.avatar.clone(),
-            emoji: self.emoji.clone(),
-            system_prompt: self.system_prompt.clone(),
-            prompt: self.prompt.clone(),
-            scenario: self.scenario.clone(),
+            avatar: self.avatar.clone().map(FixedString::from_string_trunc),
+            emoji: self.emoji.clone().map(FixedString::from_string_trunc),
+            system_prompt: self
+                .system_prompt
+                .clone()
+                .map(FixedString::from_string_trunc),
+            prompt: self.prompt.clone().map(FixedString::from_string_trunc),
+            scenario: self.scenario.clone().map(FixedString::from_string_trunc),
         };
         (first, second)
     }
@@ -130,39 +133,39 @@ impl Character {
         second_modal: SecondEditCharacterModal,
     ) {
         self.begin_new_version(editor);
-        let avatar_url = validate_url(second_modal.avatar);
+        let avatar_url = validate_url(second_modal.avatar.as_deref().map(ToOwned::to_owned));
         // the reason why these can't just be `self.foo = bar` is because
         // if the user doesn't fill in a field, it will be None, and we
         // don't want to overwrite a potentially existing value
         if let Some(name) = modal.name {
-            self.name = name;
+            self.name = name.into_string();
         }
         if let Some(greeting) = modal.greeting {
-            self.greeting = greeting;
+            self.greeting = greeting.into_string();
         }
         if let Some(nickname) = modal.nickname {
-            self.nickname = Some(nickname);
+            self.nickname = Some(nickname.into_string());
         }
         if let Some(description) = modal.description {
-            self.description = Some(description);
+            self.description = Some(description.into_string());
         }
         if let Some(personality) = modal.personality {
-            self.personality = Some(personality);
+            self.personality = Some(personality.into_string());
         }
         if let Some(avatar) = avatar_url {
             self.avatar = Some(avatar);
         }
         if let Some(emoji) = second_modal.emoji {
-            self.emoji = Some(emoji);
+            self.emoji = Some(emoji.into_string());
         }
         if let Some(system_prompt) = second_modal.system_prompt {
-            self.system_prompt = Some(system_prompt);
+            self.system_prompt = Some(system_prompt.into_string());
         }
         if let Some(prompt) = second_modal.prompt {
-            self.prompt = Some(prompt);
+            self.prompt = Some(prompt.into_string());
         }
         if let Some(scenario) = second_modal.scenario {
-            self.scenario = Some(scenario);
+            self.scenario = Some(scenario.into_string());
         }
     }
 }
@@ -171,20 +174,20 @@ impl From<(CreateCharacterModal, SecondCreateCharacterModal, UserId)> for Charac
     fn from(
         (first, second, creator): (CreateCharacterModal, SecondCreateCharacterModal, UserId),
     ) -> Self {
-        let avatar = validate_url(second.avatar);
+        let avatar = validate_url(second.avatar.as_deref().map(ToOwned::to_owned));
         Self::builder()
-            .name(first.name)
-            .greeting(first.greeting)
-            .id(Ulid::new().to_string())
-            .maybe_nickname(first.nickname)
-            .maybe_description(first.description)
-            .maybe_personality(first.personality)
+            .name(first.name.into_string())
+            .greeting(first.greeting.into_string())
+            .id(Ulid::generate().to_string())
+            .maybe_nickname(first.nickname.map(FixedString::into_string))
+            .maybe_description(first.description.map(FixedString::into_string))
+            .maybe_personality(first.personality.map(FixedString::into_string))
             .maybe_avatar(avatar)
-            .maybe_emoji(second.emoji)
+            .maybe_emoji(second.emoji.map(FixedString::into_string))
             .creator(creator)
-            .maybe_system_prompt(second.system_prompt)
-            .maybe_prompt(second.prompt)
-            .maybe_scenario(second.scenario)
+            .maybe_system_prompt(second.system_prompt.map(FixedString::into_string))
+            .maybe_prompt(second.prompt.map(FixedString::into_string))
+            .maybe_scenario(second.scenario.map(FixedString::into_string))
             .build()
     }
 }
