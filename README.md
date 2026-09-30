@@ -15,8 +15,8 @@ limit)
 - Multiple characters in a conversation
 - Model support from OpenRouter
 - Optional per-model provider pinning, to force a specific OpenRouter endpoint
-- TTS via ElevenLabs V2/V3 API
-- Automatically adds ElevenLabs V3 audio tags (e.g. `[laughs]`, `[angry]`)
+- TTS via ElevenLabs V4 API (V2 opt-in per voice)
+- Automatically adds ElevenLabs audio tags (e.g. `[laughs]`, `[angry]`)
 - User-installable TTS command, for doing TTS anywhere
 - Text streaming (1s intervals, due to Discord's rate limits)
 - Fun statistics, per user/character
@@ -52,8 +52,8 @@ through `/modell`.
 Configure text model, its OpenRouter provider, OpenRouter API key, temperature,
 vision model, and audio model globally with `/modell`. Configure model, provider,
 and temperature per character with `/gubbe modell`. Configure ElevenLabs API key,
-global default voice, global default ElevenLabs model, and V3 audio tag model
-with `/tal`.
+global default voice, global default ElevenLabs model (Eleven v4), and the audio
+tag model with `/tal`.
 
 The provider is optional. Left unset, OpenRouter load balances the model across
 every provider serving it. Setting one pins the bot to that single endpoint
@@ -66,7 +66,8 @@ switch with `/modell` without leaving the channel.
 
 Create, view, and delete voices with `/röst {skapa,visa,döda}` (create them on
 the ElevenLabs website first). Set a character's default voice with `/gubbe
-röst`.
+röst`. Pass `modell` to `/röst skapa` to pin one voice to another ElevenLabs
+model, such as `eleven_multilingual_v2` for a voice that suits V2 better.
 
 Create, view, update, and delete characters with  `/gubbe
 {skapa,visa,ändra,döda}`. Start a new chat with `/prata`. Restore deleted

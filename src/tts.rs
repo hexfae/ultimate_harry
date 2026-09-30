@@ -16,8 +16,8 @@ const DIALOGUE_URL: &str = "https://api.elevenlabs.io/v1/text-to-dialogue";
 /// The `ElevenLabs` endpoint listing the account's available voices.
 const VOICES_URL: &str = "https://api.elevenlabs.io/v1/voices";
 
-/// The default `ElevenLabs` model: Eleven v3, the expressive model that interprets audio tags.
-const DEFAULT_TTS_MODEL: &str = "eleven_v3";
+/// The default `ElevenLabs` model: Eleven v4, the expressive model that interprets audio tags.
+const DEFAULT_TTS_MODEL: &str = "eleven_v4";
 
 /// The default `ElevenLabs` model used to synthesize speech.
 fn default_tts_model() -> String {
@@ -64,7 +64,7 @@ pub struct VoiceEntry {
     /// The `ElevenLabs` model spoken with for solo playback of this voice (the
     /// speak button or a directly chosen dropdown voice), overriding the
     /// configured default model. `None` (or empty) uses the configured model.
-    /// Auto/dialogue ignores this and always uses the configured model (Eleven v3).
+    /// Auto/dialogue ignores this and always uses the configured model.
     #[serde(default)]
     pub model: Option<String>,
 }
@@ -130,7 +130,7 @@ pub struct TtsSettings {
     /// The `OpenRouter` model that inserts audio tags into a reply before synthesis.
     ///
     /// Enhancement runs only when this is set and the synthesis model is audio-tag
-    /// aware (Eleven v3); `None` (or an empty string) disables it. The enhancement
+    /// aware (Eleven v3 or v4); `None` (or an empty string) disables it. The enhancement
     /// uses the `OpenRouter` API key from the model settings, not the `ElevenLabs` key.
     #[serde(default = "default_tag_model")]
     pub tag_model: Option<String>,
@@ -214,9 +214,10 @@ impl TtsSettings {
 
     /// The audio-tag enhancement model to use when speaking with `model`, or `None`
     /// when enhancement does not apply: a non-empty tag model must be configured
-    /// *and* `model` must be audio-tag aware (Eleven v3), since tags are meaningless
-    /// on other models. Keyed off the effective synthesis model so a voice pinned to
-    /// a non-v3 model skips the tags rather than speaking them literally.
+    /// *and* `model` must be audio-tag aware (Eleven v3 or v4), since tags are
+    /// meaningless on other models. Keyed off the effective synthesis model so a voice
+    /// pinned to a model without tag support skips the tags rather than speaking them
+    /// literally.
     #[must_use]
     pub fn tag_model_for(&self, model: &str) -> Option<&str> {
         if !model_supports_audio_tags(model) {
@@ -398,9 +399,9 @@ impl TtsManager {
     }
 }
 
-/// Whether `model` interprets audio tags (the Eleven v3 family).
+/// Whether `model` interprets audio tags (the Eleven v3 and v4 families).
 fn model_supports_audio_tags(model: &str) -> bool {
-    model.contains("v3")
+    model.contains("v3") || model.contains("v4")
 }
 
 /// Whether `text` has anything worth speaking, so the button can skip synthesizing
@@ -675,6 +676,22 @@ mod tests {
             Some("vendor/cheap"),
             "a v3 configured model enhances with the configured tag model"
         );
+        assert_eq!(
+            tagging("eleven_v4", Some("vendor/cheap")).tag_model_if_enabled(),
+            Some("vendor/cheap"),
+            "a v4 configured model enhances with the configured tag model"
+        );
+    }
+
+    /// Speech uses Eleven v4 out of the box, since it is the most expressive model
+    /// and interprets audio tags.
+    #[test]
+    fn the_default_synthesis_model_is_v4() {
+        assert_eq!(
+            TtsSettings::default().model,
+            "eleven_v4",
+            "a fresh configuration speaks with Eleven v4"
+        );
     }
 
     /// An unknown voice ID or an empty override falls back to the configured model.
@@ -694,8 +711,9 @@ mod tests {
         );
     }
 
-    /// Tag enhancement is decided against the effective model: a v2 model skips the
-    /// v3 audio tags even when a tag model is configured.
+    /// Tag enhancement is decided against the effective model: both tag-aware
+    /// families enhance, while a v2 model skips the audio tags even when a tag
+    /// model is configured.
     #[test]
     fn tag_model_for_keys_off_the_effective_model() {
         let settings = tagging("eleven_v3", Some("vendor/cheap"));
@@ -704,29 +722,39 @@ mod tests {
             Some("vendor/cheap"),
             "a v3 effective model with a tag model enhances"
         );
+        assert_eq!(
+            settings.tag_model_for("eleven_v4"),
+            Some("vendor/cheap"),
+            "a v4 effective model with a tag model enhances"
+        );
+        assert_eq!(
+            settings.tag_model_for("eleven_v4_turbo"),
+            Some("vendor/cheap"),
+            "the v4 turbo variant enhances too"
+        );
         assert!(
             settings.tag_model_for("eleven_multilingual_v2").is_none(),
             "a v2 effective model skips tags even with a tag model configured"
         );
         assert!(
-            tagging("eleven_v3", None)
-                .tag_model_for("eleven_v3")
+            tagging("eleven_v4", None)
+                .tag_model_for("eleven_v4")
                 .is_none(),
             "no tag model means no enhancement"
         );
         assert!(
-            tagging("eleven_v3", Some(""))
-                .tag_model_for("eleven_v3")
+            tagging("eleven_v4", Some(""))
+                .tag_model_for("eleven_v4")
                 .is_none(),
             "an empty tag model disables enhancement"
         );
     }
 
     /// A v2-pinned palette voice resolves to its model and skips tags, while a
-    /// non-pinned voice keeps the configured v3 model and its tags.
+    /// non-pinned voice keeps the configured v4 model and its tags.
     #[test]
     fn pinned_voice_uses_v2_and_skips_tags() {
-        let mut configured = tagging("eleven_v3", Some("vendor/cheap"));
+        let mut configured = tagging("eleven_v4", Some("vendor/cheap"));
         configured.add_voice(voice_entry_with_model(
             "Adam",
             "adam-id",
@@ -738,15 +766,15 @@ mod tests {
         assert_eq!(adam_model, "eleven_multilingual_v2", "Adam is pinned to v2");
         assert!(
             configured.tag_model_for(adam_model).is_none(),
-            "Adam's v2 playback skips the v3 audio tags"
+            "Adam's v2 playback skips the audio tags"
         );
 
         let eva_model = configured.solo_model("eva-id");
-        assert_eq!(eva_model, "eleven_v3", "Eva keeps the configured v3 model");
+        assert_eq!(eva_model, "eleven_v4", "Eva keeps the configured v4 model");
         assert_eq!(
             configured.tag_model_for(eva_model),
             Some("vendor/cheap"),
-            "Eva's v3 playback still enhances with tags"
+            "Eva's v4 playback still enhances with tags"
         );
     }
 

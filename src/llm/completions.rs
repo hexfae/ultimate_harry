@@ -42,11 +42,11 @@ const TRANSCRIBE_PROMPT: &str = "Transcribe the spoken audio verbatim, keeping t
 
 /// The opening instruction given to the tag model when enriching a reply with audio
 /// tags. [`TAG_GUIDE`] and [`TAG_PROMPT_REPLY`] are appended to it before sending.
-const TAG_PROMPT: &str = "You are given a single line of dialogue from a roleplay. Insert ElevenLabs v3 audio tags (square-bracketed and always in English) throughout it so it sounds as expressive as possible when read aloud.";
+const TAG_PROMPT: &str = "You are given a single line of dialogue from a roleplay. Insert ElevenLabs audio tags (square-bracketed and always in English) throughout it so it sounds as expressive as possible when read aloud.";
 
 /// The audio-tag guidance shared by the single-line enricher and the per-turn
 /// dialogue enricher, so both push for the same maximal expressiveness.
-const TAG_GUIDE: &str = "Be prolific: every line should carry tags, and every shift in emotion, intensity, volume, pace, or speaker should be marked with one, stacking several tags in a sentence when the performance layers (e.g. \"[tired] [softly] it has been a long day... [upset] how many more can I take?\"). A tag can sit anywhere in the text, and a line usually opens with one. Use the whole v3 vocabulary and give the actor as much direction as the moment allows: emotions ([angry], [sad], [sorrowful], [excited], [happily], [sarcastically], [awe], [annoyed], [surprised], [booming], [big laugh]), delivery and pacing ([whispers], [shouts], [softly], [rushed], [slowly], [drawn out], [pause]), human reactions ([laughs], [sighs], [gasps], [coughing], [clears throat], [beginning to speak], [interrupting], [overlapping]), accents and character voices ([French accent], [British accent], [pirate voice]), and sound effects where the scene calls for them ([clapping], [gunshot], [explosion]). Shape the pacing in the text as well: an ellipsis or a comma for a short pause, a line break for a longer beat, capitals on a word to stress it. Pick tags the voice can actually embody, since one it cannot perform gets read aloud as words: push it hard, but stay inside its register rather than contradicting it. Keep all of the original text and its language exactly as given: do not translate, rephrase, drop, reorder, or change any words; only add tags, never action or narration outside them. Every tag must be in English, even when the dialogue is in another language.";
+const TAG_GUIDE: &str = "Be prolific: every line should carry tags, and every shift in emotion, intensity, volume, pace, or speaker should be marked with one, stacking several tags in a sentence when the performance layers (e.g. \"[tired] [softly] it has been a long day... [upset] how many more can I take?\"). A tag can sit anywhere in the text, and a line usually opens with one. Use the whole tag vocabulary and give the actor as much direction as the moment allows: emotions ([angry], [sad], [sorrowful], [excited], [happily], [sarcastically], [awe], [annoyed], [surprised], [booming], [big laugh]), delivery and pacing ([whispers], [shouts], [softly], [rushed], [slowly], [drawn out], [pause]), human reactions ([laughs], [sighs], [gasps], [coughing], [clears throat], [beginning to speak], [interrupting], [overlapping]), accents and character voices ([French accent], [British accent], [pirate voice]). Every tag must direct the voice alone: never tag music, ambience, or a sound effect ([gunshot], [light rain], [applause]), because the model is trained on sound effects too and will happily deliver such a tag as a noise instead of the intended delivery. Where a bare emotion would be ambiguous, name the voice quality outright, writing [low, gravelly voice] rather than a tag that could be read as a sound cue. Shape the pacing in the text as well: an ellipsis or a comma for a short pause, a line break for a longer beat, capitals on a word to stress it. Pick tags the voice can actually embody, since one it cannot perform gets read aloud as words: push it hard, but stay inside its register rather than contradicting it. Keep all of the original text and its language exactly as given: do not translate, rephrase, drop, reorder, or change any words; only add tags, never action or narration outside them. When the text already narrates something happening, leave those words as they are and put a tag beside them, so a line reading \"he laughed loudly\" keeps its words and gains [chuckles] rather than being turned into one. Every tag must be in English, even when the dialogue is in another language.";
 
 /// The closing format instruction for [`TAG_PROMPT`].
 const TAG_PROMPT_REPLY: &str = "Reply with only the tagged text, no explanation.";
@@ -55,9 +55,9 @@ const TAG_PROMPT_REPLY: &str = "Reply with only the tagged text, no explanation.
 const SEGMENT_PROMPT: &str = "You are given a roleplay reply and a list of available voices. Split the reply into an ordered sequence of speaker turns and assign each turn one of the available voices by its id, choosing the voice whose description best matches that speaker. Cover the entire reply in order, keeping every word and its original language exactly as given: do not translate, rephrase, drop, or reorder any text. Use only voice ids from the provided list. Reply with ONLY a JSON array of objects with the keys \"voice_id\" and \"text\", and nothing else (no prose, no code fences).";
 
 /// The extra instruction folded into [`SEGMENT_PROMPT`] when the synthesis model
-/// is audio-tag aware, so each turn's text is also enriched with v3 tags.
+/// is audio-tag aware, so each turn's text is also enriched with audio tags.
 /// [`TAG_GUIDE`] is appended to it.
-const SEGMENT_TAG_CLAUSE: &str = " Additionally, insert ElevenLabs v3 audio tags (square-bracketed and always in English) throughout each turn's text so it sounds as expressive as possible when read aloud, opening a turn with a tag when it captures the moment and tagging the mood shifts, interruptions, and overlaps between turns.";
+const SEGMENT_TAG_CLAUSE: &str = " Additionally, insert ElevenLabs audio tags (square-bracketed and always in English) throughout each turn's text so it sounds as expressive as possible when read aloud, opening a turn with a tag when it captures the moment and tagging the mood shifts, interruptions, and overlaps between turns.";
 
 #[expect(
     clippy::multiple_inherent_impl,
@@ -200,7 +200,7 @@ impl LlmManager {
         extract_description(&parsed).context(EmptyTranscriptionSnafu)
     }
 
-    /// Rewrites `text` with inline `ElevenLabs` v3 audio tags using `model`, for more
+    /// Rewrites `text` with inline `ElevenLabs` audio tags using `model`, for more
     /// expressive text-to-speech. Only the spoken text is enriched; the visible reply
     /// is left untouched by the caller.
     pub async fn add_audio_tags(&self, text: &str, model: &str) -> Result<String, LlmError> {
@@ -219,7 +219,7 @@ impl LlmManager {
     /// Splits `text` into ordered per-voice turns using `model`, assigning each
     /// turn one of the supplied `choices` by description, for multi-voice
     /// text-to-dialogue synthesis. When `add_tags` is set, each turn's text is
-    /// also enriched with v3 audio tags in the same call.
+    /// also enriched with audio tags in the same call.
     ///
     /// The returned `voice_id`s are whatever the model produced; the caller
     /// validates them against the allowed set before synthesizing.

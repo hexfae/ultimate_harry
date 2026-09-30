@@ -17,10 +17,10 @@ pub async fn tts(
     #[description = "ElevenLabs röst-ID för gubbar utan egen röst"]
     default_voice: Option<String>,
     #[rename = "röst-modell"]
-    #[description = "ElevenLabs-modellen att använda"]
+    #[description = "ElevenLabs-modellen att använda (t.ex. eleven_v4)"]
     model: Option<String>,
     #[rename = "tagg-modell"]
-    #[description = "Modellen som lägger till ljudtaggar (kräver Eleven v3)"]
+    #[description = "Modellen som lägger till ljudtaggar (kräver Eleven v3/v4)"]
     #[autocomplete = autocomplete_model]
     tag_model: Option<String>,
 ) -> AppResult {

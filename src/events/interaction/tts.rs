@@ -17,7 +17,7 @@ use serenity::all::{ComponentInteraction, Context};
 /// An empty reply has nothing to speak, but the button is disabled in that case (see
 /// the render in `history/render.rs`), so this is never reached for blank text.
 /// When a tag model is configured and the synthesis model is audio-tag aware, the
-/// spoken text (not the visible reply) is first enriched with `ElevenLabs` v3 audio
+/// spoken text (not the visible reply) is first enriched with `ElevenLabs` audio
 /// tags; a failed enrichment falls back to the plain reply rather than blocking audio.
 /// Synthesis can take longer than Discord's three-second window, so the interaction
 /// is deferred before the (slow) request is made.

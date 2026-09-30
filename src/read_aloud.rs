@@ -46,9 +46,9 @@ pub fn requested_now() -> Zoned {
         .unwrap_or_else(|_| Zoned::now())
 }
 
-/// Enriches `text` with v3 audio tags when a tag model is enabled for the effective
+/// Enriches `text` with audio tags when a tag model is enabled for the effective
 /// synthesis `model`, falling back to the plain text on failure. Keyed off `model`
-/// so a voice pinned to a non-v3 model skips the tags.
+/// so a voice pinned to a model without tag support skips the tags.
 async fn enrich(db: &Database, settings: &TtsSettings, model: &str, text: String) -> String {
     let Some(tag_model) = settings.tag_model_for(model) else {
         return text;
