@@ -49,6 +49,38 @@
 
           craneLib = (crane.mkLib pkgs).overrideToolchain (_: rustToolchain);
 
+          # the cargo-mutants hook's entry: mutation-tests whatever this commit
+          # touches, since the pre-commit hook cannot pass a diff to a tool that
+          # wants a file and cannot hand it the staged set otherwise.
+          #
+          # cargo and cargo-mutants are pinned to store paths rather than left to
+          # PATH, because a git hook inherits whatever the committer's shell has
+          # and that need not be this flake's toolchain at all
+          mutantsStaged = pkgs.writeShellScriptBin "mutants-staged" ''
+            set -euo pipefail
+
+            cd "$(git rev-parse --show-toplevel)"
+
+            diff_file=$(mktemp)
+            trap 'rm -f "$diff_file"' EXIT
+
+            # what the commit will actually contain, as cargo-mutants reads it
+            git diff --cached --unified=0 --no-color -- '*.rs' >"$diff_file"
+
+            if [[ ! -s "$diff_file" ]]; then
+              echo "cargo-mutants: no staged Rust changes, nothing to mutation-test"
+              exit 0
+            fi
+
+            PATH=${
+              pkgs.lib.makeBinPath [
+                pkgs.cargo-mutants
+                rustToolchain
+              ]
+            }:$PATH \
+              cargo mutants --in-diff "$diff_file" "$@"
+          '';
+
           commonArgs = {
             src = craneLib.cleanCargoSource ./.;
             strictDeps = true;
@@ -98,6 +130,48 @@
               # a flake's outputs function has to name every input, so the
               # unused ones are structural rather than dead code
               entry = "${pkgs.deadnix}/bin/deadnix --no-lambda-pattern-names";
+            };
+            # mutation-tests only the code this commit touches. the whole tree is
+            # ~1200 mutants, far too slow for a commit hook, while a staged diff
+            # is normally a handful. cargo-mutants measures whether the tests
+            # assert anything about the changed code, which coverage cannot show:
+            # a test that passes against a stubbed-out function still counts as
+            # coverage and still lets the bug through.
+            #
+            # deliberately not `--in-place`. that keeps the warm target dir and
+            # cuts a mutant from ~27s to ~4s, but it mutates the working tree,
+            # which cargo-mutants documents as unsafe when a run is interrupted.
+            # a commit hook is exactly where an interrupt happens, so the safe
+            # copy is the right trade for a gate
+            cargo-mutants = {
+              enable = true;
+              # the entry must be the absolute store path, not the bare name.
+              # git-hooks.nix resolves `entry` to a store path for the hooks it
+              # ships a definition for, but cargo-mutants is not one of them, so
+              # a bare name is passed through literally and pre-commit then
+              # fails with "Executable `mutants-staged` not found" in a clean
+              # hook environment. `package` does not put it on PATH for a
+              # hook id git-hooks.nix has no definition for
+              package = mutantsStaged;
+              entry = "${mutantsStaged}/bin/mutants-staged";
+              files = "\\.rs$";
+              pass_filenames = false;
+              require_serial = true;
+            };
+            # permutes the interleavings of the stop-token registry's mutex, so
+            # the Stop button's cross-task hand-off is checked rather than
+            # assumed. release mode because loom replays each schedule many
+            # times, and the bin target because the crate has no lib target
+            loom = {
+              enable = true;
+              # the flake's own nightly toolchain, for the same reason the
+              # rustfmt and clippy hooks use it: nixpkgs' stable cargo cannot
+              # parse this crate's nightly syntax
+              package = rustToolchain;
+              entry = "cargo test --features loom --profile release --bin harry cancellation";
+              files = "^src/cancellation\\.rs$";
+              pass_filenames = false;
+              require_serial = true;
             };
             detect-private-keys.enable = true;
             ripsecrets.enable = true;

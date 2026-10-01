@@ -7062,6 +7062,7 @@ dependencies = [
  "bon",
  "emojis",
  "jiff",
+ "loom",
  "miette",
  "nanorand",
  "nonempty",

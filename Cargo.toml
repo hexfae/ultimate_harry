@@ -41,6 +41,18 @@ emojis = "0.9.0"
 # test-util enables tokio's paused virtual clock so timing tests skip real sleeps
 tokio = { version = "1.53.1", features = ["test-util"] }
 
+# loom permutes the interleavings of the stop-token registry's mutex. it hangs
+# off a feature rather than a `cfg(loom)` gate, because a cfg passed through
+# `cargo rustc --` reaches rustc but not Cargo's dependency resolver, so a
+# cfg-gated dev-dependency would never be linked. a feature is resolved by
+# Cargo, which is what makes `--features loom` work at all
+[features]
+loom = ["dep:loom"]
+
+[dependencies.loom]
+version = "0.7.2"
+optional = true
+
 [profile.release]
 lto = true
 codegen-units = 1

@@ -3,5 +3,7 @@
 /harry_database
 /token
 /mutants.out
+# cargo-mutants rotates the previous run's output dir on each run
+/mutants.out.old
 /result
 /.pre-commit-config.yaml
