@@ -91,6 +91,23 @@
               mold
             ];
           };
+
+          # the loom hook's entry, for the same reason as the one above: a
+          # commit hook inherits whatever the committer's shell has, which need
+          # not carry this flake's toolchain, and git-hooks.nix rewrites a bare
+          # `entry` to a store path only for the hook ids it ships a definition
+          # for. a bare `cargo` therefore reaches pre-commit literally and the
+          # hook fails with "Executable `cargo` not found". the PATH mirrors
+          # the build's nativeBuildInputs, so the models link exactly the way
+          # `nix build` links the crate
+          loomModels = pkgs.writeShellScriptBin "loom-models" ''
+            set -euo pipefail
+
+            cd "$(git rev-parse --show-toplevel)"
+
+            PATH=${pkgs.lib.makeBinPath commonArgs.nativeBuildInputs}:$PATH \
+              cargo test --features loom --profile release --bin harry cancellation
+          '';
         in
         {
           formatter = pkgs.nixfmt-tree.override { nixfmtPackage = pkgs.nixfmt; };
@@ -164,11 +181,13 @@
             # times, and the bin target because the crate has no lib target
             loom = {
               enable = true;
-              # the flake's own nightly toolchain, for the same reason the
-              # rustfmt and clippy hooks use it: nixpkgs' stable cargo cannot
-              # parse this crate's nightly syntax
-              package = rustToolchain;
-              entry = "cargo test --features loom --profile release --bin harry cancellation";
+              # the entry must be the absolute store path, not a bare name, for
+              # the same reason the cargo-mutants entry is: `package` does not
+              # put the toolchain on PATH for a hook id git-hooks.nix has no
+              # definition for, so a bare `cargo test` cannot be resolved by the
+              # hook environment
+              package = loomModels;
+              entry = "${loomModels}/bin/loom-models";
               files = "^src/cancellation\\.rs$";
               pass_filenames = false;
               require_serial = true;
