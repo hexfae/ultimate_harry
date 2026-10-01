@@ -213,7 +213,10 @@
           devShells.default = pkgs.mkShell {
             inherit (commonArgs) buildInputs nativeBuildInputs;
             inputsFrom = [ config.pre-commit.devShell ];
-            packages = [ pkgs.cargo-mutants ];
+            packages = [
+              pkgs.cargo-mutants
+              pkgs.just
+            ];
             LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath commonArgs.buildInputs;
           };
         };
