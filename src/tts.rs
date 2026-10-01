@@ -24,6 +24,14 @@ fn default_tts_model() -> String {
     DEFAULT_TTS_MODEL.to_owned()
 }
 
+/// The stability every synthesis request asks for: zero, so each generation gets
+/// the widest emotional range instead of being pinned to a fixed baseline.
+const STABILITY: f64 = 0.0;
+
+/// The similarity every synthesis request asks for: full adherence to the
+/// reference voice, which is the one setting that rewards being maxed out.
+const SIMILARITY: f64 = 1.0;
+
 /// The default `OpenRouter` model used to enrich a reply with audio tags before synthesis.
 const DEFAULT_TAG_MODEL: &str = "google/gemini-3.1-flash-lite";
 
@@ -449,16 +457,24 @@ fn tts_url(voice_id: &str) -> String {
     format!("{TTS_URL_BASE}{voice_id}")
 }
 
-/// Builds the JSON request body for an `ElevenLabs` synthesis request.
+/// Builds the JSON request body for an `ElevenLabs` synthesis request, with the
+/// fixed voice settings (see [`STABILITY`] and [`SIMILARITY`]) rather than
+/// whatever the account's dashboard has stored for the voice.
 fn tts_request_body(text: &str, model: &str) -> serde_json::Value {
     serde_json::json!({
         "text": text,
         "model_id": model,
+        "voice_settings": {
+            "stability": STABILITY,
+            "similarity_boost": SIMILARITY,
+        },
     })
 }
 
 /// Builds the JSON request body for an `ElevenLabs` text-to-dialogue request:
-/// the model plus an ordered `inputs` array of `{text, voice_id}` turns.
+/// the model plus an ordered `inputs` array of `{text, voice_id}` turns. The
+/// same fixed voice settings ride along as `settings`, which the dialogue
+/// endpoint takes at request level rather than per turn.
 fn dialogue_request_body(turns: &[DialogueTurn], model: &str) -> serde_json::Value {
     let inputs: Vec<serde_json::Value> = turns
         .iter()
@@ -472,6 +488,10 @@ fn dialogue_request_body(turns: &[DialogueTurn], model: &str) -> serde_json::Val
     serde_json::json!({
         "model_id": model,
         "inputs": inputs,
+        "settings": {
+            "stability": STABILITY,
+            "similarity": SIMILARITY,
+        },
     })
 }
 
@@ -907,6 +927,34 @@ mod tests {
         );
     }
 
+    /// The synthesis body pins stability to zero and similarity to one, so the
+    /// account's stored voice settings never leak into a generation.
+    #[test]
+    fn request_pins_stability_and_similarity() {
+        let body = tts_request_body("hej", "eleven_v4");
+        let settings = body.get("voice_settings");
+        assert_eq!(
+            settings
+                .and_then(|settings| settings.get("stability"))
+                .and_then(serde_json::Value::as_f64),
+            Some(0.0),
+            "stability is zero for maximum emotional range"
+        );
+        assert_eq!(
+            settings
+                .and_then(|settings| settings.get("similarity_boost"))
+                .and_then(serde_json::Value::as_f64),
+            Some(1.0),
+            "similarity is one for the closest match to the reference voice"
+        );
+        assert!(
+            settings
+                .and_then(|settings| settings.get("use_speaker_boost"))
+                .is_none(),
+            "Eleven v4 has no speaker boost, so it is left unset"
+        );
+    }
+
     /// The dialogue body carries the model and an ordered inputs array of
     /// `{text, voice_id}` turns.
     #[test]
@@ -945,6 +993,21 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("hej"),
             "the first turn keeps its text"
+        );
+        let settings = body.get("settings");
+        assert_eq!(
+            settings
+                .and_then(|settings| settings.get("stability"))
+                .and_then(serde_json::Value::as_f64),
+            Some(0.0),
+            "the dialogue request pins stability to zero as well"
+        );
+        assert_eq!(
+            settings
+                .and_then(|settings| settings.get("similarity"))
+                .and_then(serde_json::Value::as_f64),
+            Some(1.0),
+            "the dialogue request pins similarity to one as well"
         );
     }
 
