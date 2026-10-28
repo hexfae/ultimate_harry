@@ -50,11 +50,17 @@ impl Database {
 
     /// Returns a user's display name by their Discord user ID, defaulting to "User".
     pub async fn substitute_name<T: Into<UserId>>(&self, user_id: T) -> String {
+        self.name_or(user_id, "User").await
+    }
+
+    /// Returns the display name a user set with `/namn`, or `fallback` (their
+    /// name on Discord, when the caller has it) if they never set one.
+    pub async fn name_or<T: Into<UserId>>(&self, user_id: T, fallback: &str) -> String {
         let path = self.user_path(&user_id.into().to_string());
         read_or(&path, "substitute name", UserPrefs::default)
             .await
             .name
-            .unwrap_or_else(|| "User".to_owned())
+            .unwrap_or_else(|| fallback.to_owned())
     }
 
     /// Updates or inserts a user's display name, preserving their stored emoji.

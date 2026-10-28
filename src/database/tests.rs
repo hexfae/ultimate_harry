@@ -795,3 +795,36 @@ async fn model_settings_falls_back_to_default_on_corruption() {
         "a corrupt model-settings file falls back to the default"
     );
 }
+
+/// A name set with `/namn` wins over the caller's fallback, which stands in for
+/// a user who never set one.
+#[tokio::test]
+async fn name_or_prefers_the_set_name_over_the_fallback() {
+    let opened = Database::temporary().await;
+    assert!(
+        opened.is_ok(),
+        "opening a temporary database should succeed"
+    );
+    let Ok(db) = opened else { return };
+    assert_eq!(
+        db.name_or(UserId::new(5), "Bobby").await,
+        "Bobby",
+        "without a set name the fallback is used"
+    );
+    assert!(
+        db.upsert_user_name(UserId::new(5), "Bob".to_owned())
+            .await
+            .is_ok(),
+        "setting a name succeeds"
+    );
+    assert_eq!(
+        db.name_or(UserId::new(5), "Bobby").await,
+        "Bob",
+        "the set name wins"
+    );
+    assert_eq!(
+        db.substitute_name(UserId::new(6)).await,
+        "User",
+        "the generic fallback is User"
+    );
+}

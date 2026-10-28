@@ -77,8 +77,8 @@ Set a character's color (the strip of color on the left of the embed) with
 
 Read some text via an ElevenLabs TTS voice with `/säg`. View fun statistics
 with `/statistik`. Set which name the bot prepends to your messages with `/namn`
-(otherwise it uses `User`. Set which emoji the bot reacts with when you're
-pinged/replied to using `emoji`. Set which channel pinned messages go into
+(otherwise it uses your name on Discord). Set which emoji the bot reacts with
+when you're pinged/replied to using `/emoji`. Set which channel pinned messages go into
 using `/fästkanal`.
 
 On a bot's message, the previous/next buttons let you "swipe" through different

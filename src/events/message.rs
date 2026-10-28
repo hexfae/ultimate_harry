@@ -80,7 +80,9 @@ async fn begin_reply(
         return Ok(None);
     };
 
-    let author = db.substitute_name(&user_message.author).await;
+    let author = db
+        .name_or(&user_message.author, discord_name(user_message))
+        .await;
     history.begin_new_turn((user_message, author));
 
     let menus = Menus {
@@ -98,6 +100,17 @@ async fn begin_reply(
         .context(SendMessageSnafu)?;
 
     Ok(Some((history, character, menus, bot_message)))
+}
+
+/// The name the author of `message` goes by on Discord: their server nickname,
+/// else their global display name, else their username. Stands in for a name
+/// they never set with `/namn`.
+fn discord_name(message: &Message) -> &str {
+    message
+        .member
+        .as_ref()
+        .and_then(|member| member.nick.as_deref())
+        .unwrap_or_else(|| message.author.display_name())
 }
 
 /// The select-menu data a streaming reply re-renders on every tick: the hand-off
@@ -189,5 +202,68 @@ async fn react_to_mentions_and_replies(ctx: &Context, new_message: &Message, db:
 async fn react(ctx: &Context, message: &Message, emoji: ReactionType) {
     if let Err(why) = message.react(&ctx.http, emoji).await {
         warn!(message_id = %message.id, "failed to react: {why}");
+    }
+}
+
+/// Tests for naming a message's author.
+#[cfg(test)]
+mod tests {
+    use super::discord_name;
+    use poise::serenity_prelude::Message;
+
+    /// Builds a message from `author` and an optional server `member` record.
+    fn message(author: &serde_json::Value, member: Option<serde_json::Value>) -> Option<Message> {
+        let mut json = serde_json::json!({
+            "id": "1",
+            "channel_id": "2",
+            "author": author,
+            "content": "hej",
+            "timestamp": "2026-01-01T00:00:00+00:00",
+            "edited_timestamp": null,
+            "tts": false,
+            "mention_everyone": false,
+            "mentions": [],
+            "mention_roles": [],
+            "attachments": [],
+            "embeds": [],
+            "pinned": false,
+            "type": 0_u8,
+        });
+        if let (Some(fields), Some(value)) = (json.as_object_mut(), member) {
+            fields.insert("member".to_owned(), value);
+        }
+        serde_json::from_value(json).ok()
+    }
+
+    /// The server nickname wins, then the global display name, then the
+    /// username.
+    #[test]
+    fn discord_name_prefers_nickname_then_display_name() {
+        let nicked = message(
+            &serde_json::json!({ "id": "3", "username": "bob", "global_name": "Bobby" }),
+            Some(
+                serde_json::json!({ "nick": "Bobban", "roles": [], "deaf": false, "mute": false }),
+            ),
+        );
+        let global = message(
+            &serde_json::json!({ "id": "3", "username": "bob", "global_name": "Bobby" }),
+            None,
+        );
+        let plain = message(&serde_json::json!({ "id": "3", "username": "bob" }), None);
+        assert_eq!(
+            nicked.as_ref().map(discord_name),
+            Some("Bobban"),
+            "the nickname wins"
+        );
+        assert_eq!(
+            global.as_ref().map(discord_name),
+            Some("Bobby"),
+            "then the display name"
+        );
+        assert_eq!(
+            plain.as_ref().map(discord_name),
+            Some("bob"),
+            "then the username"
+        );
     }
 }
