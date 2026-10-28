@@ -139,11 +139,13 @@ impl Message {
             .enumerate()
             .map(|(index, part)| match part.role {
                 Role::System => RigMessage::System {
-                    content: part.content.clone(),
+                    content: part.model_content().to_owned(),
                 },
                 Role::Assistant => RigMessage::Assistant {
                     id: None,
-                    content: vec![AssistantContent::Text(Text::new(part.content.clone()))],
+                    content: vec![AssistantContent::Text(Text::new(
+                        part.model_content().to_owned(),
+                    ))],
                 },
                 Role::User => {
                     let renders = if Some(index) == last_user {
@@ -451,6 +453,34 @@ mod tests {
         EncodedAudio, MediaMode, attachment_kind, audio_format_from_url, link_expiry,
     };
     use rig::message::{AudioMediaType, Message as RigMessage, UserContent};
+
+    /// `ai:` and `system:` lines reach the model as assistant and system
+    /// messages without their prefix.
+    #[test]
+    fn role_prefixed_lines_reach_the_model_without_the_prefix() {
+        let message = Message::builder()
+            .parts(vec![
+                Part::builder()
+                    .content("system: be terse".to_owned())
+                    .role(Role::System)
+                    .build(),
+                Part::builder()
+                    .content("ai: sure".to_owned())
+                    .role(Role::Assistant)
+                    .build(),
+            ])
+            .build();
+        let json = serde_json::to_string(&message.to_rig_messages(AttachmentMode::default()))
+            .unwrap_or_default();
+        assert!(
+            json.contains("be terse") && json.contains("sure"),
+            "both lines are sent: {json}"
+        );
+        assert!(
+            !json.contains("system: ") && !json.contains("ai: "),
+            "without their prefixes: {json}"
+        );
+    }
 
     /// Each part's role maps to the matching rig message variant.
     #[test]

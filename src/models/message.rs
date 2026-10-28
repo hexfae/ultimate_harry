@@ -276,6 +276,21 @@ impl Part {
     pub fn content(&self) -> &str {
         &self.content
     }
+
+    /// Returns this part's text as the model receives it.
+    ///
+    /// A line a user wrote as `ai: …` or `system: …` takes its role from that
+    /// prefix, so the prefix itself is dropped: the role already says who is
+    /// speaking. Stripping here rather than when the line is parsed also covers
+    /// lines stored before the prefix was dropped.
+    #[must_use]
+    pub fn model_content(&self) -> &str {
+        match (self.role, self.content.split_once(": ")) {
+            (Role::Assistant, Some((name, rest))) if name.eq_ignore_ascii_case("ai") => rest,
+            (Role::System, Some((name, rest))) if name.eq_ignore_ascii_case("system") => rest,
+            _ => &self.content,
+        }
+    }
 }
 
 impl From<(String, Duration)> for Message {
@@ -530,6 +545,9 @@ mod tests {
     }
 
     /// A prefixed line keeps its whole text as content and reads its role from the prefix.
+    ///
+    /// The `ai:`/`system:` prefix is dropped only on its way to the model (see
+    /// `Part::model_content`).
     #[test]
     fn prefixed_lines_take_their_role_from_the_name() {
         let parts = parts_from_lines("system: be terse\nai: sure\nAlice: hi", "Bob", false);
@@ -552,6 +570,38 @@ mod tests {
         assert!(
             matches!(parts.get(2).map(|part| part.role), Some(Role::User)),
             "any other prefix maps to the user role"
+        );
+    }
+
+    /// The model receives an `ai:` or `system:` line without its prefix, in any
+    /// letter case, while a user's name prefix and a prefix that did not pick
+    /// the role are kept.
+    #[test]
+    fn model_content_drops_only_the_role_prefix() {
+        let parts = parts_from_lines("system: be terse\nAI: sure\nAlice: hi", "Bob", false);
+        let contents: Vec<&str> = parts.iter().map(Part::model_content).collect();
+        assert_eq!(
+            contents,
+            ["be terse", "sure", "Alice: hi"],
+            "the role prefixes go, the user's name stays"
+        );
+        let mismatched = Part::builder()
+            .content("system: from the ai".to_owned())
+            .role(Role::Assistant)
+            .build();
+        assert_eq!(
+            mismatched.model_content(),
+            "system: from the ai",
+            "a prefix that does not match the role is kept"
+        );
+        let other = Part::builder()
+            .content("ai: said the system".to_owned())
+            .role(Role::System)
+            .build();
+        assert_eq!(
+            other.model_content(),
+            "ai: said the system",
+            "nor is an ai prefix dropped from a system line"
         );
     }
 
