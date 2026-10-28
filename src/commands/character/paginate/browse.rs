@@ -29,14 +29,14 @@ use poise::{
 };
 use snafu::ResultExt as _;
 
-/// The 5 button tags visible on the read-only browse embed: page navigation,
+/// The 5 button kinds visible on the read-only browse embed: page navigation,
 /// version navigation, and rollback.
-const BROWSE_BUTTONS: [&str; 5] = [
-    InteractionKind::Previous.as_tag(),
-    InteractionKind::Next.as_tag(),
-    InteractionKind::OlderVersion.as_tag(),
-    InteractionKind::NewerVersion.as_tag(),
-    InteractionKind::Rollback.as_tag(),
+const BROWSE_BUTTONS: [InteractionKind; 5] = [
+    InteractionKind::Previous,
+    InteractionKind::Next,
+    InteractionKind::OlderVersion,
+    InteractionKind::NewerVersion,
+    InteractionKind::Rollback,
 ];
 
 /// Builds the read-only view paginator for an already-fetched character list,
@@ -61,7 +61,7 @@ async fn display_browse(ctx: Context<'_>, characters: NonEmpty<Character>) -> Ap
     send_browse_message(ctx, &characters, &chain, version, page).await?;
 
     while let Some(interaction) = create_collector(ctx, &BROWSE_BUTTONS).await {
-        match Interaction::try_from(&interaction)?.kind {
+        match Interaction::parse_pager(&interaction.data.custom_id)?.kind {
             InteractionKind::Previous => {
                 page = wrapping_previous(page, pages);
                 chain = load_version_chain(ctx, page_character(&characters, page)).await?;
@@ -212,18 +212,25 @@ fn browse_buttons(
     let at_head = version.saturating_add(1) >= chain_len;
     let page_row = CreateActionRow::Buttons(
         vec![
-            emoji_button(InteractionKind::Previous.custom_id(id), PREVIOUS).disabled(page_disabled),
-            emoji_button(InteractionKind::Next.custom_id(id), NEXT).disabled(page_disabled),
+            emoji_button(InteractionKind::Previous.pager_custom_id(id), PREVIOUS)
+                .disabled(page_disabled),
+            emoji_button(InteractionKind::Next.pager_custom_id(id), NEXT).disabled(page_disabled),
         ]
         .into(),
     );
     let version_row = CreateActionRow::Buttons(
         vec![
-            emoji_button(InteractionKind::OlderVersion.custom_id(id), OLDER_VERSION)
-                .disabled(at_oldest),
-            emoji_button(InteractionKind::NewerVersion.custom_id(id), NEWER_VERSION)
-                .disabled(at_head),
-            emoji_button(InteractionKind::Rollback.custom_id(id), ROLLBACK).disabled(at_head),
+            emoji_button(
+                InteractionKind::OlderVersion.pager_custom_id(id),
+                OLDER_VERSION,
+            )
+            .disabled(at_oldest),
+            emoji_button(
+                InteractionKind::NewerVersion.pager_custom_id(id),
+                NEWER_VERSION,
+            )
+            .disabled(at_head),
+            emoji_button(InteractionKind::Rollback.pager_custom_id(id), ROLLBACK).disabled(at_head),
         ]
         .into(),
     );
@@ -232,4 +239,34 @@ fn browse_buttons(
         CreateComponent::ActionRow(version_row),
     ]
     .into()
+}
+
+/// Tests for the version browser's button ids.
+#[cfg(test)]
+mod tests {
+    use super::browse_buttons;
+    use crate::events::interaction::InteractionKind;
+
+    /// The browser is keyed on the slash command's interaction id.
+    const ID: u64 = 1_519_649_606_525_386_782;
+
+    /// Every browse button carries its pager-prefixed id, so the app-wide
+    /// component handler leaves its presses to the browser.
+    #[test]
+    fn browse_buttons_carry_pager_ids() {
+        let json = serde_json::to_string(&browse_buttons(ID, false, 0, 2)).unwrap_or_default();
+        for kind in [
+            InteractionKind::Previous,
+            InteractionKind::Next,
+            InteractionKind::OlderVersion,
+            InteractionKind::NewerVersion,
+            InteractionKind::Rollback,
+        ] {
+            let custom_id = kind.pager_custom_id(ID);
+            assert!(
+                json.contains(&format!("\"{custom_id}\"")),
+                "the browser shows a {custom_id} button"
+            );
+        }
+    }
 }

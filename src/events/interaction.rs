@@ -100,10 +100,6 @@ async fn dispatch(
 
     let (id, kind) = (ultimate_interaction.id, ultimate_interaction.kind);
 
-    if matches!(kind, InteractionKind::Confirm | InteractionKind::Cancel) {
-        return Ok(());
-    }
-
     // stopping needs no history load: it just cancels the in-flight stream, which
     // re-renders the frozen reply itself.
     if kind == InteractionKind::Stop {
@@ -147,8 +143,7 @@ async fn dispatch(
             character_fn(ctx, interaction, db, history, cancellations).await?;
         }
         // stop is handled above, before the history load; the rest only ever fire
-        // on the ephemeral /gubbe visa paginator, collected by that command's own
-        // collector, never on a chat message's history
+        // on a character pager, whose prefixed custom_id `route` never parses
         InteractionKind::Stop
         | InteractionKind::Confirm
         | InteractionKind::Cancel
@@ -164,9 +159,11 @@ async fn dispatch(
 /// `Some(_)` is one of Ultimate Harry's persistent message buttons
 /// (`<message_id><tag>`), to be dispatched to the matching handler. `None` is a
 /// button owned by a command's own ephemeral `ComponentInteractionCollector`
-/// (keyed on a bare interaction id, no tag): the global handler must leave it
-/// untouched so the collector can claim it, rather than acknowledging it out from
-/// under the command and breaking the two-modal character create/edit flow.
+/// (keyed on a bare interaction id with no tag, or a `pg`-prefixed pager id):
+/// the global handler must leave it untouched so the collector can claim it,
+/// rather than answering it out from under the command (which broke the
+/// two-modal character create/edit flow and showed a stale-button error on
+/// every character pager press).
 fn route(custom_id: &str) -> Option<Interaction> {
     Interaction::parse(custom_id).ok()
 }
@@ -174,7 +171,7 @@ fn route(custom_id: &str) -> Option<Interaction> {
 /// Tests for routing a pressed component to dispatch or to a command's collector.
 #[cfg(test)]
 mod tests {
-    use super::route;
+    use super::{InteractionKind, route};
 
     /// A command's own collector button (the two-modal "tempting button", keyed
     /// on a bare interaction id with no tag) must route to `None`, so the
@@ -187,6 +184,28 @@ mod tests {
             route(tempting_button).is_none(),
             "a bare interaction id belongs to a command's collector and must be ignored, not errored"
         );
+    }
+
+    /// A character pager's buttons (keyed on the slash command's interaction id,
+    /// itself a snowflake) must route to `None` for every kind, so the global
+    /// handler does not answer them as stale chat buttons.
+    #[test]
+    fn pager_custom_id_is_left_for_its_collector() {
+        for kind in [
+            InteractionKind::Previous,
+            InteractionKind::Next,
+            InteractionKind::Confirm,
+            InteractionKind::Cancel,
+            InteractionKind::OlderVersion,
+            InteractionKind::NewerVersion,
+            InteractionKind::Rollback,
+        ] {
+            let pager_button = kind.pager_custom_id(1_519_649_606_525_386_782_u64);
+            assert!(
+                route(&pager_button).is_none(),
+                "a pager button belongs to its command's collector: {pager_button}"
+            );
+        }
     }
 
     /// A persistent message button (`<message_id><tag>`) still routes to its

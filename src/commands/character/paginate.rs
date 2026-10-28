@@ -36,12 +36,12 @@ mod browse;
 
 pub use browse::browse;
 
-/// The 4 button tags visible on a Confirm/Cancel character paginator embed.
-const BUTTONS: [&str; 4] = [
-    InteractionKind::Confirm.as_tag(),
-    InteractionKind::Cancel.as_tag(),
-    InteractionKind::Previous.as_tag(),
-    InteractionKind::Next.as_tag(),
+/// The 4 button kinds visible on a Confirm/Cancel character paginator embed.
+const BUTTONS: [InteractionKind; 4] = [
+    InteractionKind::Confirm,
+    InteractionKind::Cancel,
+    InteractionKind::Previous,
+    InteractionKind::Next,
 ];
 
 /// Runs a similarity search for `name`, builds the paginated embeds, and drives
@@ -154,7 +154,7 @@ where
     .await?;
 
     while let Some(interaction) = create_collector(ctx, &BUTTONS).await {
-        match Interaction::try_from(&interaction)?.kind {
+        match Interaction::parse_pager(&interaction.data.custom_id)?.kind {
             InteractionKind::Previous => {
                 current_page = wrapping_previous(current_page, pages);
             }
@@ -196,17 +196,23 @@ where
     Ok(())
 }
 
-/// Creates a collector that listens for any of `tags` keyed on the context's ID.
+/// Creates a collector that listens for any of `kinds` keyed on the context's ID.
 /// The paginator message is ephemeral, so only the command author can see and
 /// press these buttons; no author filter is needed.
+///
+/// Exempt from mutation testing: it only awaits a live gateway collector, so no
+/// unit test can tell its result from `None`. The ids it listens on are
+/// covered by the button tests, which pin the same `pager_custom_id` encoding.
 #[must_use]
+#[mutants::skip]
 pub(super) async fn create_collector(
     ctx: Context<'_>,
-    tags: &[&str],
+    kinds: &[InteractionKind],
 ) -> Option<ComponentInteraction> {
     let custom_ids = FixedArray::from_vec_trunc(
-        tags.iter()
-            .map(|suffix| FixedString::from_string_trunc(format!("{}{suffix}", ctx.id())))
+        kinds
+            .iter()
+            .map(|kind| FixedString::from_string_trunc(kind.pager_custom_id(ctx.id())))
             .collect(),
     );
     ComponentInteractionCollector::new(ctx.serenity_context())
@@ -245,10 +251,11 @@ fn create_buttons(
     nav_disabled: bool,
 ) -> Cow<'static, [CreateComponent<'static>]> {
     let buttons = vec![
-        emoji_button(InteractionKind::Previous.custom_id(id), PREVIOUS).disabled(nav_disabled),
-        emoji_button(InteractionKind::Next.custom_id(id), NEXT).disabled(nav_disabled),
-        emoji_button(InteractionKind::Confirm.custom_id(id), action_emoji),
-        emoji_button(InteractionKind::Cancel.custom_id(id), CANCEL),
+        emoji_button(InteractionKind::Previous.pager_custom_id(id), PREVIOUS)
+            .disabled(nav_disabled),
+        emoji_button(InteractionKind::Next.pager_custom_id(id), NEXT).disabled(nav_disabled),
+        emoji_button(InteractionKind::Confirm.pager_custom_id(id), action_emoji),
+        emoji_button(InteractionKind::Cancel.pager_custom_id(id), CANCEL),
     ];
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         buttons.into(),
@@ -306,8 +313,8 @@ where
 /// Builds confirmation buttons with "confirm" and "cancel" actions keyed on `into_id`.
 fn confirm_buttons(into_id: impl Into<u64>) -> Vec<CreateComponent<'static>> {
     let id: u64 = into_id.into();
-    let confirm_id = InteractionKind::Confirm.custom_id(id);
-    let cancel_id = InteractionKind::Cancel.custom_id(id);
+    let confirm_id = InteractionKind::Confirm.pager_custom_id(id);
+    let cancel_id = InteractionKind::Cancel.pager_custom_id(id);
     vec![CreateComponent::ActionRow(CreateActionRow::Buttons(
         vec![
             CreateButton::new(confirm_id)
@@ -336,19 +343,13 @@ pub async fn confirm_prompt<P: Into<String>>(
     prompt: P,
 ) -> AppResult<Option<ComponentInteraction>> {
     let id = ctx.id();
-    let confirm_id = InteractionKind::Confirm.custom_id(id);
+    let confirm_id = InteractionKind::Confirm.pager_custom_id(id);
     interaction
         .create_response(ctx.http(), confirm_interaction_response(id, prompt.into()))
         .await
         .context(SendResponseSnafu)?;
-    let Some(response) = create_collector(
-        ctx,
-        &[
-            InteractionKind::Confirm.as_tag(),
-            InteractionKind::Cancel.as_tag(),
-        ],
-    )
-    .await
+    let Some(response) =
+        create_collector(ctx, &[InteractionKind::Confirm, InteractionKind::Cancel]).await
     else {
         return Ok(None);
     };
@@ -357,5 +358,47 @@ pub async fn confirm_prompt<P: Into<String>>(
     } else {
         notify_cancelled(ctx, response).await?;
         Ok(None)
+    }
+}
+
+/// Tests for the confirm pager's button ids.
+#[cfg(test)]
+mod tests {
+    use super::{confirm_buttons, create_buttons};
+    use crate::events::interaction::InteractionKind;
+
+    /// The pager is keyed on the slash command's interaction id.
+    const ID: u64 = 1_519_649_606_525_386_782;
+
+    /// The page and confirm buttons carry the pager-prefixed ids, so the
+    /// app-wide component handler leaves their presses to the pager.
+    #[test]
+    fn page_buttons_carry_pager_ids() {
+        let json = serde_json::to_string(&create_buttons(ID, "🗑️", false)).unwrap_or_default();
+        for kind in [
+            InteractionKind::Previous,
+            InteractionKind::Next,
+            InteractionKind::Confirm,
+            InteractionKind::Cancel,
+        ] {
+            let custom_id = kind.pager_custom_id(ID);
+            assert!(
+                json.contains(&format!("\"{custom_id}\"")),
+                "the pager shows a {custom_id} button"
+            );
+        }
+    }
+
+    /// The confirm prompt's buttons carry the pager-prefixed ids too.
+    #[test]
+    fn confirm_buttons_carry_pager_ids() {
+        let json = serde_json::to_string(&confirm_buttons(ID)).unwrap_or_default();
+        for kind in [InteractionKind::Confirm, InteractionKind::Cancel] {
+            let custom_id = kind.pager_custom_id(ID);
+            assert!(
+                json.contains(&format!("\"{custom_id}\"")),
+                "the confirm prompt shows a {custom_id} button"
+            );
+        }
     }
 }

@@ -1,11 +1,21 @@
 //! The persistent button-id codec: the interaction-kind vocabulary and the
 //! `<message_id><4-char tag>` `custom_id` encode/decode shared app-wide by the
 //! renderers, the paginators, and the chat-event dispatcher.
+//!
+//! A command pager's buttons carry [`PAGER_PREFIX`] in front of that encoding.
+//! The pager is keyed on its slash command's interaction ID, a snowflake just
+//! like a chat message's ID, so without the prefix the app-wide component
+//! handler would decode a pager press as a chat button and race the pager's own
+//! collector to answer it.
 
 use core::fmt::{self, Display, Formatter};
 use miette::{Diagnostic, SourceSpan};
-use poise::serenity_prelude::{ComponentInteraction, MessageId};
+use poise::serenity_prelude::MessageId;
 use snafu::Snafu;
+
+/// Marks a `custom_id` as a command pager's button, owned by that command's
+/// collector rather than by the app-wide component handler.
+const PAGER_PREFIX: &str = "pg";
 
 /// An interaction that happened on Ultimate Harry.
 #[derive(Debug)]
@@ -130,11 +140,20 @@ impl InteractionKind {
 
     /// Builds the component `custom_id` (`<message_id><4-char tag>`) for this
     /// kind on the message with `into_id`, the inverse of the decode in
-    /// [`Interaction::try_from`].
+    /// [`Interaction::parse`].
     #[must_use]
     pub fn custom_id<T: Into<u64>>(&self, into_id: T) -> String {
         let id: u64 = into_id.into();
         format!("{id}{self}")
+    }
+
+    /// Builds a command pager's `custom_id` (`pg<interaction_id><4-char tag>`)
+    /// for this kind, the inverse of [`Interaction::parse_pager`]. The prefix
+    /// keeps [`Interaction::parse`] from accepting it, so the app-wide handler
+    /// leaves the press to the pager's collector.
+    #[must_use]
+    pub fn pager_custom_id<T: Into<u64>>(&self, into_id: T) -> String {
+        format!("{PAGER_PREFIX}{}", self.custom_id(into_id))
     }
 }
 
@@ -170,13 +189,19 @@ impl Interaction {
         let kind = str_kind.try_into()?;
         Ok(Self { id, kind })
     }
-}
 
-impl TryFrom<&ComponentInteraction> for Interaction {
-    type Error = UnknownInteraction;
-
-    fn try_from(interaction: &ComponentInteraction) -> Result<Self, Self::Error> {
-        Self::parse(&interaction.data.custom_id)
+    /// Parses a command pager's `custom_id` (`pg<interaction_id><4-char tag>`),
+    /// the inverse of [`InteractionKind::pager_custom_id`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnknownInteraction`] if the id lacks the pager prefix or the
+    /// rest is not a valid `<id><tag>` encoding.
+    pub fn parse_pager(custom_id: &str) -> Result<Self, UnknownInteraction> {
+        custom_id
+            .strip_prefix(PAGER_PREFIX)
+            .ok_or_else(|| UnknownInteraction::stale(custom_id))
+            .and_then(Self::parse)
     }
 }
 
@@ -289,6 +314,37 @@ mod tests {
         assert!(
             Interaction::parse("123456zzzz").is_err(),
             "an unknown trailing tag is rejected"
+        );
+    }
+
+    /// A pager `custom_id` round-trips through [`Interaction::parse_pager`] for
+    /// every kind, while [`Interaction::parse`] rejects it, which is what keeps
+    /// the app-wide handler off a pager press.
+    #[test]
+    fn pager_custom_id_round_trips_and_is_not_a_chat_button() {
+        for kind in InteractionKind::ALL {
+            let encoded = kind.pager_custom_id(1_519_649_606_525_386_782_u64);
+            assert!(
+                Interaction::parse(&encoded).is_err(),
+                "a pager id must not decode as a chat button: {encoded}"
+            );
+            let parsed = Interaction::parse_pager(&encoded);
+            assert!(
+                parsed
+                    .as_ref()
+                    .is_ok_and(|interaction| interaction.kind == kind
+                        && interaction.id == MessageId::new(1_519_649_606_525_386_782)),
+                "a pager id decodes back to its kind and id: {encoded}"
+            );
+        }
+    }
+
+    /// A chat button's `custom_id` is not a pager id.
+    #[test]
+    fn chat_custom_id_is_not_a_pager_id() {
+        assert!(
+            Interaction::parse_pager("123456prev").is_err(),
+            "an unprefixed id is rejected by the pager decoder"
         );
     }
 }
