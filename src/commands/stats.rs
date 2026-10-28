@@ -8,14 +8,25 @@ use snafu::ResultExt as _;
 use tracing::warn;
 
 use crate::{
-    AppResult, Context, error::SendMessageSnafu, models::character::Character,
-    traits::SayEphemeral as _,
+    AppResult, Context, error::SendMessageSnafu, models::character::Character, util::ellipsize,
 };
+use poise::{CreateReply, serenity_prelude::CreateEmbed};
 
-/// Swedish header for the character section of the stats message.
-const CHARACTER_HEADER: &str = "## Gubbar";
-/// Swedish header for the per-user section of the stats message.
-const USER_HEADER: &str = "## Användare";
+/// Swedish title of the character section of the stats message.
+const CHARACTER_HEADER: &str = "Gubbar";
+/// Swedish title of the per-user section of the stats message.
+const USER_HEADER: &str = "Användare";
+
+/// How much of the character leaderboard is shown, in characters.
+///
+/// The boards go out as two embeds, since 25 ranked characters alone outgrow a
+/// plain message's 2000 characters. An embed description holds 4096 characters
+/// and a message's embeds share a 6000-character total, so the two boards split
+/// it with room left for the titles.
+const CHARACTER_BOARD_LIMIT: usize = 3800;
+/// How much of the per-user leaderboard is shown, in characters (see
+/// [`CHARACTER_BOARD_LIMIT`]).
+const USER_BOARD_LIMIT: usize = 2000;
 
 /// Visar en topplista över gubbarnas statistik.
 #[poise::command(slash_command, rename = "statistik")]
@@ -31,10 +42,26 @@ pub async fn stats(ctx: Context<'_>) -> AppResult {
 
     let character_board = format_leaderboard(&characters);
     let user_board = format_user_leaderboard(&user_stats, &names);
-    let text = format!("{CHARACTER_HEADER}\n{character_board}\n\n{USER_HEADER}\n{user_board}");
 
-    ctx.say_ephemeral(text).await.context(SendMessageSnafu)?;
+    let mut reply = CreateReply::default().ephemeral(true);
+    for embed in stats_embeds(&character_board, &user_board) {
+        reply = reply.embed(embed);
+    }
+    ctx.send(reply).await.context(SendMessageSnafu)?;
     Ok(())
+}
+
+/// Builds the stats reply's embeds: one per leaderboard, each cut to its share
+/// of Discord's embed limits.
+fn stats_embeds(character_board: &str, user_board: &str) -> [CreateEmbed<'static>; 2] {
+    [
+        CreateEmbed::new()
+            .title(CHARACTER_HEADER)
+            .description(ellipsize(character_board, CHARACTER_BOARD_LIMIT)),
+        CreateEmbed::new()
+            .title(USER_HEADER)
+            .description(ellipsize(user_board, USER_BOARD_LIMIT)),
+    ]
 }
 
 /// One user's conversation stats aggregated across every character.
@@ -178,13 +205,58 @@ fn abbreviate(count: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        UserStats, abbreviate, aggregate_user_stats, format_leaderboard, format_user_leaderboard,
+        CHARACTER_BOARD_LIMIT, CHARACTER_HEADER, USER_BOARD_LIMIT, USER_HEADER, UserStats,
+        abbreviate, aggregate_user_stats, format_leaderboard, format_user_leaderboard,
+        stats_embeds,
     };
     use crate::models::character::Character;
     use alloc::collections::BTreeMap;
     use core::slice::from_ref;
     use jiff::Zoned;
     use serenity::all::UserId;
+
+    /// Both boards go out as titled embeds, each cut to its share of Discord's
+    /// limits, so a long leaderboard is shortened rather than refused.
+    #[test]
+    fn stats_embeds_fit_both_boards() {
+        let long = "x".repeat(10_000);
+        let embeds = stats_embeds(&long, &long)
+            .iter()
+            .map(|embed| serde_json::to_value(embed).unwrap_or_default())
+            .collect::<Vec<serde_json::Value>>();
+        let field = |index: usize, key: &str| {
+            embeds
+                .get(index)
+                .and_then(|embed| embed.get(key))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        };
+        assert_eq!(embeds.len(), 2, "one embed per board");
+        assert_eq!(
+            field(0, "title").as_deref(),
+            Some(CHARACTER_HEADER),
+            "characters first"
+        );
+        assert_eq!(
+            field(1, "title").as_deref(),
+            Some(USER_HEADER),
+            "users second"
+        );
+        assert_eq!(
+            field(0, "description").map(|text| text.chars().count()),
+            Some(CHARACTER_BOARD_LIMIT),
+            "the character board is cut to its share"
+        );
+        assert_eq!(
+            field(1, "description").map(|text| text.chars().count()),
+            Some(USER_BOARD_LIMIT),
+            "the user board is cut to its share"
+        );
+        assert!(
+            CHARACTER_BOARD_LIMIT.saturating_add(USER_BOARD_LIMIT) < 6000,
+            "both boards together fit a message's embed total"
+        );
+    }
 
     /// Builds a character carrying the given name, emoji, and generation stats.
     fn character(
