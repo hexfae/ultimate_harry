@@ -136,6 +136,8 @@
                 clippy = rustToolchain;
               };
               settings.denyWarnings = true;
+              # lint the test modules too, which a bare `cargo clippy` skips
+              settings.extraArgs = "--all-targets";
             };
             treefmt = {
               enable = true;
