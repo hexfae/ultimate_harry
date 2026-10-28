@@ -33,7 +33,7 @@ use tracing::warn;
 use crate::{
     AppResult, ApplicationContext, Context,
     app_state::AppState,
-    constants::TRANSIENT_LINGER,
+    constants::{MAX_RESULTS, TRANSIENT_LINGER},
     database::DatabaseError,
     error::{AppError, DeleteMessageSnafu, SendMessageSnafu},
     llm::{matching_endpoints, matching_model_ids, model_catalog, model_endpoints},
@@ -42,7 +42,7 @@ use crate::{
     shortcodes::strip_custom_emoji,
     traits::SayEphemeral as _,
     tts::{TtsManager, filter_voices},
-    util::report_error,
+    util::{ellipsize, report_error},
 };
 
 /// Returns the full list of the bot's slash commands.
@@ -155,24 +155,46 @@ fn autocomplete_label(character: &Character) -> String {
 }
 
 /// Builds an autocomplete response listing the given characters by name.
-fn choices_from<'a>(characters: Vec<Character>) -> CreateAutocompleteResponse<'a> {
-    let character_names = characters
+fn choices_from<'a>(characters: &[Character]) -> CreateAutocompleteResponse<'a> {
+    autocomplete_response(
+        characters
+            .iter()
+            .map(|character| (autocomplete_label(character), character.name().to_owned()))
+            .collect(),
+    )
+}
+
+/// Discord's limit on an autocomplete choice's label and on its value, in
+/// characters; a response holding a longer one is rejected outright.
+const CHOICE_LIMIT: usize = 100;
+
+/// Fits a list of `(label, value)` choices into what Discord accepts in one
+/// autocomplete response: at most [`MAX_RESULTS`] of them, each label cut to
+/// [`CHOICE_LIMIT`], and any choice whose value is too long to submit dropped
+/// (a cut value would no longer name what it stood for).
+fn fit_choices(choices: Vec<(String, String)>) -> Vec<(String, String)> {
+    choices
         .into_iter()
-        .map(|character| {
-            AutocompleteChoice::new(autocomplete_label(&character), character.name().to_owned())
-        })
+        .filter(|(_, value)| value.chars().count() <= CHOICE_LIMIT)
+        .take(MAX_RESULTS)
+        .map(|(label, value)| (ellipsize(&label, CHOICE_LIMIT), value))
+        .collect()
+}
+
+/// Builds an autocomplete response from `(label, value)` pairs, fitted to
+/// Discord's limits by [`fit_choices`].
+fn autocomplete_response<'a>(choices: Vec<(String, String)>) -> CreateAutocompleteResponse<'a> {
+    let fitted = fit_choices(choices)
+        .into_iter()
+        .map(|(label, value)| AutocompleteChoice::new(label, value))
         .collect::<Vec<AutocompleteChoice<'_>>>();
-    CreateAutocompleteResponse::new().set_choices(character_names)
+    CreateAutocompleteResponse::new().set_choices(fitted)
 }
 
 /// Builds an autocomplete response from the given names, using each as both the
 /// displayed label and the submitted value.
 pub fn autocomplete_from_names<'a>(names: Vec<String>) -> CreateAutocompleteResponse<'a> {
-    let choices = names
-        .into_iter()
-        .map(|name| AutocompleteChoice::new(name.clone(), name))
-        .collect::<Vec<AutocompleteChoice<'_>>>();
-    CreateAutocompleteResponse::new().set_choices(choices)
+    autocomplete_response(names.into_iter().map(|name| (name.clone(), name)).collect())
 }
 
 /// Builds an autocomplete response from a similarity-ranked character query,
@@ -190,7 +212,7 @@ fn autocomplete_from<'a>(
             Vec::new()
         }
     };
-    choices_from(characters)
+    choices_from(&characters)
 }
 
 /// Builds a model-id autocomplete response from the `OpenRouter` catalog,
@@ -267,16 +289,21 @@ fn chosen_option<'a>(args: &'a [ResolvedOption<'a>], name: &str) -> Option<&'a s
 
 /// Builds an autocomplete response of the provider slugs serving `model`, from
 /// the `OpenRouter` endpoint listing.
+///
+/// Exempt from mutation testing: it only shapes what a live `OpenRouter` lookup
+/// returns, and the shaping itself is [`fit_choices`], which is tested.
+#[mutants::skip]
 async fn autocomplete_providers_of<'a>(
     model: &str,
     partial: &str,
 ) -> CreateAutocompleteResponse<'a> {
     let endpoints = model_endpoints(model).await;
-    let choices = matching_endpoints(&endpoints, partial)
-        .into_iter()
-        .map(|endpoint| AutocompleteChoice::new(endpoint.label(), endpoint.tag().to_owned()))
-        .collect::<Vec<AutocompleteChoice<'_>>>();
-    CreateAutocompleteResponse::new().set_choices(choices)
+    autocomplete_response(
+        matching_endpoints(&endpoints, partial)
+            .into_iter()
+            .map(|endpoint| (endpoint.label(), endpoint.tag().to_owned()))
+            .collect(),
+    )
 }
 
 /// Returns an autocomplete response of the `OpenRouter` provider slugs serving
@@ -357,6 +384,11 @@ pub async fn autocomplete_deleted<'a>(
 /// submits its voice ID. A fetch failure (or a missing API key) is swallowed
 /// into an empty list (logged) so the picker stays responsive and a raw ID can
 /// still be pasted.
+///
+/// Exempt from mutation testing: it needs a live command context and the
+/// `ElevenLabs` voice list, and the shaping itself is [`fit_choices`], which is
+/// tested.
+#[mutants::skip]
 pub async fn autocomplete_elevenlabs_voice<'a>(
     ctx: Context<'_>,
     partial: &str,
@@ -370,20 +402,79 @@ pub async fn autocomplete_elevenlabs_voice<'a>(
             Vec::new()
         }
     };
-    let choices = filter_voices(voices, partial)
-        .into_iter()
-        .map(|voice| AutocompleteChoice::new(voice.name, voice.voice_id))
-        .collect::<Vec<AutocompleteChoice<'_>>>();
-    CreateAutocompleteResponse::new().set_choices(choices)
+    autocomplete_response(
+        filter_voices(voices, partial)
+            .into_iter()
+            .map(|voice| (voice.name, voice.voice_id))
+            .collect(),
+    )
 }
 
 /// Tests for the registration split.
 #[cfg(test)]
 mod tests {
-    use super::{is_user_installable, partitioned_commands};
+    use super::{
+        CHOICE_LIMIT, autocomplete_from, autocomplete_from_names, fit_choices, is_user_installable,
+        partitioned_commands,
+    };
     use crate::app_state::AppState;
     use crate::commands::{character, model, say, tts};
+    use crate::constants::MAX_RESULTS;
     use crate::error::AppError;
+    use crate::models::character::Character;
+    use serenity::all::UserId;
+
+    /// Autocomplete choices are capped at Discord's count, labels are cut to
+    /// its length limit, and a value too long to submit is dropped.
+    #[test]
+    fn fit_choices_respects_discords_limits() {
+        let long = "x".repeat(CHOICE_LIMIT.saturating_add(1));
+        let mut choices: Vec<(String, String)> = (0_u32..30)
+            .map(|index| (format!("val {index}"), format!("val {index}")))
+            .collect();
+        choices.insert(0, (long.clone(), "kort".to_owned()));
+        choices.insert(1, ("kort".to_owned(), long.clone()));
+        let fitted = fit_choices(choices);
+        assert_eq!(fitted.len(), MAX_RESULTS, "the list is capped");
+        assert_eq!(
+            fitted.first().map(|(label, _)| label.chars().count()),
+            Some(CHOICE_LIMIT),
+            "an over-long label is cut to the limit"
+        );
+        assert!(
+            fitted.iter().all(|(_, value)| value != &long),
+            "an over-long value is dropped rather than cut"
+        );
+        let exact = "y".repeat(CHOICE_LIMIT);
+        assert_eq!(
+            fit_choices(vec![(exact.clone(), exact.clone())]),
+            vec![(exact.clone(), exact)],
+            "a label and value exactly at the limit are kept whole"
+        );
+    }
+
+    /// The autocomplete builders carry their choices into the response, with a
+    /// character offered under its emoji-prefixed label.
+    #[test]
+    fn autocomplete_builders_carry_their_choices() {
+        let names = serde_json::to_string(&autocomplete_from_names(vec!["Adam".to_owned()]))
+            .unwrap_or_default();
+        assert!(names.contains("Adam"), "the name is offered: {names}");
+        let character = Character::builder()
+            .id("id".to_owned())
+            .name("Harry")
+            .greeting("hej")
+            .creator(UserId::new(1))
+            .emoji("🤖".to_owned())
+            .build();
+        let characters =
+            serde_json::to_string(&autocomplete_from(Ok(vec![character]), "characters"))
+                .unwrap_or_default();
+        assert!(
+            characters.contains("🤖 Harry"),
+            "the character is offered under its label: {characters}"
+        );
+    }
 
     /// Whether `command` has a parameter named `parameter` with an autocomplete callback.
     fn has_autocomplete(command: &poise::Command<AppState, AppError>, parameter: &str) -> bool {
