@@ -18,6 +18,13 @@ pub const AUTO_VALUE: &str = "auto";
 /// The user-facing label for [`AUTO_VALUE`] in the dropdown and the `/säg` autocomplete.
 pub const AUTO_LABEL: &str = "Automatiskt";
 
+/// Whether `choice` is something the voice dropdown offers right now: the auto
+/// entry or a voice in the palette.
+#[must_use]
+pub fn is_offered(settings: &TtsSettings, choice: &str) -> bool {
+    choice == AUTO_VALUE || settings.offers_voice(choice)
+}
+
 /// The voice auto reading falls back to when assignment yields nothing usable:
 /// `character`'s own voice, then the configured generic default, then the first
 /// palette voice, and `None` when none of those is set.
@@ -171,7 +178,7 @@ async fn assign_turns(
 /// Tests for the shared auto-reading fallback resolution.
 #[cfg(test)]
 mod tests {
-    use super::auto_fallback;
+    use super::{AUTO_VALUE, auto_fallback, is_offered};
     use crate::{
         models::character::Character,
         tts::{TtsSettings, VoiceEntry},
@@ -207,6 +214,29 @@ mod tests {
             });
         }
         settings
+    }
+
+    /// The dropdown accepts its auto entry and the palette's voices, and
+    /// nothing else.
+    #[test]
+    fn is_offered_accepts_auto_and_palette_voices() {
+        let palette = settings(Some("palette-id"), None);
+        assert!(
+            is_offered(&palette, AUTO_VALUE),
+            "the auto entry is offered"
+        );
+        assert!(
+            is_offered(&palette, "palette-id"),
+            "a palette voice is offered"
+        );
+        assert!(
+            !is_offered(&palette, "removed-id"),
+            "a voice outside the palette is not"
+        );
+        assert!(
+            !is_offered(&settings(None, None), "palette-id"),
+            "nor is any voice of an empty palette"
+        );
     }
 
     /// A character's own linked voice outranks both the generic default and the palette.

@@ -207,6 +207,16 @@ impl TtsSettings {
         self.voices.len() != before
     }
 
+    /// Whether `voice_id` is one of the palette's voices.
+    ///
+    /// The voice dropdown submits a voice ID that ends up in the synthesis URL,
+    /// and a client can submit any value, so a choice is checked against the
+    /// palette before it is spoken.
+    #[must_use]
+    pub fn offers_voice(&self, voice_id: &str) -> bool {
+        self.voices.iter().any(|voice| voice.voice_id == voice_id)
+    }
+
     /// The synthesis model for solo playback of `voice_id` (the speak button or a
     /// directly chosen dropdown voice): the palette voice with that ID's own model
     /// override if it set a non-empty one, otherwise the configured default model.
@@ -645,6 +655,19 @@ mod tests {
             description: "a test voice".to_owned(),
             model: None,
         }
+    }
+
+    /// Only a voice in the palette is offered, so a forged or removed voice ID
+    /// from a dropdown is refused.
+    #[test]
+    fn offers_voice_only_for_palette_voices() {
+        let mut settings = TtsSettings::default();
+        settings.add_voice(voice_entry("Adam", "adam-id"));
+        assert!(
+            settings.offers_voice("adam-id"),
+            "a palette voice is offered"
+        );
+        assert!(!settings.offers_voice("../voices"), "anything else is not");
     }
 
     /// Builds a palette voice entry carrying the given optional solo model override.
