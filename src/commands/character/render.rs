@@ -9,8 +9,16 @@ use crate::{database::Database, models::character::Character, util::ellipsize};
 /// See [`jiff::fmt::strtime`] for formatting details.
 const GOOD_DATE_FORMAT: &str = "%e %B, %A, %G | %T | %F";
 
-/// Discord's per-field value limit for embeds; longer values are rejected.
-const FIELD_VALUE_LIMIT: usize = 1024;
+/// How much of each free-text field (greeting, nickname, personality, prompts,
+/// scenario, description) the embed shows.
+///
+/// Discord rejects an embed whose text adds up to more than 6000 characters, and
+/// a fully written character has seven such fields. At this length they total at
+/// most 4900, leaving room for the stats, names, dates, and footer.
+const LONG_TEXT_LIMIT: usize = 700;
+
+/// Discord's limit on an embed title, in characters.
+const TITLE_LIMIT: usize = 256;
 
 /// Builds a Discord embed presenting the character with the given footer text.
 ///
@@ -21,7 +29,7 @@ pub async fn character_embed<F: Into<String>>(
     footer_text: F,
     db: &Database,
 ) -> CreateEmbed<'static> {
-    let title = character.to_string();
+    let title = ellipsize(&character.to_string(), TITLE_LIMIT);
     let conversations = character.formatted_conversations_had(db).await;
     let creator_name = db.substitute_name(character.creator()).await;
     let mut editor_names = Vec::new();
@@ -51,7 +59,7 @@ pub async fn character_embed<F: Into<String>>(
         .title(title)
         .field(
             "Hälsning",
-            ellipsize(character.greeting(), FIELD_VALUE_LIMIT),
+            ellipsize(character.greeting(), LONG_TEXT_LIMIT),
             true,
         )
         .field("Konversationer", conversations, true)
@@ -68,31 +76,31 @@ pub async fn character_embed<F: Into<String>>(
         .field("Genererat", character.formatted_generation(), true);
 
     if let Some(nickname) = character.nickname() {
-        embed = embed.field("Smeknamn", ellipsize(nickname, FIELD_VALUE_LIMIT), true);
+        embed = embed.field("Smeknamn", ellipsize(nickname, LONG_TEXT_LIMIT), true);
     }
 
     if let Some(personality) = character.personality() {
         embed = embed.field(
             "Personlighet",
-            ellipsize(personality, FIELD_VALUE_LIMIT),
+            ellipsize(personality, LONG_TEXT_LIMIT),
             true,
         );
     }
 
     if let Some(prompt) = character.prompt() {
-        embed = embed.field("Prompt", ellipsize(prompt, FIELD_VALUE_LIMIT), true);
+        embed = embed.field("Prompt", ellipsize(prompt, LONG_TEXT_LIMIT), true);
     }
 
     if let Some(system_prompt) = character.system_prompt() {
         embed = embed.field(
             "Systemprompt",
-            ellipsize(system_prompt, FIELD_VALUE_LIMIT),
+            ellipsize(system_prompt, LONG_TEXT_LIMIT),
             true,
         );
     }
 
     if let Some(scenario) = character.scenario() {
-        embed = embed.field("Scenario", ellipsize(scenario, FIELD_VALUE_LIMIT), true);
+        embed = embed.field("Scenario", ellipsize(scenario, LONG_TEXT_LIMIT), true);
     }
 
     embed = embed.field("Skapare", creator_name, true);
@@ -128,7 +136,7 @@ pub async fn character_embed<F: Into<String>>(
         embed = embed.color(color);
     }
     if let Some(description) = character.description() {
-        embed = embed.description(description.to_owned());
+        embed = embed.description(ellipsize(description, LONG_TEXT_LIMIT));
     }
     embed
 }
@@ -136,7 +144,7 @@ pub async fn character_embed<F: Into<String>>(
 /// Tests for the stats and metadata surfaced on the character embed.
 #[cfg(test)]
 mod tests {
-    use super::character_embed;
+    use super::{LONG_TEXT_LIMIT, TITLE_LIMIT, character_embed};
     use crate::{database::Database, models::character::Character};
     use alloc::collections::BTreeSet;
     use serenity::all::UserId;
@@ -185,6 +193,79 @@ mod tests {
         assert!(
             json.contains("aldrig"),
             "a never-used character reports last-used as 'aldrig'"
+        );
+    }
+
+    /// Sums the text Discord counts towards an embed's 6000-character total:
+    /// the title, description, footer, and every field's name and value.
+    fn embed_text_length(embed: &serde_json::Value) -> usize {
+        let text = |value: Option<&serde_json::Value>| {
+            value
+                .and_then(serde_json::Value::as_str)
+                .map_or(0, |text| text.chars().count())
+        };
+        let fields = embed
+            .get("fields")
+            .and_then(serde_json::Value::as_array)
+            .map_or(0, |fields| {
+                fields
+                    .iter()
+                    .map(|field| text(field.get("name")).saturating_add(text(field.get("value"))))
+                    .fold(0, usize::saturating_add)
+            });
+        text(embed.get("title"))
+            .saturating_add(text(embed.get("description")))
+            .saturating_add(text(
+                embed.get("footer").and_then(|footer| footer.get("text")),
+            ))
+            .saturating_add(fields)
+    }
+
+    /// A character with every text field filled to the modal's 4000-character
+    /// limit still renders an embed within Discord's limits, rather than one
+    /// Discord rejects.
+    #[tokio::test]
+    async fn a_fully_written_character_fits_the_embed_limits() {
+        let Ok(db) = Database::temporary().await else {
+            return;
+        };
+        let long = "x".repeat(4000);
+        let character = Character::builder()
+            .id("char-id".to_owned())
+            .name(long.as_str())
+            .greeting(long.as_str())
+            .creator(UserId::new(1))
+            .nickname(long.clone())
+            .description(long.clone())
+            .personality(long.clone())
+            .prompt(long.clone())
+            .system_prompt(long.clone())
+            .scenario(long.clone())
+            .build();
+
+        let embed = serde_json::to_value(character_embed(&character, "footer", &db).await)
+            .unwrap_or_default();
+
+        assert!(
+            embed_text_length(&embed) <= 6000,
+            "the embed text totals {} characters",
+            embed_text_length(&embed)
+        );
+        assert_eq!(
+            embed
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .map(|title| title.chars().count()),
+            Some(TITLE_LIMIT),
+            "an over-long name is cut to the title limit"
+        );
+        assert_eq!(
+            embed
+                .get("description")
+                .and_then(serde_json::Value::as_str)
+                .map(|description| description.chars().count()),
+            Some(LONG_TEXT_LIMIT),
+            "the description is cut like the other long fields"
         );
     }
 
