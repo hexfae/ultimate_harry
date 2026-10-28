@@ -19,7 +19,7 @@ use serenity::all::{
 use crate::{
     components::{emoji_button, reaction_from, unicode_emoji},
     constants::{
-        AUTO_VOICE, CHARACTER_LIMIT, CONTINUE, EDIT, NEXT, PIN, PREVIOUS, REDO,
+        AUTO_VOICE, CHARACTER_LIMIT, CONTINUE, EDIT, MAX_RESULTS, NEXT, PIN, PREVIOUS, REDO,
         SELECT_OPTION_LIMIT, SPEAK, STOP, UNDO,
     },
     database::Database,
@@ -619,7 +619,7 @@ fn character_select_menu<'a>(
                             (Some(text), None) => {
                                 ellipsize(&format!("{text} {}", option.name()), SELECT_OPTION_LIMIT)
                             }
-                            _ => option.name().to_owned(),
+                            _ => ellipsize(option.name(), SELECT_OPTION_LIMIT),
                         };
                         let mut menu_option =
                             CreateSelectMenuOption::new(label, option.id().to_owned())
@@ -658,28 +658,43 @@ fn voice_select_menu<'a>(
 
 /// Builds the voice dropdown's options: a leading "automatic" entry followed by
 /// one entry per palette voice, each carrying its emoji and description.
+///
+/// Discord rejects the whole message over a dropdown with more than
+/// [`MAX_RESULTS`] options or with two options sharing a value, so a palette
+/// voice whose ID is already offered is skipped and the list is capped.
 fn voice_options<'a>(voices: &[VoiceEntry]) -> Vec<CreateSelectMenuOption<'a>> {
     let mut options = vec![
         CreateSelectMenuOption::new(read_aloud::AUTO_LABEL, read_aloud::AUTO_VALUE)
             .description("Välj röst(er) automatiskt utifrån innehållet")
             .emoji(unicode_emoji(AUTO_VOICE)),
     ];
-    options.extend(voices.iter().map(|voice| {
-        let mut option = CreateSelectMenuOption::new(voice.name.clone(), voice.voice_id.clone())
-            .description(ellipsize(&voice.description, SELECT_OPTION_LIMIT));
+    let mut offered: Vec<&str> = vec![read_aloud::AUTO_VALUE];
+    for voice in voices {
+        if offered.len() >= MAX_RESULTS || offered.contains(&voice.voice_id.as_str()) {
+            continue;
+        }
+        offered.push(&voice.voice_id);
+        let mut option = CreateSelectMenuOption::new(
+            ellipsize(&voice.name, SELECT_OPTION_LIMIT),
+            voice.voice_id.clone(),
+        )
+        .description(ellipsize(&voice.description, SELECT_OPTION_LIMIT));
         if let Some(emoji) = reaction_from(&voice.emoji) {
             option = option.emoji(emoji);
         }
-        option
-    }));
+        options.push(option);
+    }
     options
 }
 
 /// Tests for the response rendering: footer, body, and the error container.
 #[cfg(test)]
 mod tests {
-    use crate::constants::{CHARACTER_LIMIT, ERROR_COLOUR, ERROR_HEADING};
+    use crate::constants::{
+        CHARACTER_LIMIT, ERROR_COLOUR, ERROR_HEADING, MAX_RESULTS, SELECT_OPTION_LIMIT,
+    };
     use crate::models::{character::Character, history::History, message::Message};
+    use crate::tts::VoiceEntry;
     use core::time::Duration;
     use nonempty::NonEmpty;
     use serenity::all::{Color, MessageId, UserId};
@@ -1014,6 +1029,94 @@ mod tests {
             !json.contains("accent_color"),
             "a colourless placeholder has no accent colour"
         );
+    }
+
+    /// Builds a palette voice with the given name and voice ID.
+    fn palette_voice(name: &str, voice_id: &str) -> VoiceEntry {
+        VoiceEntry {
+            name: name.to_owned(),
+            voice_id: voice_id.to_owned(),
+            emoji: "🎙️".to_owned(),
+            description: "en röst".to_owned(),
+            model: None,
+        }
+    }
+
+    /// The voice dropdown never offers more options than Discord allows, and
+    /// never two options with the same value, either of which would make Discord
+    /// reject the whole reply.
+    #[test]
+    fn voice_options_are_capped_and_unique() {
+        let mut voices: Vec<VoiceEntry> = (0_u32..40)
+            .map(|index| palette_voice(&format!("röst {index}"), &format!("id-{index}")))
+            .collect();
+        voices.insert(1, palette_voice("dubblett", "id-0"));
+        let options = serde_json::to_value(super::voice_options(&voices)).unwrap_or_default();
+        let values: Vec<&str> = options
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|option| option.get("value").and_then(serde_json::Value::as_str))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(values.len(), MAX_RESULTS, "the dropdown is capped");
+        let mut unique = values.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), values.len(), "every option value is unique");
+        assert_eq!(
+            values.get(1),
+            Some(&"id-0"),
+            "the first entry for a voice ID wins"
+        );
+    }
+
+    /// A character "emoji" that is not really an emoji is moved into the
+    /// hand-off option's label, since Discord rejects it in the emoji slot.
+    #[test]
+    fn handoff_label_carries_a_free_text_emoji() {
+        let character = Character::builder()
+            .id("id".to_owned())
+            .name("Harry")
+            .greeting("hi")
+            .creator(UserId::new(1))
+            .emoji("Ansikte".to_owned())
+            .build();
+        let menu =
+            super::character_select_menu("1char".to_owned(), &[character.to_menu_option()], true);
+        let rendered = serde_json::to_value(menu).unwrap_or_default().to_string();
+        assert!(
+            rendered.contains("\"Ansikte Harry\""),
+            "the free text leads the label: {rendered}"
+        );
+    }
+
+    /// Over-long names are cut to fit Discord's option label limit, in both the
+    /// hand-off and the voice dropdowns.
+    #[test]
+    fn dropdown_labels_fit_the_option_limit() {
+        let long = "x".repeat(SELECT_OPTION_LIMIT.saturating_mul(2));
+        let voices = super::voice_options(&[palette_voice(&long, "id")]);
+        let character = Character::builder()
+            .id("id".to_owned())
+            .name(long.as_str())
+            .greeting("hi")
+            .creator(UserId::new(1))
+            .build();
+        let menu =
+            super::character_select_menu("1char".to_owned(), &[character.to_menu_option()], true);
+        for json in [serde_json::to_value(voices), serde_json::to_value(menu)] {
+            let rendered = json.unwrap_or_default().to_string();
+            assert!(
+                !rendered.contains(&long),
+                "the full over-long name is never sent"
+            );
+            assert!(
+                rendered.contains(&"x".repeat(SELECT_OPTION_LIMIT.saturating_sub(1))),
+                "the name is cut to the limit, not dropped"
+            );
+        }
     }
 
     /// Builds a finished single-reply history with the given content.
