@@ -935,21 +935,21 @@ mod tests {
         let settings = body.get("voice_settings");
         assert_eq!(
             settings
-                .and_then(|settings| settings.get("stability"))
+                .and_then(|voice_settings| voice_settings.get("stability"))
                 .and_then(serde_json::Value::as_f64),
-            Some(0.0),
+            Some(0.0_f64),
             "stability is zero for maximum emotional range"
         );
         assert_eq!(
             settings
-                .and_then(|settings| settings.get("similarity_boost"))
+                .and_then(|voice_settings| voice_settings.get("similarity_boost"))
                 .and_then(serde_json::Value::as_f64),
-            Some(1.0),
+            Some(1.0_f64),
             "similarity is one for the closest match to the reference voice"
         );
         assert!(
             settings
-                .and_then(|settings| settings.get("use_speaker_boost"))
+                .and_then(|voice_settings| voice_settings.get("use_speaker_boost"))
                 .is_none(),
             "Eleven v4 has no speaker boost, so it is left unset"
         );
@@ -997,16 +997,16 @@ mod tests {
         let settings = body.get("settings");
         assert_eq!(
             settings
-                .and_then(|settings| settings.get("stability"))
+                .and_then(|voice_settings| voice_settings.get("stability"))
                 .and_then(serde_json::Value::as_f64),
-            Some(0.0),
+            Some(0.0_f64),
             "the dialogue request pins stability to zero as well"
         );
         assert_eq!(
             settings
-                .and_then(|settings| settings.get("similarity"))
+                .and_then(|voice_settings| voice_settings.get("similarity"))
                 .and_then(serde_json::Value::as_f64),
-            Some(1.0),
+            Some(1.0_f64),
             "the dialogue request pins similarity to one as well"
         );
     }
