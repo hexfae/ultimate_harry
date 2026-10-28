@@ -11,6 +11,7 @@ use crate::http::http;
 use crate::models::message::{EncodedAudio, audio_format_from_url};
 use crate::tts::{DialogueTurn, VoiceEntry};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use core::time::Duration;
 use rig::agent::StreamingError;
 use rig::completion::CompletionError;
 use rig::http_client::Error as RigError;
@@ -19,6 +20,7 @@ use serde::Deserialize;
 use snafu::{IntoError, OptionExt as _, ResultExt as _};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
+use std::time::Instant;
 
 use super::{
     AddTagsSnafu, AssignVoicesSnafu, DescribeImageSnafu, EmptyDescriptionSnafu, EmptyTagsSnafu,
@@ -308,19 +310,49 @@ fn parse_dialogue_turns(content: &str) -> Option<Vec<DialogueTurn>> {
     }
 }
 
+/// How long a fetched catalog or endpoint list is served from its cache before
+/// it is fetched again.
+///
+/// Long enough that autocomplete is not a request per keystroke, short enough
+/// that a model released (or a provider added) while the bot runs shows up
+/// without a restart.
+const CACHE_LIFETIME: Duration = Duration::from_hours(1);
+
+/// A cached value and when it was fetched.
+#[derive(Clone)]
+struct Fetched<T> {
+    /// When the value was fetched.
+    at: Instant,
+    /// The fetched value.
+    value: T,
+}
+
+impl<T: Clone> Fetched<T> {
+    /// Wraps `value`, fetched at `at`.
+    const fn new(value: T, at: Instant) -> Self {
+        Self { at, value }
+    }
+
+    /// The value, unless it is older than [`CACHE_LIFETIME`] at `now`.
+    fn fresh(&self, now: Instant) -> Option<T> {
+        (now.saturating_duration_since(self.at) < CACHE_LIFETIME).then(|| self.value.clone())
+    }
+}
+
 /// Process-wide cache of the `OpenRouter` model catalog, so the model list is fetched at most
-/// once per process. Empty until the first successful fetch.
-static CATALOG_CACHE: LazyLock<Mutex<Vec<ModelEntry>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+/// once per [`CACHE_LIFETIME`]. Empty until the first successful fetch.
+static CATALOG_CACHE: Mutex<Option<Fetched<Vec<ModelEntry>>>> = Mutex::new(None);
 
 /// The `OpenRouter` model catalog, fetched on the first call and served from the process-wide
-/// cache afterwards. Backs both the modality probing and the model-id autocomplete.
+/// cache until it is [`CACHE_LIFETIME`] old. Backs both the modality probing and the model-id
+/// autocomplete.
+///
+/// Exempt from mutation testing: past the cache it is a live `OpenRouter`
+/// request, and the cache's expiry is [`Fetched::fresh`], which is tested.
+#[mutants::skip]
 pub async fn model_catalog() -> Result<Vec<ModelEntry>, LlmError> {
-    if let Some(cached) = CATALOG_CACHE
-        .lock()
-        .ok()
-        .filter(|locked| !locked.is_empty())
-        .map(|locked| locked.clone())
-    {
+    let now = Instant::now();
+    if let Some(cached) = cached_catalog(&CATALOG_CACHE, now) {
         return Ok(cached);
     }
     let response = http()
@@ -333,29 +365,42 @@ pub async fn model_catalog() -> Result<Vec<ModelEntry>, LlmError> {
         .await
         .context(ListModelsSnafu)?;
     if let Ok(mut locked) = CATALOG_CACHE.lock() {
-        locked.clone_from(&models.data);
+        *locked = Some(Fetched::new(models.data.clone(), now));
     }
     Ok(models.data)
 }
 
+/// The catalog cached in `slot`, unless it is missing, empty, or stale at `now`.
+fn cached_catalog(
+    slot: &Mutex<Option<Fetched<Vec<ModelEntry>>>>,
+    now: Instant,
+) -> Option<Vec<ModelEntry>> {
+    let locked = slot.lock().ok()?;
+    locked
+        .as_ref()?
+        .fresh(now)
+        .filter(|models| !models.is_empty())
+}
+
 /// Process-wide cache of model id to the provider slugs serving it, so a
-/// provider lookup costs at most one request per model per process. Endpoint
-/// lists churn, but the bot is long-lived and a stale slug is caught by the
-/// request failing, so caching beats re-fetching on every keystroke.
-static ENDPOINTS_CACHE: LazyLock<Mutex<HashMap<String, Vec<EndpointEntry>>>> =
+/// provider lookup costs at most one request per model per [`CACHE_LIFETIME`].
+/// A slug that goes stale in between is caught by the request failing, so
+/// caching beats re-fetching on every keystroke.
+static ENDPOINTS_CACHE: LazyLock<Mutex<HashMap<String, Fetched<Vec<EndpointEntry>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// The provider slugs serving `model`, from the process-wide cache when present.
+/// The provider slugs serving `model`, from the process-wide cache when fresh.
 ///
 /// Backs the provider autocomplete and the check that drops a pin the new model
 /// does not offer. An unknown model yields no endpoints rather than an error, so
 /// a bad model id cannot wedge the `/modell` command.
+///
+/// Exempt from mutation testing: past the cache it is a live `OpenRouter`
+/// request, and the cache's expiry is [`Fetched::fresh`], which is tested.
+#[mutants::skip]
 pub async fn model_endpoints(model: &str) -> Vec<EndpointEntry> {
-    if let Some(cached) = ENDPOINTS_CACHE
-        .lock()
-        .ok()
-        .and_then(|locked| locked.get(model).cloned())
-    {
+    let now = Instant::now();
+    if let Some(cached) = cached_endpoints(&ENDPOINTS_CACHE, model, now) {
         return cached;
     }
     let url = format!("{MODELS_URL}/{model}/endpoints");
@@ -370,9 +415,20 @@ pub async fn model_endpoints(model: &str) -> Vec<EndpointEntry> {
     };
     let endpoints = parsed.data.endpoints;
     if let Ok(mut locked) = ENDPOINTS_CACHE.lock() {
-        locked.insert(model.to_owned(), endpoints.clone());
+        locked.insert(model.to_owned(), Fetched::new(endpoints.clone(), now));
     }
     endpoints
+}
+
+/// The endpoints of `model` cached in `slot`, unless they are missing or stale
+/// at `now`.
+fn cached_endpoints(
+    slot: &Mutex<HashMap<String, Fetched<Vec<EndpointEntry>>>>,
+    model: &str,
+    now: Instant,
+) -> Option<Vec<EndpointEntry>> {
+    let locked = slot.lock().ok()?;
+    locked.get(model)?.fresh(now)
 }
 
 /// Drops a provider pin that `model` does not serve, so switching models never
@@ -791,16 +847,44 @@ struct ChatMessageContent {
 #[cfg(test)]
 mod tests {
     use super::{
-        Architecture, ChatResponse, EndpointsResponse, LlmError, MAX_MODEL_CHOICES, ModelEntry,
-        ModelsResponse, Reasoning, api_error_message, extract_description, fields_insert_provider,
+        Architecture, CACHE_LIFETIME, ChatResponse, EndpointsResponse, Fetched, LlmError,
+        MAX_MODEL_CHOICES, ModelEntry, ModelsResponse, Reasoning, api_error_message,
+        cached_catalog, cached_endpoints, extract_description, fields_insert_provider,
         matching_endpoints, matching_model_ids, model_reasoning_mandatory, model_supports_modality,
         parse_dialogue_turns, pin_for_model, provider_rejection, rejection_error, rejection_of,
     };
     use crate::llm::ModelSettings;
+    use core::time::Duration;
     use reqwest::StatusCode;
     use rig::agent::StreamingError;
     use rig::completion::CompletionError;
     use rig::http_client::{Error as RigError, HeaderMap};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    /// A cached value is served until it is [`CACHE_LIFETIME`] old, then
+    /// refetched.
+    #[test]
+    fn a_cached_value_expires_after_its_lifetime() {
+        let fetched_at = Instant::now();
+        let fetched = Fetched::new(7_u8, fetched_at);
+        let just_before = CACHE_LIFETIME
+            .checked_sub(Duration::from_secs(1))
+            .and_then(|age| fetched_at.checked_add(age));
+        let at_expiry = fetched_at.checked_add(CACHE_LIFETIME);
+        assert_eq!(fetched.fresh(fetched_at), Some(7), "a new value is served");
+        assert_eq!(
+            just_before.and_then(|now| fetched.fresh(now)),
+            Some(7),
+            "a value just short of its lifetime is served"
+        );
+        assert_eq!(
+            at_expiry.and_then(|now| fetched.fresh(now)),
+            None,
+            "a value at its lifetime is refetched"
+        );
+    }
 
     /// Builds an endpoint entry with the given slug, provider name, and quantization.
     fn endpoint(tag: &str, provider_name: &str, quantization: &str) -> super::EndpointEntry {
@@ -1067,6 +1151,65 @@ mod tests {
         assert!(
             extract_description(&blank).is_none(),
             "blank content yields no description"
+        );
+    }
+
+    /// The catalog cache serves a fresh, non-empty catalog and nothing else.
+    #[test]
+    fn cached_catalog_serves_only_a_fresh_non_empty_catalog() {
+        let now = Instant::now();
+        let later = now.checked_add(CACHE_LIFETIME);
+        let empty: Mutex<Option<Fetched<Vec<ModelEntry>>>> = Mutex::new(None);
+        assert!(
+            cached_catalog(&empty, now).is_none(),
+            "nothing is cached yet"
+        );
+        let stored = Mutex::new(Some(Fetched::new(
+            vec![entry("vendor/model", &["text"])],
+            now,
+        )));
+        assert_eq!(
+            cached_catalog(&stored, now).map(|models| models.len()),
+            Some(1),
+            "a fresh catalog is served"
+        );
+        assert!(
+            later.is_some_and(|stale| cached_catalog(&stored, stale).is_none()),
+            "a stale catalog is refetched"
+        );
+        let blank = Mutex::new(Some(Fetched::new(Vec::new(), now)));
+        assert!(
+            cached_catalog(&blank, now).is_none(),
+            "an empty catalog is refetched rather than served"
+        );
+    }
+
+    /// The endpoints cache serves a fresh listing for the model asked about.
+    #[test]
+    fn cached_endpoints_serves_a_fresh_listing_per_model() {
+        let json = r#"{"data":{"endpoints":[{"tag":"baidu/fp8","provider_name":"Baidu"}]}}"#;
+        let endpoints = serde_json::from_str::<EndpointsResponse>(json)
+            .map(|listing| listing.data.endpoints)
+            .unwrap_or_default();
+        assert_eq!(endpoints.len(), 1, "the fixture listing parses");
+        let now = Instant::now();
+        let slot = Mutex::new(HashMap::from([(
+            "vendor/model".to_owned(),
+            Fetched::new(endpoints, now),
+        )]));
+        assert_eq!(
+            cached_endpoints(&slot, "vendor/model", now).map(|found| found.len()),
+            Some(1),
+            "the cached model's listing is served"
+        );
+        assert!(
+            cached_endpoints(&slot, "vendor/other", now).is_none(),
+            "another model is not"
+        );
+        assert!(
+            now.checked_add(CACHE_LIFETIME)
+                .is_some_and(|stale| cached_endpoints(&slot, "vendor/model", stale).is_none()),
+            "a stale listing is refetched"
         );
     }
 
