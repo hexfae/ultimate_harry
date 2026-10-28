@@ -222,14 +222,20 @@ impl Database {
         Ok(Some(superseded))
     }
 
-    /// Sets a character's AI model settings override.
+    /// Sets a character's AI model settings override. An override that
+    /// overrides nothing is removed instead, so the character is reported as
+    /// inheriting the global settings again.
     pub async fn set_character_model_settings(
         &self,
         id: &str,
         model_settings: CharacterModelSettings,
     ) -> Result<Option<Character>, DatabaseError> {
         self.mutate_character(id, UpdateSnafu, |character| {
-            character.set_model_settings(model_settings);
+            if model_settings.is_empty() {
+                character.clear_model_settings();
+            } else {
+                character.set_model_settings(model_settings);
+            }
         })
         .await
     }
@@ -247,15 +253,16 @@ impl Database {
         .await
     }
 
-    /// Sets a character's embed color. Returns the updated character, or `Ok(None)`
-    /// if the character is missing.
+    /// Sets (or, with `None`, clears) a character's embed color. Returns the
+    /// updated character, or `Ok(None)` if the character is missing.
     pub async fn set_character_color(
         &self,
         id: &str,
-        color: Color,
+        color: Option<Color>,
     ) -> Result<Option<Character>, DatabaseError> {
-        self.mutate_character(id, UpdateSnafu, |character| {
-            character.set_color(color);
+        self.mutate_character(id, UpdateSnafu, |character| match color {
+            Some(chosen) => character.set_color(chosen),
+            None => character.clear_color(),
         })
         .await
     }

@@ -22,7 +22,7 @@ pub async fn model(
     #[autocomplete = autocomplete_model]
     model: Option<String>,
     #[rename = "leverantör"]
-    #[description = "Leverantören att låsa modellen till"]
+    #[description = "Leverantören att låsa modellen till (ingen = ingen låsning)"]
     #[autocomplete = autocomplete_provider]
     provider: Option<String>,
     #[rename = "api-nyckel"]
@@ -32,11 +32,11 @@ pub async fn model(
     #[description = "Temperaturen (högre = mer slumpmässig)"]
     temperature: Option<f32>,
     #[rename = "syn-modell"]
-    #[description = "Modellen som beskriver bilder för modeller utan syn"]
+    #[description = "Modellen som beskriver bilder för modeller utan syn (ingen = av)"]
     #[autocomplete = autocomplete_vision_model]
     vision_model: Option<String>,
     #[rename = "ljud-modell"]
-    #[description = "Modellen som transkriberar ljud för modeller utan ljud"]
+    #[description = "Modellen som transkriberar ljud för modeller utan ljud (ingen = av)"]
     #[autocomplete = autocomplete_audio_model]
     audio_model: Option<String>,
 ) -> AppResult {

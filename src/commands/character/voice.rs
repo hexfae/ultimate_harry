@@ -6,6 +6,7 @@ use crate::{
     error::SendMessageSnafu,
     phrases,
     traits::SayEphemeral as _,
+    util::unless_cleared,
 };
 use snafu::ResultExt as _;
 
@@ -18,7 +19,7 @@ pub async fn voice(
     #[autocomplete = autocomplete]
     name: String,
     #[rename = "röst-id"]
-    #[description = "ElevenLabs röst-ID (lämna tomt för att visa nuvarande)"]
+    #[description = "ElevenLabs röst-ID, eller ingen (lämna tomt för att visa nuvarande)"]
     #[autocomplete = autocomplete_elevenlabs_voice]
     voice: Option<String>,
 ) -> AppResult {
@@ -35,7 +36,7 @@ pub async fn voice(
         return Ok(());
     };
 
-    db.set_character_voice(character.id(), Some(new_voice))
+    db.set_character_voice(character.id(), unless_cleared(new_voice))
         .await?;
     ctx.say_ephemeral(phrases::done())
         .await

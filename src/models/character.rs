@@ -278,6 +278,11 @@ impl Character {
         self.color = Some(color);
     }
 
+    /// Clears the character's embed color, leaving its replies untinted.
+    pub const fn clear_color(&mut self) {
+        self.color = None;
+    }
+
     /// Returns the character's emoji.
     #[must_use]
     pub fn emoji(&self) -> Option<&str> {
@@ -436,6 +441,12 @@ impl Character {
     /// Sets the character's model settings override.
     pub fn set_model_settings(&mut self, model_settings: CharacterModelSettings) {
         self.model_settings = Some(model_settings);
+    }
+
+    /// Clears the character's model settings override, so it inherits the
+    /// global settings again.
+    pub fn clear_model_settings(&mut self) {
+        self.model_settings = None;
     }
 
     /// Returns the character's linked `ElevenLabs` voice ID, if any.

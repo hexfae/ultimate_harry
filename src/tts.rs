@@ -2,6 +2,7 @@
 
 use crate::http::http;
 use crate::models::character::Character;
+use crate::util::unless_cleared;
 use jiff::Zoned;
 use miette::Diagnostic;
 use serde::{Deserialize, Serialize};
@@ -243,18 +244,21 @@ impl TtsSettings {
     }
 
     /// Overrides any field for which a new value is supplied, leaving the rest untouched.
+    ///
+    /// The optional settings (the default voice and the tag model) are cleared by
+    /// supplying [`CLEAR_KEYWORD`](crate::util::CLEAR_KEYWORD).
     pub fn apply_overrides(&mut self, overrides: TtsOverrides) {
         if let Some(new_api_key) = overrides.api_key {
             self.api_key = new_api_key;
         }
         if let Some(new_default_voice) = overrides.default_voice {
-            self.default_voice = Some(new_default_voice);
+            self.default_voice = unless_cleared(new_default_voice);
         }
         if let Some(new_model) = overrides.model {
             self.model = new_model;
         }
         if let Some(new_tag_model) = overrides.tag_model {
-            self.tag_model = Some(new_tag_model);
+            self.tag_model = unless_cleared(new_tag_model);
         }
     }
 

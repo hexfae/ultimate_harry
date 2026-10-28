@@ -68,7 +68,7 @@ async fn mutations_reject_path_traversal_ids() {
     );
 
     let recolored = db
-        .set_character_color(traversal, Color::new(0x00ff_0000))
+        .set_character_color(traversal, Some(Color::new(0x00ff_0000)))
         .await;
     assert!(
         matches!(recolored, Ok(None)),
@@ -212,6 +212,16 @@ async fn set_character_model_settings_records_an_override() {
         "setting model settings records the override's contents and returns the character"
     );
 
+    let emptied = db
+        .set_character_model_settings("char-id", CharacterModelSettings::default())
+        .await;
+    assert!(
+        emptied.as_ref().is_ok_and(|found| found
+            .as_ref()
+            .is_some_and(|record| !record.has_model_settings())),
+        "an override of nothing is removed, so the character inherits the globals again"
+    );
+
     let missing = db
         .set_character_model_settings("missing", CharacterModelSettings::default())
         .await;
@@ -273,7 +283,7 @@ async fn set_character_color_records_a_color() {
     insert(&db, character("char-id", "Harry")).await;
 
     let set = db
-        .set_character_color("char-id", Color::new(0x00ff_0000))
+        .set_character_color("char-id", Some(Color::new(0x00ff_0000)))
         .await;
     assert!(
         set.as_ref().is_ok_and(|found| found
@@ -282,8 +292,16 @@ async fn set_character_color_records_a_color() {
         "setting a color records it and returns the character"
     );
 
+    let cleared = db.set_character_color("char-id", None).await;
+    assert!(
+        cleared.as_ref().is_ok_and(|found| found
+            .as_ref()
+            .is_some_and(|record| record.color().is_none())),
+        "setting no color clears it"
+    );
+
     let missing = db
-        .set_character_color("missing", Color::new(0x00ff_0000))
+        .set_character_color("missing", Some(Color::new(0x00ff_0000)))
         .await;
     assert!(
         matches!(missing, Ok(None)),

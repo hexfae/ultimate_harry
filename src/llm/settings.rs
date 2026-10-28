@@ -4,6 +4,7 @@
 //! Split out from `llm.rs`; these plain data types are imported independently of the
 //! streaming and REST layers by the database, the character model, and the model command.
 
+use crate::util::unless_cleared;
 use serde::{Deserialize, Serialize};
 
 /// The settings for the AI model.
@@ -82,6 +83,9 @@ impl ModelSettings {
     }
 
     /// Overrides any field for which a new value is supplied, leaving the rest untouched.
+    ///
+    /// The optional settings (the provider pin and the fallback models) are
+    /// cleared by supplying [`CLEAR_KEYWORD`](crate::util::CLEAR_KEYWORD).
     pub fn apply_overrides(&mut self, overrides: ModelOverrides) {
         if let Some(new_model) = overrides.model {
             self.model = new_model;
@@ -93,13 +97,13 @@ impl ModelSettings {
             self.temperature = new_temperature;
         }
         if let Some(new_provider) = overrides.provider {
-            self.provider = Some(new_provider);
+            self.provider = unless_cleared(new_provider);
         }
         if let Some(new_vision_model) = overrides.vision_model {
-            self.vision_model = Some(new_vision_model);
+            self.vision_model = unless_cleared(new_vision_model);
         }
         if let Some(new_audio_model) = overrides.audio_model {
-            self.audio_model = Some(new_audio_model);
+            self.audio_model = unless_cleared(new_audio_model);
         }
     }
 }
@@ -140,6 +144,15 @@ pub struct CharacterModelSettings {
     pub temperature: Option<f32>,
 }
 
+impl CharacterModelSettings {
+    /// Returns `true` when nothing is overridden, so the character simply runs
+    /// on the global settings.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.model.is_none() && self.provider.is_none() && self.temperature.is_none()
+    }
+}
+
 /// The optional model-setting overrides supplied by the `/modell` commands.
 ///
 /// Each present field replaces the corresponding setting; an all-`None` bundle
@@ -176,7 +189,57 @@ impl ModelOverrides {
 /// Tests for the model-settings overrides and summary.
 #[cfg(test)]
 mod tests {
-    use super::{ModelOverrides, ModelSettings};
+    use super::{CharacterModelSettings, ModelOverrides, ModelSettings};
+    use crate::util::CLEAR_KEYWORD;
+
+    /// A character override is empty only when it overrides nothing at all.
+    #[test]
+    fn character_overrides_are_empty_only_without_any_field() {
+        assert!(
+            CharacterModelSettings::default().is_empty(),
+            "no field set is empty"
+        );
+        for single in [
+            CharacterModelSettings {
+                model: Some("vendor/model".to_owned()),
+                ..CharacterModelSettings::default()
+            },
+            CharacterModelSettings {
+                provider: Some("vendor/fp8".to_owned()),
+                ..CharacterModelSettings::default()
+            },
+            CharacterModelSettings {
+                temperature: Some(0.5),
+                ..CharacterModelSettings::default()
+            },
+        ] {
+            assert!(!single.is_empty(), "one set field is enough: {single:?}");
+        }
+    }
+
+    /// The clear keyword removes the provider pin and the fallback models.
+    #[test]
+    fn model_apply_overrides_clears_the_optional_settings() {
+        let mut settings = ModelSettings {
+            provider: Some("baidu/fp8".to_owned()),
+            ..ModelSettings::default()
+        };
+        settings.apply_overrides(ModelOverrides {
+            provider: Some(CLEAR_KEYWORD.to_owned()),
+            vision_model: Some(CLEAR_KEYWORD.to_owned()),
+            audio_model: Some(CLEAR_KEYWORD.to_owned()),
+            ..ModelOverrides::default()
+        });
+        assert_eq!(settings.provider, None, "the pin is removed");
+        assert_eq!(
+            settings.vision_model, None,
+            "the vision fallback is turned off"
+        );
+        assert_eq!(
+            settings.audio_model, None,
+            "the audio fallback is turned off"
+        );
+    }
 
     /// `apply_overrides` replaces only the supplied fields, across each branch.
     #[test]

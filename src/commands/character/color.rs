@@ -6,6 +6,7 @@ use crate::{
     error::SendMessageSnafu,
     phrases,
     traits::SayEphemeral as _,
+    util::unless_cleared,
 };
 use poise::serenity_prelude::all::Color;
 use snafu::ResultExt as _;
@@ -20,6 +21,23 @@ fn parse_color(input: &str) -> Option<Color> {
     u32::from_str_radix(digits, 16).ok().map(Color::new)
 }
 
+/// What a valid `färg` value asks for.
+#[derive(Debug, PartialEq, Eq)]
+enum ColorChoice {
+    /// Tint the character with this color.
+    Set(Color),
+    /// Remove the character's color (the clear keyword).
+    Clear,
+}
+
+/// Reads a `färg` value as a [`ColorChoice`], or `None` for a value that is
+/// neither a hex color nor the clear keyword.
+fn color_choice(input: &str) -> Option<ColorChoice> {
+    unless_cleared(input.to_owned()).map_or(Some(ColorChoice::Clear), |value| {
+        parse_color(&value).map(ColorChoice::Set)
+    })
+}
+
 /// Ställer in en gubbes färg.
 #[poise::command(slash_command, rename = "färg")]
 pub async fn color(
@@ -29,7 +47,7 @@ pub async fn color(
     #[autocomplete = autocomplete]
     name: String,
     #[rename = "färg"]
-    #[description = "Hexfärg, t.ex. #ff0000 (lämna tomt för att visa nuvarande)"]
+    #[description = "Hexfärg, t.ex. #ff0000, eller ingen (lämna tomt för att visa nuvarande)"]
     color: Option<String>,
 ) -> AppResult {
     let db = &ctx.data().db;
@@ -47,7 +65,7 @@ pub async fn color(
         return Ok(());
     };
 
-    let Some(parsed) = parse_color(&input) else {
+    let Some(parsed) = color_choice(&input) else {
         ctx.say_ephemeral(
             "Det där var ingen färg jag känner igen. Ge mig en hexfärg, typ #ff0000.",
         )
@@ -56,7 +74,11 @@ pub async fn color(
         return Ok(());
     };
 
-    db.set_character_color(character.id(), parsed).await?;
+    let new_color = match parsed {
+        ColorChoice::Set(chosen) => Some(chosen),
+        ColorChoice::Clear => None,
+    };
+    db.set_character_color(character.id(), new_color).await?;
     ctx.say_ephemeral(phrases::done())
         .await
         .context(SendMessageSnafu)?;
@@ -65,7 +87,8 @@ pub async fn color(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_color;
+    use super::{ColorChoice, color_choice, parse_color};
+    use crate::util::CLEAR_KEYWORD;
     use serenity::all::Color;
 
     /// A plain six-digit hex string parses to the matching color.
@@ -120,5 +143,22 @@ mod tests {
     #[test]
     fn rejects_a_leading_sign() {
         assert_eq!(parse_color("+f0000"), None);
+    }
+
+    /// The clear keyword asks for no color, a hex value for that color, and
+    /// anything else is refused.
+    #[test]
+    fn color_choice_sets_clears_or_refuses() {
+        assert_eq!(
+            color_choice(CLEAR_KEYWORD),
+            Some(ColorChoice::Clear),
+            "the keyword clears"
+        );
+        assert_eq!(
+            color_choice("#ff0000"),
+            Some(ColorChoice::Set(Color::new(0x00ff_0000))),
+            "a hex value sets that color"
+        );
+        assert_eq!(color_choice("röd"), None, "anything else is refused");
     }
 }

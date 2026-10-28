@@ -42,7 +42,7 @@ use crate::{
     shortcodes::strip_custom_emoji,
     traits::SayEphemeral as _,
     tts::{TtsManager, filter_voices},
-    util::{ellipsize, report_error},
+    util::{CLEAR_KEYWORD, ellipsize, report_error},
 };
 
 /// Returns the full list of the bot's slash commands.
@@ -302,12 +302,21 @@ async fn autocomplete_providers_of<'a>(
     partial: &str,
 ) -> CreateAutocompleteResponse<'a> {
     let endpoints = model_endpoints(model).await;
-    autocomplete_response(
+    let mut choices: Vec<(String, String)> = clear_choice(partial).into_iter().collect();
+    choices.extend(
         matching_endpoints(&endpoints, partial)
             .into_iter()
-            .map(|endpoint| (endpoint.label(), endpoint.tag().to_owned()))
-            .collect(),
-    )
+            .map(|endpoint| (endpoint.label(), endpoint.tag().to_owned())),
+    );
+    autocomplete_response(choices)
+}
+
+/// The "no pin" choice offered first in the provider autocomplete, submitting
+/// the clear keyword, as long as what the user has typed could still be it.
+fn clear_choice(partial: &str) -> Option<(String, String)> {
+    CLEAR_KEYWORD
+        .starts_with(&partial.trim().to_lowercase())
+        .then(|| ("ingen (ingen låsning)".to_owned(), CLEAR_KEYWORD.to_owned()))
 }
 
 /// Returns an autocomplete response of the `OpenRouter` provider slugs serving
@@ -418,8 +427,8 @@ pub async fn autocomplete_elevenlabs_voice<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        CHOICE_LIMIT, autocomplete_from, autocomplete_from_names, fit_choices, is_user_installable,
-        partitioned_commands,
+        CHOICE_LIMIT, autocomplete_from, autocomplete_from_names, clear_choice, fit_choices,
+        is_user_installable, partitioned_commands,
     };
     use crate::app_state::AppState;
     use crate::commands::{character, model, say, tts};
@@ -481,6 +490,24 @@ mod tests {
         assert!(
             characters.contains("\"value\":\"id\""),
             "and submits its ID: {characters}"
+        );
+    }
+
+    /// The provider list offers the "no pin" choice while the input could still
+    /// be the clear keyword, and drops it once it cannot.
+    #[test]
+    fn clear_choice_follows_the_input() {
+        for partial in ["", "in", "INGEN"] {
+            assert_eq!(
+                clear_choice(partial).map(|(_, value)| value).as_deref(),
+                Some("ingen"),
+                "{partial:?} could still be the keyword"
+            );
+        }
+        assert_eq!(
+            clear_choice("baidu"),
+            None,
+            "a provider name is not the keyword"
         );
     }
 

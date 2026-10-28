@@ -22,6 +22,18 @@ pub fn report_error<E: Into<Report>>(error: E) {
     eprintln!("{report}");
 }
 
+/// The value that clears an optional setting, matching how an unset setting is
+/// shown in the settings summaries.
+pub const CLEAR_KEYWORD: &str = "ingen";
+
+/// Returns `value`, or `None` when it is [`CLEAR_KEYWORD`] (in any letter case,
+/// ignoring surrounding whitespace), so a command option can both set and clear
+/// an optional setting.
+#[must_use]
+pub fn unless_cleared(value: String) -> Option<String> {
+    (!value.trim().eq_ignore_ascii_case(CLEAR_KEYWORD)).then_some(value)
+}
+
 /// Truncates `text` in place to at most `limit` characters, never splitting a
 /// multi-byte character. Discord counts characters, not bytes, so its limits are
 /// in characters.
@@ -63,7 +75,27 @@ pub const fn wrapping_previous(index: usize, len: usize) -> usize {
 /// Tests for the shared helpers.
 #[cfg(test)]
 mod tests {
-    use super::{ellipsize, truncate_to_chars, wrapping_previous};
+    use super::{ellipsize, truncate_to_chars, unless_cleared, wrapping_previous};
+
+    /// The clear keyword clears in any case and with stray whitespace, while
+    /// any other value, even one merely containing the word, is kept.
+    #[test]
+    fn unless_cleared_recognises_only_the_keyword() {
+        for cleared in ["ingen", "Ingen", " INGEN "] {
+            assert_eq!(
+                unless_cleared(cleared.to_owned()),
+                None,
+                "{cleared:?} clears"
+            );
+        }
+        for kept in ["baidu/fp8", "ingenting", ""] {
+            assert_eq!(
+                unless_cleared(kept.to_owned()).as_deref(),
+                Some(kept),
+                "{kept:?} is kept"
+            );
+        }
+    }
 
     /// The limit counts characters, not bytes, and never splits a multi-byte one.
     #[test]
