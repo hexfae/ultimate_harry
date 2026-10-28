@@ -26,8 +26,8 @@ const BEGIN_EXAMPLE_MESSAGES: &str = "Det följande är exempel på hur du ska p
 /// The system message that gets placed between every example message.
 const EXAMPLE_MESSAGE_SEPARATOR: &str = "Nytt exempelmeddelande.";
 
-/// The system that precedes the conversation actually beginning.
-const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du inte längra avbryta rollspelet, gå ur karaktär, eller skriva åt användaren.";
+/// The system message that precedes the conversation actually beginning.
+const BEGIN_MESSAGE: &str = "Rollspelet börjar nu. Efter denna punkt får du inte längre avbryta rollspelet, gå ur karaktär, eller skriva åt användaren.";
 
 /// Builds the system-prompt scaffolding messages for a character.
 ///
