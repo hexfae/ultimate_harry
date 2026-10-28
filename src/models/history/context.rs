@@ -4,9 +4,23 @@
 //! Split out from the model in `history.rs`; as a child module this can still
 //! reach `History`'s private fields.
 
-use crate::models::{character::Character, message::Message};
+use core::num::NonZeroUsize;
+
+use crate::{
+    constants::MAX_TOKENS,
+    models::{character::Character, message::Message},
+};
+use tracing::info;
 
 use super::History;
+
+/// A deliberately low estimate of how many characters make up one token, for
+/// sizing a conversation against a model's context window.
+///
+/// Swedish prose averages somewhat more than this, so the estimate overcounts
+/// tokens and trims a little early rather than sending a prompt the model
+/// refuses.
+const CHARS_PER_TOKEN: u64 = 3;
 
 /// The system message that precedes every conversation.
 const SYSTEM_MESSAGE: &str = "Du kommer nu att gå in i ett rollspel med en användare. Under inga omständigheter får du bryta rollspelet, gå ur karaktär, eller prata åt användaren.";
@@ -83,20 +97,76 @@ impl History {
     /// model sees, rather than burying it at the front before every turn.
     #[must_use]
     pub fn build_context(&self, character: &Character) -> Vec<Message> {
+        self.build_context_within(character, None)
+    }
+
+    /// Like [`build_context`](Self::build_context), but when the model's context
+    /// `window` (in tokens) is known, drops the oldest conversation messages
+    /// until the estimated prompt leaves room for a reply.
+    ///
+    /// A conversation is never trimmed below its latest message, and the
+    /// scaffolding and system prompt are always kept. Without this, a long
+    /// roleplay eventually outgrows the window and every later reply fails.
+    #[must_use]
+    pub fn build_context_within(&self, character: &Character, window: Option<u64>) -> Vec<Message> {
         let mut context = scaffolding(character);
-        context.extend(self.previous.iter().cloned());
-        if let Some(system_prompt) = character.system_prompt() {
-            context.push(Message::new_system(system_prompt));
+        let system_prompt = character.system_prompt().map(Message::new_system);
+        let fixed = context
+            .iter()
+            .chain(system_prompt.as_ref())
+            .map(estimated_size)
+            .fold(0, usize::saturating_add);
+        let room = window.map_or(usize::MAX, |tokens| {
+            let chars = tokens
+                .saturating_sub(MAX_TOKENS)
+                .saturating_mul(CHARS_PER_TOKEN);
+            usize::try_from(chars)
+                .unwrap_or(usize::MAX)
+                .saturating_sub(fixed)
+        });
+        let kept = newest_within(&self.previous, room);
+        if let Some(dropped) = NonZeroUsize::new(self.previous.len().saturating_sub(kept.len())) {
+            info!("dropped the {dropped} oldest messages to fit the model's context window");
         }
+        context.extend(kept.iter().cloned());
+        context.extend(system_prompt);
         context
     }
+}
+
+/// How many characters `message` adds to a prompt, as its transcript renders it.
+fn estimated_size(message: &Message) -> usize {
+    message.transcript().chars().count()
+}
+
+/// The newest run of `messages` whose estimated size fits in `room` characters,
+/// keeping at least the latest message however large it is.
+fn newest_within(messages: &[Message], room: usize) -> &[Message] {
+    let mut total = messages
+        .iter()
+        .map(estimated_size)
+        .fold(0, usize::saturating_add);
+    let mut kept = messages;
+    while total > room
+        && let [oldest, rest @ ..] = kept
+        && !rest.is_empty()
+    {
+        total = total.saturating_sub(estimated_size(oldest));
+        kept = rest;
+    }
+    kept
 }
 
 /// Tests for the prompt-scaffolding and full-context assembly.
 #[cfg(test)]
 mod tests {
-    use super::{BEGIN_EXAMPLE_MESSAGES, BEGIN_MESSAGE, SYSTEM_MESSAGE, scaffolding};
+    use super::{
+        BEGIN_EXAMPLE_MESSAGES, BEGIN_MESSAGE, CHARS_PER_TOKEN, SYSTEM_MESSAGE, estimated_size,
+        newest_within, scaffolding,
+    };
+    use crate::constants::MAX_TOKENS;
     use crate::models::{character::Character, history::History, message::Message};
+    use core::iter::repeat_with;
     use nonempty::NonEmpty;
     use serenity::all::{MessageId, UserId};
 
@@ -146,6 +216,111 @@ mod tests {
             tail_ids,
             vec![first_id, second_id],
             "the previous messages follow the scaffolding in order"
+        );
+    }
+
+    /// Builds `count` user messages of `size` characters each (as their transcript renders them).
+    fn turns(count: usize, size: usize) -> Vec<Message> {
+        let body = "x".repeat(size.saturating_sub("user: ".len()));
+        repeat_with(|| Message::new_user(body.clone()))
+            .take(count)
+            .collect()
+    }
+
+    /// The newest messages that fit are kept, oldest dropped first, and a run that already fits
+    /// is kept whole.
+    #[test]
+    fn newest_within_drops_the_oldest_first() {
+        let messages = turns(5, 10);
+        assert_eq!(
+            messages.first().map(estimated_size),
+            Some(10),
+            "each fixture message renders to ten characters"
+        );
+        assert_eq!(
+            newest_within(&messages, 50).len(),
+            5,
+            "an exact fit keeps everything"
+        );
+        assert_eq!(
+            newest_within(&messages, 49).len(),
+            4,
+            "one character over drops one message"
+        );
+        let kept = newest_within(&messages, 30);
+        assert_eq!(kept.len(), 3, "the three newest fit");
+        assert_eq!(
+            kept.first().map(Message::id),
+            messages.get(2).map(Message::id),
+            "it is the oldest that go"
+        );
+    }
+
+    /// However little room there is, the latest message is kept so there is something to reply to.
+    #[test]
+    fn newest_within_always_keeps_the_latest_message() {
+        let messages = turns(3, 10);
+        let kept = newest_within(&messages, 0);
+        assert_eq!(
+            kept.iter().map(Message::id).collect::<Vec<&str>>(),
+            messages
+                .last()
+                .map(Message::id)
+                .into_iter()
+                .collect::<Vec<&str>>(),
+            "only the latest message survives"
+        );
+        assert!(
+            newest_within(&[], 0).is_empty(),
+            "an empty conversation stays empty"
+        );
+    }
+
+    /// A known window trims the conversation to what fits beside the scaffolding and the reply
+    /// budget, while an unknown window trims nothing and the system prompt always stays last.
+    #[test]
+    fn build_context_within_trims_to_the_window() {
+        let character = Character::builder()
+            .id("id".to_owned())
+            .name("Harry")
+            .greeting("hi")
+            .creator(UserId::new(1))
+            .system_prompt("the jailbreak".to_owned())
+            .build();
+        let history = History::builder()
+            .id(MessageId::new(1))
+            .character("id")
+            .choices(NonEmpty::new(Message::new_system("greeting")))
+            .previous(turns(10, 300))
+            .build();
+        let fixed = scaffolding(&character).iter().map(estimated_size).fold(
+            estimated_size(&Message::new_system("the jailbreak")),
+            usize::saturating_add,
+        );
+        let fixed_tokens = u64::try_from(fixed).unwrap_or(u64::MAX);
+        let room_for_four: u64 = 1200;
+        let window = MAX_TOKENS
+            .saturating_add(fixed_tokens.div_ceil(CHARS_PER_TOKEN))
+            .saturating_add(room_for_four.div_ceil(CHARS_PER_TOKEN));
+
+        let trimmed = history.build_context_within(&character, Some(window));
+        let untrimmed = history.build_context_within(&character, None);
+
+        let scaffolding_len = scaffolding(&character).len();
+        assert_eq!(
+            trimmed.len(),
+            scaffolding_len.saturating_add(4).saturating_add(1),
+            "the scaffolding, the four newest turns, and the system prompt"
+        );
+        assert_eq!(
+            untrimmed.len(),
+            scaffolding_len.saturating_add(10).saturating_add(1),
+            "without a window nothing is trimmed"
+        );
+        assert_eq!(
+            trimmed.last().map(first_part_content),
+            Some("the jailbreak"),
+            "the system prompt stays last"
         );
     }
 

@@ -265,9 +265,9 @@ pub trait ReplySink {
 }
 
 /// Prepares the LLM request for a reply: builds the requester from the
-/// character's resolved model settings, assembles the conversation context, and
-/// resolves how attachments are sent (describing and caching images when the
-/// model lacks vision). Borrows the history mutably only for the duration of
+/// character's resolved model settings, assembles the conversation context
+/// (trimmed to the model's context window), and resolves how attachments are
+/// sent (describing and caching images when the model lacks vision). Borrows the history mutably only for the duration of
 /// attachment resolution, so the caller can hand it to a [`ReplySink`] after.
 async fn prepare_request(
     db: &Database,
@@ -275,7 +275,8 @@ async fn prepare_request(
     history: &mut History,
 ) -> AppResult<(LlmManager, Vec<ChatMessage>, AttachmentMode)> {
     let requester = LlmManager::new(db.resolved_model_settings(character).await);
-    let mut context = history.build_context(character);
+    let window = requester.context_window().await;
+    let mut context = history.build_context_within(character, window);
     let mode = resolve_attachments(&requester, history, &mut context).await;
     Ok((requester, context, mode))
 }

@@ -92,6 +92,18 @@ impl LlmManager {
         ))
     }
 
+    /// Returns how many tokens fit in the active model's context window, from the
+    /// cached model catalog, or `None` when the catalog cannot be fetched or does
+    /// not list the model (in which case nothing is trimmed).
+    ///
+    /// Exempt from mutation testing: it is a live catalog lookup, and the lookup
+    /// itself is [`model_context_length`], which is tested.
+    #[mutants::skip]
+    pub async fn context_window(&self) -> Option<u64> {
+        let catalog = model_catalog().await.ok()?;
+        model_context_length(&catalog, &self.settings.model)
+    }
+
     /// Returns whether the active model always reasons and rejects
     /// `effort: "none"`, checking the cached model catalog.
     ///
@@ -541,6 +553,14 @@ fn model_supports_modality(catalog: &[ModelEntry], model_id: &str, modality: &st
         })
 }
 
+/// The context window, in tokens, the catalog lists for the model with `model_id`.
+fn model_context_length(catalog: &[ModelEntry], model_id: &str) -> Option<u64> {
+    catalog
+        .iter()
+        .find(|entry| entry.id == model_id)?
+        .context_length
+}
+
 /// Whether the model with `model_id` always reasons and rejects `effort: "none"`.
 ///
 /// An unlisted model is treated as able to turn reasoning off, so a catalog
@@ -756,6 +776,9 @@ pub struct ModelEntry {
     /// The model's reasoning metadata.
     #[serde(default)]
     reasoning: Reasoning,
+    /// How many tokens fit in the model's context window, prompt and reply together.
+    #[serde(default)]
+    context_length: Option<u64>,
 }
 
 /// A model's modality metadata.
@@ -850,8 +873,9 @@ mod tests {
         Architecture, CACHE_LIFETIME, ChatResponse, EndpointsResponse, Fetched, LlmError,
         MAX_MODEL_CHOICES, ModelEntry, ModelsResponse, Reasoning, api_error_message,
         cached_catalog, cached_endpoints, extract_description, fields_insert_provider,
-        matching_endpoints, matching_model_ids, model_reasoning_mandatory, model_supports_modality,
-        parse_dialogue_turns, pin_for_model, provider_rejection, rejection_error, rejection_of,
+        matching_endpoints, matching_model_ids, model_context_length, model_reasoning_mandatory,
+        model_supports_modality, parse_dialogue_turns, pin_for_model, provider_rejection,
+        rejection_error, rejection_of,
     };
     use crate::llm::ModelSettings;
     use core::time::Duration;
@@ -915,6 +939,7 @@ mod tests {
                     .collect(),
             },
             reasoning: Reasoning::default(),
+            context_length: None,
         }
     }
 
@@ -923,6 +948,31 @@ mod tests {
         let mut model = entry(id, &["text"]);
         model.reasoning.mandatory = true;
         model
+    }
+
+    /// A model's context window is read from its catalog entry, and an unlisted
+    /// model or one without a listed window has none.
+    #[test]
+    fn model_context_length_reads_the_catalog() {
+        let json = r#"{"data":[{"id":"vendor/big","context_length":64000},{"id":"vendor/bare"}]}"#;
+        let catalog = serde_json::from_str::<ModelsResponse>(json)
+            .map(|parsed| parsed.data)
+            .unwrap_or_default();
+        assert_eq!(
+            model_context_length(&catalog, "vendor/big"),
+            Some(64_000),
+            "a listed window is read"
+        );
+        assert_eq!(
+            model_context_length(&catalog, "vendor/bare"),
+            None,
+            "a model without a window has none"
+        );
+        assert_eq!(
+            model_context_length(&catalog, "vendor/missing"),
+            None,
+            "an unlisted model has none"
+        );
     }
 
     /// An empty partial matches every model, sorted alphabetically.
