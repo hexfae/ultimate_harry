@@ -35,18 +35,28 @@ impl Character {
     /// [`MAX_RESULTS`] ranked by name (and nickname) similarity to the input,
     /// breaking ties by number of conversations had, setting each returned
     /// character's `similarity` for display.
+    ///
+    /// An input that is exactly a kept character's ID returns that character
+    /// alone: the character autocomplete submits IDs, so a picked character is
+    /// found exactly even when another one shares its name.
     fn rank_filtered(
         characters: Vec<Self>,
         input: &str,
         keep: impl Fn(&Self) -> bool,
     ) -> Vec<Self> {
+        let mut kept: Vec<Self> = characters
+            .into_iter()
+            .filter(|character| keep(character))
+            .collect();
+        if let Some(position) = kept.iter().position(|character| character.id == input) {
+            return vec![kept.swap_remove(position)];
+        }
         let needle = input.to_lowercase();
         let score = |candidate: &str| {
             strsim::normalized_damerau_levenshtein(&candidate.to_lowercase(), &needle)
         };
-        let mut ranked: Vec<Self> = characters
+        let mut ranked: Vec<Self> = kept
             .into_iter()
-            .filter(|character| keep(character))
             .map(|mut character| {
                 let name_similarity = score(&character.name);
                 let similarity = character
@@ -213,6 +223,32 @@ mod tests {
             ranked.first().map(Character::similarity).as_deref(),
             Some(" | 100% namnlikhet"),
             "and counts as a full match"
+        );
+    }
+
+    /// An exact character ID picks out that character alone, even when another
+    /// character shares its name, as long as it passes the filter.
+    #[test]
+    fn an_exact_id_picks_that_character() {
+        let ranked = Character::rank_by_similarity(
+            vec![
+                basic_character("first", "Harry"),
+                basic_character("second", "Harry"),
+            ],
+            "second",
+        );
+        assert_eq!(
+            ranked.iter().map(Character::id).collect::<Vec<&str>>(),
+            ["second"],
+            "only the character with that ID is returned"
+        );
+        let mut deleted = basic_character("gone", "Harry");
+        deleted.mark_deleted(UserId::new(1));
+        assert!(
+            Character::rank_by_similarity(vec![deleted], "gone")
+                .iter()
+                .all(|character| character.id() != "gone"),
+            "an ID does not reach past the visibility filter"
         );
     }
 

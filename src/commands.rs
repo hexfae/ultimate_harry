@@ -155,11 +155,15 @@ fn autocomplete_label(character: &Character) -> String {
 }
 
 /// Builds an autocomplete response listing the given characters by name.
+///
+/// Each choice submits the character's ID rather than its name, so the command
+/// receiving it finds exactly the picked character (see
+/// [`Character::rank_by_similarity`]) even when two share a name.
 fn choices_from<'a>(characters: &[Character]) -> CreateAutocompleteResponse<'a> {
     autocomplete_response(
         characters
             .iter()
-            .map(|character| (autocomplete_label(character), character.name().to_owned()))
+            .map(|character| (autocomplete_label(character), character.id().to_owned()))
             .collect(),
     )
 }
@@ -473,6 +477,10 @@ mod tests {
         assert!(
             characters.contains("🤖 Harry"),
             "the character is offered under its label: {characters}"
+        );
+        assert!(
+            characters.contains("\"value\":\"id\""),
+            "and submits its ID: {characters}"
         );
     }
 
