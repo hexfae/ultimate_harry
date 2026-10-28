@@ -516,6 +516,7 @@ mod tests {
     use alloc::collections::{BTreeMap, BTreeSet};
     use jiff::Zoned;
     use serenity::all::{Color, UserId};
+    use serenity::small_fixed_array::FixedString;
 
     /// Builds a pair of edit modals that leave every field untouched.
     fn empty_edit_modals() -> (EditCharacterModal, SecondEditCharacterModal) {
@@ -682,6 +683,53 @@ mod tests {
             character.scenario(),
             Some("scen"),
             "the scenario round-trips unchanged"
+        );
+    }
+
+    /// Emptying a pre-filled optional field clears it, while an emptied name or
+    /// greeting keeps the old value, since a character cannot go without them.
+    #[test]
+    fn editing_with_emptied_fields_clears_only_the_optionals() {
+        let mut character = populated_character();
+        let (first, second) = empty_edit_modals();
+        character.edit_from_modals(UserId::new(2), first, second);
+        assert_eq!(character.name(), "Harry", "an emptied name is kept");
+        assert_eq!(character.greeting(), "hej", "an emptied greeting is kept");
+        for (field, value) in [
+            ("nickname", character.nickname()),
+            ("description", character.description()),
+            ("personality", character.personality()),
+            ("avatar", character.avatar()),
+            ("emoji", character.emoji()),
+            ("system prompt", character.system_prompt()),
+            ("prompt", character.prompt()),
+            ("scenario", character.scenario()),
+        ] {
+            assert_eq!(value, None, "the emptied {field} is cleared");
+        }
+    }
+
+    /// An avatar that is not a valid link keeps the old avatar rather than
+    /// clearing it, while a valid new link replaces it.
+    #[test]
+    fn editing_the_avatar_ignores_an_invalid_link() {
+        let mut character = populated_character();
+        let (invalid_first, mut invalid_second) = character.edit_modal_defaults();
+        invalid_second.avatar = Some(FixedString::from_static_trunc("inte en länk"));
+        character.edit_from_modals(UserId::new(2), invalid_first, invalid_second);
+        assert_eq!(
+            character.avatar(),
+            Some("https://example.com/a.png"),
+            "an invalid link keeps the old avatar"
+        );
+
+        let (valid_first, mut valid_second) = character.edit_modal_defaults();
+        valid_second.avatar = Some(FixedString::from_static_trunc("https://example.com/b.png"));
+        character.edit_from_modals(UserId::new(2), valid_first, valid_second);
+        assert_eq!(
+            character.avatar(),
+            Some("https://example.com/b.png"),
+            "a valid link replaces the avatar"
         );
     }
 

@@ -126,6 +126,12 @@ impl Character {
     ///
     /// Updates the character's fields with the new values from the modals,
     /// increments the version, and sets the previous version ID.
+    ///
+    /// The modals open pre-filled with the current values (see
+    /// [`edit_modal_defaults`](Self::edit_modal_defaults)), so an untouched field
+    /// comes back unchanged and an emptied optional field means the user wants it
+    /// gone, and clears it. The required name and greeting keep their old value
+    /// when emptied, as does the avatar when the new value is not a valid link.
     pub fn edit_from_modals<E: Into<UserId>>(
         &mut self,
         editor: E,
@@ -133,40 +139,27 @@ impl Character {
         second_modal: SecondEditCharacterModal,
     ) {
         self.begin_new_version(editor);
-        let avatar_url = validate_url(second_modal.avatar.as_deref().map(ToOwned::to_owned));
-        // the reason why these can't just be `self.foo = bar` is because
-        // if the user doesn't fill in a field, it will be None, and we
-        // don't want to overwrite a potentially existing value
         if let Some(name) = modal.name {
             self.name = name.into_string();
         }
         if let Some(greeting) = modal.greeting {
             self.greeting = greeting.into_string();
         }
-        if let Some(nickname) = modal.nickname {
-            self.nickname = Some(nickname.into_string());
+        self.nickname = modal.nickname.map(FixedString::into_string);
+        self.description = modal.description.map(FixedString::into_string);
+        self.personality = modal.personality.map(FixedString::into_string);
+        match second_modal.avatar {
+            Some(avatar) => {
+                if let Some(valid) = validate_url(Some(avatar.into_string())) {
+                    self.avatar = Some(valid);
+                }
+            }
+            None => self.avatar = None,
         }
-        if let Some(description) = modal.description {
-            self.description = Some(description.into_string());
-        }
-        if let Some(personality) = modal.personality {
-            self.personality = Some(personality.into_string());
-        }
-        if let Some(avatar) = avatar_url {
-            self.avatar = Some(avatar);
-        }
-        if let Some(emoji) = second_modal.emoji {
-            self.emoji = Some(emoji.into_string());
-        }
-        if let Some(system_prompt) = second_modal.system_prompt {
-            self.system_prompt = Some(system_prompt.into_string());
-        }
-        if let Some(prompt) = second_modal.prompt {
-            self.prompt = Some(prompt.into_string());
-        }
-        if let Some(scenario) = second_modal.scenario {
-            self.scenario = Some(scenario.into_string());
-        }
+        self.emoji = second_modal.emoji.map(FixedString::into_string);
+        self.system_prompt = second_modal.system_prompt.map(FixedString::into_string);
+        self.prompt = second_modal.prompt.map(FixedString::into_string);
+        self.scenario = second_modal.scenario.map(FixedString::into_string);
     }
 }
 
