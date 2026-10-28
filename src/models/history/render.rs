@@ -473,21 +473,40 @@ fn with_accent<'a>(container: CreateContainer<'a>, character: &Character) -> Cre
     }
 }
 
+/// The most text displays a reply body may add below its title section.
+///
+/// Discord caps a Components V2 message at 40 components, nested ones included.
+/// A chat card spends about 20 on everything but the body (the container, the
+/// title section with its two texts and thumbnail, two button rows of four, the
+/// two dropdown rows, and the footer), so a long many-line reply would push the
+/// message past the cap and fail to render at all.
+const MAX_BODY_DISPLAYS: usize = 15;
+
 /// The character title section followed by one text display per remaining
 /// non-blank line of `body`: its first non-blank line becomes the title's
-/// leading text and each subsequent non-blank line its own text display. Blank
-/// lines are dropped because Discord rejects a whitespace-only text display. The
-/// components own their text, so the result outlives the borrowed `body`.
+/// leading text and each subsequent non-blank line its own text display, up to
+/// [`MAX_BODY_DISPLAYS`], with any lines past that joined into the last one.
+/// Blank lines are dropped because Discord rejects a whitespace-only text
+/// display. The components own their text, so the result outlives the borrowed
+/// `body`.
 fn title_and_body_lines<'a>(
     character: &'a Character,
     body: &str,
 ) -> Vec<CreateContainerComponent<'a>> {
     let mut lines = body.lines().filter(|line| !line.trim().is_empty());
     let first = lines.next().unwrap_or_default();
+    let mut displays: Vec<String> = lines.map(ToOwned::to_owned).collect();
+    let overflow_start = MAX_BODY_DISPLAYS.saturating_sub(1).min(displays.len());
+    let overflow = displays.split_off(overflow_start);
+    if !overflow.is_empty() {
+        displays.push(overflow.join("\n"));
+    }
     let mut card = vec![character_title_section(character, first.to_owned())];
-    card.extend(lines.map(|part| {
-        CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part.to_owned()))
-    }));
+    card.extend(
+        displays
+            .into_iter()
+            .map(|part| CreateContainerComponent::TextDisplay(CreateTextDisplay::new(part))),
+    );
     card
 }
 
@@ -839,6 +858,51 @@ mod tests {
             json.contains("hej") && json.contains("svejs"),
             "both non-blank lines survive"
         );
+    }
+
+    /// A reply with more lines than a message can hold displays merges the
+    /// overflow into its last display, keeping every line and staying within
+    /// Discord's component cap.
+    #[test]
+    fn body_lines_merge_past_the_display_cap() {
+        let character = character();
+        let body = (0_u32..40)
+            .map(|line| format!("rad {line}"))
+            .collect::<Vec<String>>()
+            .join("\n");
+        let card = super::title_and_body_lines(&character, &body);
+        assert_eq!(
+            card.len(),
+            super::MAX_BODY_DISPLAYS.saturating_add(1),
+            "the title section plus the capped number of displays"
+        );
+        let json = serde_json::to_string(&card).unwrap_or_default();
+        assert!(
+            (0_u32..40).all(|line| json.contains(&format!("rad {line}"))),
+            "no line is lost to the cap"
+        );
+        assert!(
+            json.contains("rad 38\\nrad 39"),
+            "the overflow lines share the last display"
+        );
+    }
+
+    /// A reply exactly at the cap keeps one display per line.
+    #[test]
+    fn body_lines_at_the_cap_are_not_merged() {
+        let character = character();
+        let body = (0..=super::MAX_BODY_DISPLAYS)
+            .map(|line| format!("rad {line}"))
+            .collect::<Vec<String>>()
+            .join("\n");
+        let card = super::title_and_body_lines(&character, &body);
+        assert_eq!(
+            card.len(),
+            super::MAX_BODY_DISPLAYS.saturating_add(1),
+            "the title plus one display per remaining line"
+        );
+        let json = serde_json::to_string(&card).unwrap_or_default();
+        assert!(!json.contains("\\n"), "no lines are joined");
     }
 
     /// A failed-generation choice renders as the red error container, keeping the
