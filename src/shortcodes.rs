@@ -31,14 +31,51 @@ fn render_shortcode(name: &str, guild_emojis: &[Emoji]) -> Option<String> {
     emojis::get_by_shortcode(name).map(|emoji| emoji.as_str().to_owned())
 }
 
+/// Returns the custom-emoji markup token (`<:name:id>` or `<a:name:id>`) that
+/// `rest` starts with, if any.
+fn leading_custom_emoji(rest: &str) -> Option<&str> {
+    let end = rest.find('>')?;
+    let token = rest.get(..=end)?;
+    let inner = token
+        .strip_prefix("<a:")
+        .or_else(|| token.strip_prefix("<:"))?
+        .strip_suffix('>')?;
+    let (name, id) = inner.split_once(':')?;
+    let well_formed = !name.is_empty()
+        && name.chars().all(is_shortcode_char)
+        && !id.is_empty()
+        && id.bytes().all(|byte| byte.is_ascii_digit());
+    well_formed.then_some(token)
+}
+
 /// Expands every `:shortcode:` run in `text` into its rendered emoji, leaving
 /// unrecognised runs untouched.
+///
+/// Custom-emoji markup already in the text (`<:name:id>`) is copied through
+/// verbatim. Edit modals are pre-filled with the stored, already-resolved text,
+/// so without this its `:name:` part would resolve a second time and nest the
+/// markup inside itself on every save.
 pub fn resolve(text: &str, guild_emojis: &[Emoji]) -> String {
     let mut out = String::with_capacity(text.len());
     let mut name = String::new();
     let mut in_code = false;
-    for ch in text.chars() {
-        if ch == ':' {
+    let mut skip_to = 0;
+    for (index, ch) in text.char_indices() {
+        if index < skip_to {
+            continue;
+        }
+        if ch == '<'
+            && let Some(token) = text.get(index..).and_then(leading_custom_emoji)
+        {
+            if in_code {
+                out.push(':');
+                out.push_str(&name);
+                name.clear();
+                in_code = false;
+            }
+            out.push_str(token);
+            skip_to = index.saturating_add(token.len());
+        } else if ch == ':' {
             if in_code {
                 if let Some(rendered) = render_shortcode(&name, guild_emojis) {
                     out.push_str(&rendered);
@@ -111,7 +148,8 @@ pub async fn guild_emojis(ctx: ApplicationContext<'_>) -> Vec<Emoji> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve, strip_custom_emoji};
+    use super::{leading_custom_emoji, resolve, strip_custom_emoji};
+    use poise::serenity_prelude::Emoji;
 
     /// A known unicode shortcode is replaced with the literal emoji.
     #[test]
@@ -149,6 +187,74 @@ mod tests {
             resolve(":smile::smile:", &[]),
             format!("{rendered}{rendered}")
         );
+    }
+
+    /// Already-resolved custom emoji markup survives another resolve pass
+    /// unchanged, even when the guild still has an emoji by that name, so
+    /// re-saving a pre-filled edit modal does not nest the markup.
+    #[test]
+    fn leaves_existing_custom_emoji_markup_alone() {
+        let guild: Vec<Emoji> =
+            serde_json::from_value(serde_json::json!([{ "id": "123", "name": "cholol" }]))
+                .unwrap_or_default();
+        assert_eq!(guild.len(), 1, "the fixture guild emoji deserializes");
+        for text in [
+            "<:cholol:123>",
+            "<a:cholol:123> Harry",
+            "hej:<:cholol:123>",
+            "<:cholol:123><:cholol:123>",
+        ] {
+            assert_eq!(resolve(text, &guild), text, "{text} must round-trip");
+        }
+        assert_eq!(
+            resolve(":cholol: <:cholol:123>", &guild),
+            "<:cholol:123> <:cholol:123>",
+            "a bare shortcode still resolves next to existing markup"
+        );
+    }
+
+    /// Text that only looks like the start of custom emoji markup is still
+    /// scanned for shortcodes as usual.
+    #[test]
+    fn malformed_markup_is_not_treated_as_an_emoji() {
+        for text in [
+            "<:no id>",
+            "<:name:12a>",
+            "<::123>",
+            "a < b > c",
+            "<a:zzqq:>",
+        ] {
+            assert_eq!(resolve(text, &[]), text, "{text} is left as written");
+        }
+    }
+
+    /// Only well-formed markup is recognised: a non-empty name of shortcode
+    /// characters and a non-empty, all-digit id.
+    #[test]
+    fn leading_custom_emoji_requires_a_well_formed_token() {
+        assert_eq!(
+            leading_custom_emoji("<:cholol:123> rest"),
+            Some("<:cholol:123>"),
+            "the leading token is returned without the rest"
+        );
+        assert_eq!(
+            leading_custom_emoji("<a:wave:9>"),
+            Some("<a:wave:9>"),
+            "animated markup is recognised"
+        );
+        for malformed in [
+            "<::123>",
+            "<:na me:123>",
+            "<:name:>",
+            "<:name:12a>",
+            "<name:1>",
+        ] {
+            assert_eq!(
+                leading_custom_emoji(malformed),
+                None,
+                "{malformed} is not custom emoji markup"
+            );
+        }
     }
 
     /// Custom emoji markup is dropped while unicode emoji and text survive.
