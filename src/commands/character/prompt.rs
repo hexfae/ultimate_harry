@@ -4,16 +4,31 @@ use crate::{
     AppResult, Context,
     commands::{autocomplete, first_character_or_notify},
     error::SendMessageSnafu,
-    models::{history::History, message::Message},
+    llm::DEFAULT_PROMPT,
+    models::{character::Character, history::History, message::Message},
     traits::SayEphemeral as _,
-    util::ellipsize,
 };
 use nonempty::NonEmpty;
-use poise::serenity_prelude::MessageId;
+use poise::{
+    CreateReply,
+    serenity_prelude::{CreateAttachment, MessageId},
+};
 use snafu::ResultExt as _;
 
 /// Discord's plain-message content limit, less the code fences wrapped around the transcript.
 const TRANSCRIPT_LIMIT: usize = 1992;
+
+/// The file name a transcript too long for a message is attached under.
+const TRANSCRIPT_FILE: &str = "prompt.txt";
+
+/// How a prompt preview is sent.
+#[derive(Debug, PartialEq, Eq)]
+enum Preview {
+    /// Fenced in a code block as the message itself.
+    Inline(String),
+    /// Attached whole as a text file, since it does not fit in a message.
+    File(String),
+}
 
 /// Visar hela prompten som AI-modellen får när gubben svarar.
 #[poise::command(slash_command, rename = "prompt")]
@@ -27,16 +42,36 @@ pub async fn prompt(
     let Some(character) = first_character_or_notify(ctx, name).await? else {
         return Ok(());
     };
+    match preview(render_context(&fresh_chat_context(&character, ctx.id()))) {
+        Preview::Inline(block) => {
+            ctx.say_ephemeral(block).await.context(SendMessageSnafu)?;
+        }
+        Preview::File(transcript) => {
+            let reply = CreateReply::default()
+                .content("Prompten är för lång för ett meddelande, så här är den som fil.")
+                .attachment(CreateAttachment::bytes(
+                    transcript.into_bytes(),
+                    TRANSCRIPT_FILE,
+                ))
+                .ephemeral(true);
+            ctx.send(reply).await.context(SendMessageSnafu)?;
+        }
+    }
+    Ok(())
+}
+
+/// The full message list the model receives for the first reply of a fresh
+/// chat with `character`: the conversation context, then the closing
+/// instruction the request appends.
+fn fresh_chat_context(character: &Character, id: u64) -> Vec<Message> {
     let history = History::builder()
-        .id(MessageId::new(ctx.id()))
+        .id(MessageId::new(id))
         .character(character.id())
         .choices(NonEmpty::new(Message::new_assistant(character.greeting())))
         .build();
-    let context = history.build_context(&character);
-    ctx.say_ephemeral(code_block(&render_context(&context)))
-        .await
-        .context(SendMessageSnafu)?;
-    Ok(())
+    let mut context = history.build_context(character);
+    context.push(Message::new_system(DEFAULT_PROMPT));
+    context
 }
 
 /// Renders the assembled context as a plain transcript, one message per block.
@@ -48,16 +83,20 @@ fn render_context(context: &[Message]) -> String {
         .join("\n\n")
 }
 
-/// Wraps the transcript in a code block, ellipsized so the whole reply fits in
-/// one Discord message.
-fn code_block(transcript: &str) -> String {
-    format!("```\n{}\n```", ellipsize(transcript, TRANSCRIPT_LIMIT))
+/// Wraps the transcript in a code block when it fits in one Discord message,
+/// and attaches it whole as a file when it does not.
+fn preview(transcript: String) -> Preview {
+    if transcript.chars().count() <= TRANSCRIPT_LIMIT {
+        Preview::Inline(format!("```\n{transcript}\n```"))
+    } else {
+        Preview::File(transcript)
+    }
 }
 
 /// Tests for the prompt-transcript rendering.
 #[cfg(test)]
 mod tests {
-    use super::{TRANSCRIPT_LIMIT, code_block, render_context};
+    use super::{Preview, TRANSCRIPT_LIMIT, fresh_chat_context, preview, render_context};
     use crate::models::{character::Character, history::History, message::Message};
     use nonempty::NonEmpty;
     use serenity::all::{MessageId, UserId};
@@ -140,29 +179,23 @@ mod tests {
         );
     }
 
-    /// A long transcript is ellipsized inside the fences so the whole reply fits
-    /// within Discord's 2000-character content limit.
+    /// A transcript too long for a message is attached whole instead of cut.
     #[test]
-    fn code_block_fits_discords_content_limit() {
-        let long = "a".repeat(4000);
-        let block = code_block(&long);
-        assert!(
-            block.starts_with("```\n") && block.ends_with("\n```"),
-            "the transcript is wrapped in code fences"
+    fn a_long_transcript_is_attached_whole() {
+        let long = "a".repeat(TRANSCRIPT_LIMIT.saturating_add(1));
+        assert_eq!(
+            preview(long.clone()),
+            Preview::File(long),
+            "nothing of the transcript is lost"
         );
-        assert!(
-            block.chars().count() <= 2000,
-            "the whole reply fits in one Discord message"
-        );
-        assert!(block.contains('…'), "the cut is marked with an ellipsis");
     }
 
-    /// A transcript within the limit is wrapped whole, without an ellipsis.
+    /// A transcript within the limit is fenced as the message itself.
     #[test]
-    fn code_block_leaves_short_transcripts_whole() {
+    fn a_short_transcript_is_fenced_inline() {
         assert_eq!(
-            code_block("system: hi"),
-            "```\nsystem: hi\n```",
+            preview("system: hi".to_owned()),
+            Preview::Inline("```\nsystem: hi\n```".to_owned()),
             "a short transcript is fenced untouched"
         );
     }
@@ -172,10 +205,26 @@ mod tests {
     #[test]
     fn transcript_limit_accounts_for_the_fences() {
         let exact = "a".repeat(TRANSCRIPT_LIMIT);
+        let inline_length = match preview(exact) {
+            Preview::Inline(block) => Some(block.chars().count()),
+            Preview::File(_) => None,
+        };
         assert_eq!(
-            code_block(&exact).chars().count(),
-            2000,
-            "a transcript at the limit fills the content limit exactly"
+            inline_length,
+            Some(2000),
+            "a transcript at the limit is sent inline, filling the content limit exactly"
+        );
+    }
+
+    /// The preview ends with the closing instruction the request appends, so it
+    /// shows everything the model receives.
+    #[test]
+    fn the_preview_ends_with_the_closing_instruction() {
+        let context = fresh_chat_context(&full_character(), 1);
+        assert_eq!(
+            context.last().map(Message::transcript).as_deref(),
+            Some("system: Fortsätt rollspelet."),
+            "the closing instruction comes last"
         );
     }
 }

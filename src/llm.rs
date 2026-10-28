@@ -22,6 +22,10 @@ pub use completions::{
 };
 pub use settings::{CharacterModelSettings, ModelOverrides, ModelSettings};
 
+/// The closing instruction every reply request ends with, unless the caller
+/// supplies its own (a hand-off or a continuation).
+pub const DEFAULT_PROMPT: &str = "Fortsätt rollspelet.";
+
 /// A streamed reply from the AI model, as returned by
 /// [`LlmManager::request_stream`].
 pub type ReplyStream = StreamingResult;
@@ -87,7 +91,7 @@ impl LlmManager {
 
         Ok(agent
             .stream_chat(
-                Message::system(prompt.unwrap_or_else(|| "Fortsätt rollspelet.".to_owned())),
+                Message::system(prompt.unwrap_or_else(|| DEFAULT_PROMPT.to_owned())),
                 rig_messages,
             )
             .await)
