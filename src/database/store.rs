@@ -28,6 +28,10 @@ pub(super) async fn read_json<T: DeserializeOwned>(path: &Path) -> Result<Option
 
 /// Reads and deserializes every `*.json` file in `dir`, returning an empty vector if the directory
 /// does not exist. Skips the transient `*.json.tmp` files written during an atomic save.
+///
+/// A record that cannot be parsed (a hand edit gone wrong, say) is logged and skipped rather than
+/// failing the whole scan, since one bad file would otherwise take down every listing built on it,
+/// down to the hand-off menu on every reply.
 pub(super) async fn scan_dir<T: DeserializeOwned>(dir: &Path) -> Result<Vec<T>, StoreError> {
     let mut entries = match fs::read_dir(dir).await {
         Ok(entries) => entries,
@@ -37,10 +41,16 @@ pub(super) async fn scan_dir<T: DeserializeOwned>(dir: &Path) -> Result<Vec<T>, 
     let mut records = Vec::new();
     while let Some(entry) = entries.next_entry().await.context(IoSnafu)? {
         let path = entry.path();
-        if path.extension().and_then(OsStr::to_str) == Some("json")
-            && let Some(record) = read_json(&path).await?
-        {
-            records.push(record);
+        if path.extension().and_then(OsStr::to_str) != Some("json") {
+            continue;
+        }
+        match read_json(&path).await {
+            Ok(Some(record)) => records.push(record),
+            Ok(None) => {}
+            Err(why @ StoreError::Deserialize { .. }) => {
+                error!("skipping unreadable record {}: {why}", path.display());
+            }
+            Err(why) => return Err(why),
         }
     }
     Ok(records)
@@ -162,7 +172,7 @@ impl StoreError {
 
 #[cfg(test)]
 mod tests {
-    use super::{RECORD_MODE, write_json};
+    use super::{RECORD_MODE, scan_dir, write_json};
     use std::fs::Permissions;
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
@@ -180,6 +190,36 @@ mod tests {
     async fn mode_of(path: &Path) -> Option<u32> {
         let metadata = fs::metadata(path).await.ok()?;
         Some(metadata.permissions().mode() & 0o777)
+    }
+
+    /// A corrupt record is skipped rather than failing the scan, so the readable
+    /// records around it are still listed, while a stray temp file is ignored.
+    #[tokio::test]
+    async fn scan_dir_skips_a_corrupt_record() {
+        let dir = env::temp_dir().join(format!("harry-scan-{}", process::id()));
+        assert!(
+            fs::create_dir_all(&dir).await.is_ok(),
+            "creating the dir should succeed"
+        );
+        for (name, contents) in [
+            ("good.json", "1"),
+            ("bad.json", "{ not json"),
+            ("half.json.tmp", "{"),
+        ] {
+            assert!(
+                fs::write(dir.join(name), contents).await.is_ok(),
+                "seeding {name} should succeed"
+            );
+        }
+
+        let scanned = scan_dir::<u8>(&dir).await;
+
+        assert_eq!(
+            scanned.ok(),
+            Some(vec![1]),
+            "the good record is listed and the bad one skipped"
+        );
+        drop(fs::remove_dir_all(&dir).await);
     }
 
     /// A written record is owner-only, so the config files holding the API keys are
