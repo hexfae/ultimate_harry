@@ -5,6 +5,7 @@
 //! Split out from the model in `message.rs`; as a child module this can still
 //! reach `Message`'s private fields and helper methods.
 
+use jiff::Timestamp;
 use rig::{
     agent::Text,
     message::{
@@ -13,6 +14,7 @@ use rig::{
     },
 };
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use super::{Message, Role};
 
@@ -21,6 +23,24 @@ const UNDESCRIBED_IMAGE: &str = "[Bild kunde inte tolkas]";
 
 /// Placeholder text fed to a model when a voice message could not be transcribed or encoded.
 const UNDESCRIBED_AUDIO: &str = "[Ljud kunde inte tolkas]";
+
+/// Placeholder text fed to a vision model for an image whose Discord link has expired and that
+/// has no cached description to stand in for it.
+const EXPIRED_IMAGE: &str = "[Bild som inte längre finns kvar]";
+
+/// The kind of file an attachment is, decided by its URL's extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachmentKind {
+    /// A picture a vision model can look at.
+    Image,
+    /// A voice message or audio file.
+    Audio,
+    /// Anything else (a text file, a PDF, a video), which no model is sent as media.
+    Other,
+}
+
+/// The file extensions sent to a model as images: the formats vision models accept.
+const IMAGE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
 
 /// Whether one kind of attachment is sent to the model natively or as cached text.
 ///
@@ -101,6 +121,12 @@ impl Message {
     /// text descriptions (for models without vision).
     #[must_use]
     pub fn to_rig_messages(&self, mode: AttachmentMode) -> Vec<RigMessage> {
+        self.to_rig_messages_at(mode, Timestamp::now().as_second())
+    }
+
+    /// [`to_rig_messages`](Self::to_rig_messages) as of `now` (Unix seconds), against which a
+    /// Discord link's expiry is checked.
+    fn to_rig_messages_at(&self, mode: AttachmentMode, now: i64) -> Vec<RigMessage> {
         let chosen = self.chosen_revision();
         let last_user = chosen
             .0
@@ -121,7 +147,7 @@ impl Message {
                 },
                 Role::User => {
                     let renders = if Some(index) == last_user {
-                        self.render_attachments(mode)
+                        self.render_attachments(mode, now)
                     } else {
                         Vec::new()
                     };
@@ -135,7 +161,7 @@ impl Message {
         // user message so the image (or its description) still reaches the model instead of
         // vanishing silently.
         if last_user.is_none() {
-            let renders = self.render_attachments(mode);
+            let renders = self.render_attachments(mode, now);
             if !renders.is_empty() {
                 messages.push(Self::user_message_with_renders("", renders));
             }
@@ -182,15 +208,16 @@ impl Message {
 
     /// Renders this message's attachments under `mode`, deciding per modality: a voice note is sent
     /// as native audio (when encoded) or as its cached transcription; an image is sent as an image
-    /// URL or as its cached description. A missing encoding or text falls back to a placeholder.
-    fn render_attachments(&self, mode: AttachmentMode) -> Vec<AttachmentRender> {
+    /// URL or as its cached description. A missing encoding or text falls back to a placeholder,
+    /// and any other file is named in text, since no model can be sent it as media.
+    fn render_attachments(&self, mode: AttachmentMode, now: i64) -> Vec<AttachmentRender> {
         self.attachments
             .iter()
-            .map(|url| {
-                if is_audio_url(url) {
-                    self.render_audio(url, mode.audio)
-                } else {
-                    self.render_image(url, mode.image)
+            .map(|url| match attachment_kind(url) {
+                AttachmentKind::Audio => self.render_audio(url, mode.audio),
+                AttachmentKind::Image => self.render_image(url, mode.image, now),
+                AttachmentKind::Other => {
+                    AttachmentRender::Text(format!("[Bilaga: {}]", file_name(url)))
                 }
             })
             .collect()
@@ -214,31 +241,46 @@ impl Message {
     }
 
     /// Renders a single image attachment under `mode`.
-    fn render_image(&self, url: &str, mode: MediaMode) -> AttachmentRender {
-        match mode {
-            MediaMode::Native => AttachmentRender::Image(url.to_owned()),
-            MediaMode::Describe => AttachmentRender::Text(self.description_for(url).map_or_else(
-                || UNDESCRIBED_IMAGE.to_owned(),
-                |description| format!("[Bild: {description}]"),
-            )),
+    ///
+    /// A Discord link expires about a day after it was posted, and a model handed an expired link
+    /// fails the whole request, so once `now` is past its expiry the image is sent as its cached
+    /// description (or a placeholder) even to a model with vision.
+    fn render_image(&self, url: &str, mode: MediaMode, now: i64) -> AttachmentRender {
+        let expired = link_expiry(url).is_some_and(|expiry| expiry <= now);
+        match (mode, expired) {
+            (MediaMode::Native, false) => AttachmentRender::Image(url.to_owned()),
+            (MediaMode::Native, true) => {
+                AttachmentRender::Text(self.description_for(url).map_or_else(
+                    || EXPIRED_IMAGE.to_owned(),
+                    |description| format!("[Bild: {description}]"),
+                ))
+            }
+            (MediaMode::Describe, _) => {
+                AttachmentRender::Text(self.description_for(url).map_or_else(
+                    || UNDESCRIBED_IMAGE.to_owned(),
+                    |description| format!("[Bild: {description}]"),
+                ))
+            }
         }
     }
 
-    /// The non-voice attachment URLs that do not yet have a cached description.
+    /// The image attachment URLs that do not yet have a cached description.
     #[must_use]
     pub fn undescribed_image_urls(&self) -> Vec<String> {
         self.attachments
             .iter()
-            .filter(|url| !is_audio_url(url))
+            .filter(|url| attachment_kind(url) == AttachmentKind::Image)
             .filter(|url| self.description_for(url).is_none())
             .cloned()
             .collect()
     }
 
-    /// Whether this message has at least one image (non-voice) attachment.
+    /// Whether this message has at least one image attachment.
     #[must_use]
     pub fn has_image_attachment(&self) -> bool {
-        self.attachments.iter().any(|url| !is_audio_url(url))
+        self.attachments
+            .iter()
+            .any(|url| attachment_kind(url) == AttachmentKind::Image)
     }
 
     /// Whether this message has at least one voice (audio) attachment.
@@ -329,15 +371,61 @@ fn merge_owned<T: Clone>(
     }
 }
 
+/// The path part of `url`, without its query string.
+fn url_path(url: &str) -> &str {
+    url.split('?').next().unwrap_or(url)
+}
+
+/// The lowercased extension of `url`'s file name, ignoring the query string.
+fn extension_of(url: &str) -> Option<String> {
+    let name = file_name(url);
+    name.rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+}
+
+/// The file name at the end of `url`'s path.
+fn file_name(url: &str) -> &str {
+    let path = url_path(url);
+    path.rsplit_once('/').map_or(path, |(_, name)| name)
+}
+
+/// What kind of file `url` points at, by its extension.
+fn attachment_kind(url: &str) -> AttachmentKind {
+    if audio_format_from_url(url).is_some() {
+        AttachmentKind::Audio
+    } else if extension_of(url)
+        .is_some_and(|extension| IMAGE_EXTENSIONS.contains(&extension.as_str()))
+    {
+        AttachmentKind::Image
+    } else {
+        AttachmentKind::Other
+    }
+}
+
+/// When a Discord attachment link stops working, in Unix seconds, or `None` for a link with no
+/// expiry (any other host, or a link from before Discord signed them).
+///
+/// Discord signs its CDN links with an `ex` query parameter holding the expiry as hexadecimal
+/// seconds.
+fn link_expiry(url: &str) -> Option<i64> {
+    let parsed = Url::parse(url).ok()?;
+    let discord = matches!(
+        parsed.host_str(),
+        Some("cdn.discordapp.com" | "media.discordapp.net")
+    );
+    if !discord {
+        return None;
+    }
+    let (_, hex) = parsed.query_pairs().find(|(key, _)| key == "ex")?;
+    i64::from_str_radix(&hex, 16).ok()
+}
+
 /// The audio media type for `url`'s extension, or `None` when it is not a recognized audio file.
 ///
 /// Discord voice messages are `.ogg`; users may also upload other common audio files, most
 /// notably `.mp3`. The query string is ignored and the extension matched case-insensitively.
 pub fn audio_format_from_url(url: &str) -> Option<AudioMediaType> {
-    let path = url.split('?').next().unwrap_or(url);
-    let extension = path
-        .rsplit_once('.')
-        .map(|(_, ext)| ext.to_ascii_lowercase())?;
+    let extension = extension_of(url)?;
     match extension.as_str() {
         "ogg" | "oga" | "opus" => Some(AudioMediaType::OGG),
         "mp3" => Some(AudioMediaType::MP3),
@@ -359,8 +447,8 @@ fn is_audio_url(url: &str) -> bool {
 mod tests {
     use super::super::{Message, Part, Role};
     use super::{
-        AttachmentMode, AttachmentRender, DescribedAttachment, EncodedAudio, MediaMode,
-        audio_format_from_url,
+        AttachmentKind, AttachmentMode, AttachmentRender, DescribedAttachment, EXPIRED_IMAGE,
+        EncodedAudio, MediaMode, attachment_kind, audio_format_from_url, link_expiry,
     };
     use rig::message::{AudioMediaType, Message as RigMessage, UserContent};
 
@@ -443,7 +531,7 @@ mod tests {
             }],
         );
         assert_eq!(
-            message.render_attachments(both(MediaMode::Native)),
+            message.render_attachments(both(MediaMode::Native), 0),
             vec![
                 AttachmentRender::Image("https://cdn/img.png".to_owned()),
                 AttachmentRender::Audio {
@@ -461,7 +549,7 @@ mod tests {
         let message =
             message_with_attachments(vec!["https://cdn/voice.ogg".to_owned()], Vec::new());
         assert_eq!(
-            message.render_attachments(both(MediaMode::Native)),
+            message.render_attachments(both(MediaMode::Native), 0),
             vec![AttachmentRender::Text(
                 "[Ljud kunde inte tolkas]".to_owned()
             )],
@@ -489,7 +577,7 @@ mod tests {
             ],
         );
         assert_eq!(
-            message.render_attachments(both(MediaMode::Describe)),
+            message.render_attachments(both(MediaMode::Describe), 0),
             vec![
                 AttachmentRender::Text("[Bild: en katt]".to_owned()),
                 AttachmentRender::Text("[Ljud: hej där]".to_owned()),
@@ -509,7 +597,7 @@ mod tests {
             Vec::new(),
         );
         assert_eq!(
-            message.render_attachments(both(MediaMode::Describe)),
+            message.render_attachments(both(MediaMode::Describe), 0),
             vec![
                 AttachmentRender::Text("[Bild kunde inte tolkas]".to_owned()),
                 AttachmentRender::Text("[Ljud kunde inte tolkas]".to_owned()),
@@ -532,10 +620,13 @@ mod tests {
             }],
         );
         assert_eq!(
-            message.render_attachments(AttachmentMode {
-                image: MediaMode::Native,
-                audio: MediaMode::Describe,
-            }),
+            message.render_attachments(
+                AttachmentMode {
+                    image: MediaMode::Native,
+                    audio: MediaMode::Describe,
+                },
+                0
+            ),
             vec![
                 AttachmentRender::Image("https://cdn/img.png".to_owned()),
                 AttachmentRender::Text("[Ljud: hej]".to_owned()),
@@ -594,7 +685,114 @@ mod tests {
         );
     }
 
-    /// Recognized audio extensions are classified as audio, everything else as images.
+    /// A file that is neither a picture nor audio is named in text rather than sent as an image,
+    /// which a model would reject, under either mode.
+    #[test]
+    fn other_files_are_named_rather_than_sent_as_images() {
+        let message = message_with_attachments(
+            vec![
+                "https://cdn/notes.txt?ex=1".to_owned(),
+                "https://cdn/clip.mp4".to_owned(),
+                "https://cdn/noext".to_owned(),
+            ],
+            Vec::new(),
+        );
+        for mode in [both(MediaMode::Native), both(MediaMode::Describe)] {
+            assert_eq!(
+                message.render_attachments(mode, 0),
+                vec![
+                    AttachmentRender::Text("[Bilaga: notes.txt]".to_owned()),
+                    AttachmentRender::Text("[Bilaga: clip.mp4]".to_owned()),
+                    AttachmentRender::Text("[Bilaga: noext]".to_owned()),
+                ],
+                "each file is named by its file name"
+            );
+        }
+        assert!(
+            !message.has_image_attachment(),
+            "a text file, a video, or an unknown file is not an image"
+        );
+        assert!(
+            message.undescribed_image_urls().is_empty(),
+            "nothing is handed to the vision model to describe"
+        );
+    }
+
+    /// Every image format vision models take is recognised, case-insensitively.
+    #[test]
+    fn image_extensions_are_recognised() {
+        for url in [
+            "https://cdn/a.png",
+            "https://cdn/a.JPG",
+            "https://cdn/a.jpeg?ex=1",
+            "https://cdn/a.gif",
+            "https://cdn/a.webp",
+        ] {
+            assert_eq!(
+                attachment_kind(url),
+                AttachmentKind::Image,
+                "{url} is an image"
+            );
+        }
+    }
+
+    /// A Discord link's `ex` parameter is its expiry in hexadecimal seconds, while any other host
+    /// or a link without the parameter never expires.
+    #[test]
+    fn link_expiry_reads_discords_signed_links() {
+        assert_eq!(
+            link_expiry("https://cdn.discordapp.com/attachments/1/2/a.png?ex=6720f1a0&is=1&hm=2"),
+            Some(0x6720_f1a0),
+            "the cdn host's ex parameter is read as hex"
+        );
+        assert_eq!(
+            link_expiry("https://media.discordapp.net/attachments/1/2/a.png?ex=ff"),
+            Some(255),
+            "the media proxy host is a Discord host too"
+        );
+        assert_eq!(
+            link_expiry("https://example.com/a.png?ex=ff"),
+            None,
+            "another host's ex parameter means nothing"
+        );
+        assert_eq!(
+            link_expiry("https://cdn.discordapp.com/attachments/1/2/a.png"),
+            None,
+            "an unsigned link has no expiry"
+        );
+    }
+
+    /// An expired Discord image is sent to a vision model as its cached description or a
+    /// placeholder instead of the dead link, and a live one is still sent as an image.
+    #[test]
+    fn an_expired_image_is_not_sent_as_a_link() {
+        let expired = "https://cdn.discordapp.com/attachments/1/2/a.png?ex=64".to_owned();
+        let described = "https://cdn.discordapp.com/attachments/1/2/b.png?ex=64".to_owned();
+        let message = message_with_attachments(
+            vec![expired.clone(), described.clone()],
+            vec![DescribedAttachment {
+                url: described,
+                description: "en katt".to_owned(),
+            }],
+        );
+        assert_eq!(
+            message.render_attachments(both(MediaMode::Native), 100),
+            vec![
+                AttachmentRender::Text(EXPIRED_IMAGE.to_owned()),
+                AttachmentRender::Text("[Bild: en katt]".to_owned()),
+            ],
+            "at the expiry the links are replaced by text"
+        );
+        assert_eq!(
+            message
+                .render_attachments(both(MediaMode::Native), 99)
+                .first(),
+            Some(&AttachmentRender::Image(expired)),
+            "just before the expiry the link is still sent"
+        );
+    }
+
+    /// Recognized audio extensions are classified as audio and image extensions as images.
     #[test]
     fn audio_and_image_attachments_are_classified_by_extension() {
         let message = message_with_attachments(
@@ -611,7 +809,7 @@ mod tests {
         );
         assert!(
             message.has_image_attachment(),
-            "a non-audio attachment is an image attachment"
+            "a .png attachment is an image attachment"
         );
         assert_eq!(
             message.audio_attachment_urls(),
