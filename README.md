@@ -51,9 +51,15 @@ through `/modell`.
 
 Configure text model, its OpenRouter provider, OpenRouter API key, temperature,
 vision model, and audio model globally with `/modell`. Configure model, provider,
-and temperature per character with `/gubbe modell`. Configure ElevenLabs API key,
-global default voice, global default ElevenLabs model (Eleven v4), and the audio
-tag model with `/tal`.
+and temperature per character with `/gubbe modell` (pass `återställ` to drop the
+character's own settings and fall back to the global ones). Configure ElevenLabs
+API key, global default voice, global default ElevenLabs model (Eleven v4), and
+the audio tag model with `/tal`.
+
+Optional settings are removed by passing `ingen` as their value: the provider,
+vision model, and audio model in `/modell`, the model and provider in `/gubbe
+modell`, the default voice and tag model in `/tal`, and a character's voice and
+color in `/gubbe röst` and `/gubbe färg`.
 
 The provider is optional. Left unset, OpenRouter load balances the model across
 every provider serving it. Setting one pins the bot to that single endpoint
@@ -90,7 +96,7 @@ sends a TTS voice message using the character's default voice or the global
 default voice. The continue button makes the character continue writing its
 message. While streaming the response, the continue button is instead a stop
 button, which interrupts the bot (e.g. if it's stuck, is repeating itself). The
-"Svara som…"" dropdown lets you pick a character to respond to the character's
+"Svara som…" dropdown lets you pick a character to respond to the character's
 message. The "Läs upp som…" dropdown lets you pick a custom voice for TTS, or
 choose automatic to have it automatically pick one (or multiple, if applicable).
 
@@ -104,7 +110,7 @@ which are redacted), EXCEPT users must share a server with the bot to run
 On the server side, everything is stored in plain text (however not
 world-readable, i.e. `600`). Characters, chats, configuration, and users are
 stored in `.json`s under
-`./harry_database/{characters,chats,configuration,users}`.
+`./harry_database/{characters,chats,config,users}`.
 
 ## License
 
