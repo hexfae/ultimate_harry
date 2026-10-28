@@ -279,22 +279,26 @@ impl History {
         }
     }
 
+    /// Pushes the chosen reply into the context, unless it has nothing to say.
+    ///
+    /// An empty chosen reply (the "skip the greeting" choice) is left out so the next message
+    /// becomes the first turn, rather than injecting a blank turn. A failed-generation notice is
+    /// left out too: it is the bot's error text, not something the character said, and feeding it
+    /// back would teach the model to repeat it.
+    fn push_chosen_reply(&mut self) {
+        let chosen = self.chosen_message();
+        if chosen.is_error() || chosen.chosen_revision().head().content().trim().is_empty() {
+            return;
+        }
+        self.push(chosen.to_owned());
+    }
+
     /// Begins a new reply turn: the chosen reply and the user message join the
     /// context, the old swipeable choices are cleared, and the reply is marked
-    /// as not yet finished.
-    ///
-    /// An empty chosen reply (the "skip the greeting" choice) is omitted from the context so the
-    /// user message becomes the first turn, rather than injecting a blank turn.
+    /// as not yet finished. See [`push_chosen_reply`](Self::push_chosen_reply) for
+    /// which chosen replies are left out.
     pub fn begin_new_turn<M: Into<Message>>(&mut self, user_message: M) {
-        if !self
-            .chosen_message()
-            .chosen_revision()
-            .head()
-            .content()
-            .is_empty()
-        {
-            self.push(self.chosen_message().to_owned());
-        }
+        self.push_chosen_reply();
         self.push(user_message);
         self.reset_choices();
         self.set_finished(false);
@@ -303,9 +307,10 @@ impl History {
     /// Hands the conversation to another character: the chosen reply joins the
     /// context, the old choices are cleared, the responding character switches,
     /// the hand-off system message joins the context, and the reply is marked as
-    /// not yet finished.
+    /// not yet finished. See [`push_chosen_reply`](Self::push_chosen_reply) for
+    /// which chosen replies are left out.
     pub fn begin_handoff<M: Into<Message>>(&mut self, character: String, system_message: M) {
-        self.push(self.chosen_message().to_owned());
+        self.push_chosen_reply();
         self.reset_choices();
         self.set_character(character);
         self.push(system_message);
@@ -1045,6 +1050,61 @@ mod tests {
             !history.has_finished,
             "the reply is marked as not yet finished"
         );
+    }
+
+    /// A failed-generation notice is the bot's error text, so replying to it
+    /// keeps it out of the context rather than feeding it to the model.
+    #[test]
+    fn a_failed_reply_is_left_out_of_the_context() {
+        let mut history = history_with_reply("Det krånglade.");
+        history.set_current_choice_error();
+        let user = Message::new_user("hej igen");
+        let user_id = user.id().to_owned();
+
+        history.begin_new_turn(user);
+
+        assert_eq!(
+            previous_ids(&history),
+            [user_id],
+            "only the user message joins the context"
+        );
+    }
+
+    /// An edited failed reply holds the user's own words, so it joins the
+    /// context like any genuine reply.
+    #[test]
+    fn an_edited_failed_reply_joins_the_context() {
+        let mut history = history_with_reply("Det krånglade.");
+        history.set_current_choice_error();
+        history.edit_content("en riktig replik", UserId::new(7));
+        let chosen_id = history.chosen_message().id().to_owned();
+
+        history.begin_new_turn(Message::new_user("hej igen"));
+
+        assert_eq!(
+            previous_ids(&history).first(),
+            Some(&chosen_id),
+            "the edited reply joins the context"
+        );
+    }
+
+    /// Handing a skipped greeting or a failed reply to another character leaves
+    /// it out of the context, exactly like a new turn does.
+    #[test]
+    fn a_handoff_leaves_out_an_empty_or_failed_reply() {
+        let mut failed = history_with_reply("Det krånglade.");
+        failed.set_current_choice_error();
+        let mut skipped = history_with_reply(" ");
+        for history in [&mut failed, &mut skipped] {
+            let system = Message::new_user("Svara nu som X.");
+            let system_id = system.id().to_owned();
+            history.begin_handoff("new-character-id".to_owned(), system);
+            assert_eq!(
+                previous_ids(history),
+                [system_id],
+                "only the hand-off prompt joins the context"
+            );
+        }
     }
 
     /// A fresh history seeds two swipe choices: the greeting (a clean,

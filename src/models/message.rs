@@ -210,9 +210,12 @@ impl Message {
     }
 
     /// Whether this message is a failed-generation notice rather than a genuine reply.
+    ///
+    /// Only the original text is the notice: an edit replaces it with the user's
+    /// own words, which are a genuine reply, so a shown revision is never an error.
     #[must_use]
     pub const fn is_error(&self) -> bool {
-        self.error
+        self.error && self.revision == 0
     }
 
     /// Marks this message as a failed-generation notice (or clears the mark).
@@ -436,6 +439,22 @@ mod tests {
             message.chosen_revision().head().content(),
             "only",
             "the original content is unchanged"
+        );
+    }
+
+    /// Editing a failed-generation notice turns it into a genuine reply, and
+    /// undoing back to the original notice makes it an error again.
+    #[test]
+    fn an_edit_replaces_the_error_until_undone() {
+        let mut message = Message::new_assistant("Det krånglade.");
+        message.set_error(true);
+        assert!(message.is_error(), "the original notice is an error");
+        message.edit("en riktig replik", 1_u64);
+        assert!(!message.is_error(), "the edited reply is genuine");
+        message.undo();
+        assert!(
+            message.is_error(),
+            "undoing back to the notice restores the error"
         );
     }
 
