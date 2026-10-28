@@ -13,7 +13,8 @@ use crate::constants::MAX_RESULTS;
 )]
 impl Character {
     /// Filters out deleted and superseded characters, then returns up to [`MAX_RESULTS`] ranked by
-    /// name (and nickname) similarity to the input, breaking ties by number of conversations had.
+    /// case-insensitive name (and nickname) similarity to the input, breaking ties by number of
+    /// conversations had.
     ///
     /// This replaces the old `MOST_SIMILAR_TO` `SurrealQL` query and sets each returned
     /// character's `similarity` for display.
@@ -39,20 +40,21 @@ impl Character {
         input: &str,
         keep: impl Fn(&Self) -> bool,
     ) -> Vec<Self> {
+        let needle = input.to_lowercase();
+        let score = |candidate: &str| {
+            strsim::normalized_damerau_levenshtein(&candidate.to_lowercase(), &needle)
+        };
         let mut ranked: Vec<Self> = characters
             .into_iter()
             .filter(|character| keep(character))
             .map(|mut character| {
-                let name_similarity =
-                    strsim::normalized_damerau_levenshtein(&character.name, input);
-                let similarity =
-                    character
-                        .nickname
-                        .as_deref()
-                        .map_or(name_similarity, |nickname| {
-                            name_similarity
-                                .max(strsim::normalized_damerau_levenshtein(nickname, input))
-                        });
+                let name_similarity = score(&character.name);
+                let similarity = character
+                    .nickname
+                    .as_deref()
+                    .map_or(name_similarity, |nickname| {
+                        name_similarity.max(score(nickname))
+                    });
                 character.similarity = Some(similarity);
                 character
             })
@@ -189,6 +191,29 @@ mod tests {
             "the closest-matching deleted character ranks first"
         );
         assert_eq!(ranked.len(), 2, "only deleted characters are returned");
+    }
+
+    /// Letter case does not count against a match, so typing a name in lowercase still finds it
+    /// as an exact match.
+    #[test]
+    fn ranking_ignores_letter_case() {
+        let ranked = Character::rank_by_similarity(
+            vec![
+                basic_character("near", "harri"),
+                basic_character("exact", "Harry"),
+            ],
+            "HARRY",
+        );
+        assert_eq!(
+            ranked.first().map(Character::id),
+            Some("exact"),
+            "the differently cased exact name ranks first"
+        );
+        assert_eq!(
+            ranked.first().map(Character::similarity).as_deref(),
+            Some(" | 100% namnlikhet"),
+            "and counts as a full match"
+        );
     }
 
     /// `rank_by_similarity` caps its output at the shared `MAX_RESULTS`, matching the database
