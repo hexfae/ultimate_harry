@@ -7,6 +7,7 @@
 
 use crate::{
     AppResult, ApplicationContext, Context,
+    constants::COLLECTOR_TIMEOUT,
     error::{DeleteMessageSnafu, SendMessageSnafu, ShowModalSnafu},
     phrases::{click_below, click_me},
 };
@@ -74,13 +75,19 @@ async fn show_modal_on_button_press<M: Modal>(
 
 /// Creates a collector that listens for the tempting button keyed on the
 /// context's id. The tempting message is ephemeral, so only the author can press
-/// it.
+/// it. Gives up with `None` after [`COLLECTOR_TIMEOUT`], which ends an abandoned
+/// create or edit.
+///
+/// Exempt from mutation testing: it only awaits a live gateway collector, so no
+/// unit test can tell its result from `None`.
 #[must_use]
+#[mutants::skip]
 async fn button_collector(ctx: ApplicationContext<'_>) -> Option<ComponentInteraction> {
     ComponentInteractionCollector::new(ctx.serenity_context())
         .custom_ids(FixedArray::from_vec_trunc(vec![
             FixedString::from_string_trunc(ctx.id().to_string()),
         ]))
+        .timeout(COLLECTOR_TIMEOUT)
         .await
 }
 

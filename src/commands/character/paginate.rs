@@ -11,7 +11,7 @@ use crate::{
     commands::character::render::character_embed,
     commands::notify_no_character,
     components::emoji_button,
-    constants::{CANCEL, CONFIRM, NEXT, PREVIOUS, TRANSIENT_LINGER},
+    constants::{CANCEL, COLLECTOR_TIMEOUT, CONFIRM, NEXT, PREVIOUS, TRANSIENT_LINGER},
     error::{DeleteResponseSnafu, SendMessageSnafu, SendResponseSnafu},
     events::interaction::{Interaction, InteractionKind},
     models::character::Character,
@@ -198,7 +198,8 @@ where
 
 /// Creates a collector that listens for any of `kinds` keyed on the context's ID.
 /// The paginator message is ephemeral, so only the command author can see and
-/// press these buttons; no author filter is needed.
+/// press these buttons; no author filter is needed. Gives up with `None` after
+/// [`COLLECTOR_TIMEOUT`], which ends an abandoned paginator.
 ///
 /// Exempt from mutation testing: it only awaits a live gateway collector, so no
 /// unit test can tell its result from `None`. The ids it listens on are
@@ -217,6 +218,7 @@ pub(super) async fn create_collector(
     );
     ComponentInteractionCollector::new(ctx.serenity_context())
         .custom_ids(custom_ids)
+        .timeout(COLLECTOR_TIMEOUT)
         .await
 }
 

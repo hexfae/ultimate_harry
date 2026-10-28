@@ -64,6 +64,13 @@ pub const SELECT_OPTION_LIMIT: usize = 100;
 /// How long a transient confirmation or notice message lingers before it is deleted.
 pub const TRANSIENT_LINGER: Duration = Duration::from_secs(5);
 
+/// How long a command's own button collector waits for a press before giving up.
+///
+/// Matches the lifetime of the interaction token the command answers with: past
+/// it the command could no longer edit its ephemeral reply anyway, so waiting
+/// longer would only keep an abandoned paginator's task alive forever.
+pub const COLLECTOR_TIMEOUT: Duration = Duration::from_mins(15);
+
 /// How long after a reply finishes before its Continue button goes live.
 ///
 /// The Continue button takes over the slot the live Stop button occupied while
