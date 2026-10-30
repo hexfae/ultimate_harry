@@ -10,6 +10,7 @@ use crate::constants::MAX_TOKENS;
 use crate::http::http;
 use crate::models::message::{EncodedAudio, audio_format_from_url};
 use crate::tts::{DialogueTurn, VoiceEntry};
+use crate::util::report_error;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use core::time::Duration;
 use rig::agent::StreamingError;
@@ -21,6 +22,7 @@ use snafu::{IntoError, OptionExt as _, ResultExt as _};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
+use tracing::warn;
 
 use super::{
     AddTagsSnafu, AssignVoicesSnafu, DescribeImageSnafu, EmptyDescriptionSnafu, EmptyTagsSnafu,
@@ -108,10 +110,22 @@ impl LlmManager {
     /// `effort: "none"`, checking the cached model catalog.
     ///
     /// An unlisted model is treated as able to turn reasoning off, matching
-    /// the optimistic defaults of [`model_supports_modality`].
-    pub(super) async fn reasoning_mandatory(&self) -> Result<bool, LlmError> {
-        let catalog = model_catalog().await?;
-        Ok(model_reasoning_mandatory(&catalog, &self.settings.model))
+    /// the optimistic defaults of [`model_supports_modality`]. So is a catalog
+    /// that cannot be fetched, like [`context_window`](Self::context_window):
+    /// an outage of the catalog endpoint must not fail every request.
+    ///
+    /// Exempt from mutation testing: it is a live catalog lookup, and the lookup
+    /// itself is [`model_reasoning_mandatory`], which is tested.
+    #[mutants::skip]
+    pub(super) async fn reasoning_mandatory(&self) -> bool {
+        match model_catalog().await {
+            Ok(catalog) => model_reasoning_mandatory(&catalog, &self.settings.model),
+            Err(why) => {
+                warn!("could not fetch the model catalog, assuming reasoning can be turned off");
+                report_error(why);
+                false
+            }
+        }
     }
 
     /// POSTs `body` to the `OpenRouter` chat-completions endpoint and parses the
@@ -134,14 +148,7 @@ impl LlmManager {
     where
         E: IntoError<LlmError, Source = reqwest::Error> + Copy,
     {
-        if !self.reasoning_mandatory().await?
-            && let Some(fields) = body.as_object_mut()
-        {
-            fields.insert(
-                "reasoning".to_owned(),
-                serde_json::json!({"enabled": false}),
-            );
-        }
+        fields_insert_reasoning_off(&mut body, self.reasoning_mandatory().await);
         fields_insert_max_tokens(&mut body);
         fields_insert_provider(&mut body, &self.settings);
         let response = http()
@@ -500,6 +507,17 @@ async fn download_audio_base64(url: &str) -> Result<EncodedAudio, LlmError> {
         data,
         format: audio_format_from_url(url).unwrap_or(AudioMediaType::OGG),
     })
+}
+
+/// Turns the model's reasoning off in `body`, unless the model marks it
+/// `mandatory`, in which case it would reject the parameter and it is left out.
+pub(super) fn fields_insert_reasoning_off(body: &mut serde_json::Value, mandatory: bool) {
+    if !mandatory && let Some(fields) = body.as_object_mut() {
+        fields.insert(
+            "reasoning".to_owned(),
+            serde_json::json!({"enabled": false}),
+        );
+    }
 }
 
 /// Caps the utility call's output at [`MAX_TOKENS`], since these bodies never
@@ -873,9 +891,9 @@ mod tests {
         Architecture, CACHE_LIFETIME, ChatResponse, EndpointsResponse, Fetched, LlmError,
         MAX_MODEL_CHOICES, ModelEntry, ModelsResponse, Reasoning, api_error_message,
         cached_catalog, cached_endpoints, extract_description, fields_insert_provider,
-        matching_endpoints, matching_model_ids, model_context_length, model_reasoning_mandatory,
-        model_supports_modality, parse_dialogue_turns, pin_for_model, provider_rejection,
-        rejection_error, rejection_of,
+        fields_insert_reasoning_off, matching_endpoints, matching_model_ids, model_context_length,
+        model_reasoning_mandatory, model_supports_modality, parse_dialogue_turns, pin_for_model,
+        provider_rejection, rejection_error, rejection_of,
     };
     use crate::llm::ModelSettings;
     use core::time::Duration;
@@ -1165,6 +1183,27 @@ mod tests {
         assert!(
             !model_reasoning_mandatory(&catalog, "vendor/unlisted"),
             "an unlisted model is optimistically able to turn reasoning off"
+        );
+    }
+
+    /// Reasoning is turned off in the body unless the model marks it mandatory,
+    /// in which case the parameter is left out rather than rejected.
+    #[test]
+    fn fields_insert_reasoning_off_skips_a_mandatory_model() {
+        let mut optional = serde_json::json!({ "model": "vendor/main" });
+        fields_insert_reasoning_off(&mut optional, false);
+        assert_eq!(
+            optional.get("reasoning"),
+            Some(&serde_json::json!({ "enabled": false })),
+            "a model that can turn reasoning off gets it turned off"
+        );
+
+        let mut mandatory = serde_json::json!({ "model": "vendor/main" });
+        fields_insert_reasoning_off(&mut mandatory, true);
+        assert_eq!(
+            mandatory.get("reasoning"),
+            None,
+            "a model that always reasons gets no reasoning parameter"
         );
     }
 

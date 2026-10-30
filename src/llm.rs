@@ -16,6 +16,7 @@ use rig::{
 };
 use snafu::{ResultExt as _, Snafu};
 
+use completions::fields_insert_reasoning_off;
 pub use completions::{
     VoiceChoice, fetch_audio_base64, matching_endpoints, matching_model_ids, model_catalog,
     model_endpoints, pin_for_model, rejection_of,
@@ -76,14 +77,7 @@ impl LlmManager {
         // budget rides along there; without it OpenRouter defaults to 65536
         // and reserves that many output tokens against the balance.
         let mut params = serde_json::json!({ "max_tokens": MAX_TOKENS });
-        if !self.reasoning_mandatory().await?
-            && let Some(fields) = params.as_object_mut()
-        {
-            fields.insert(
-                "reasoning".to_owned(),
-                serde_json::json!({ "enabled": false }),
-            );
-        }
+        fields_insert_reasoning_off(&mut params, self.reasoning_mandatory().await);
         if let Some(provider) = &self.settings.provider {
             params = merge(params, provider_params(provider));
         }
